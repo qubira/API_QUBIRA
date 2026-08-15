@@ -51,4 +51,14 @@ async function requireAuth(req, res, next) {
   }
 }
 
-module.exports = { requireAuth };
+/* Solo permite roles con nivel_acceso >= minLevel */
+function requireLevel(minLevel) {
+  return (req, res, next) => {
+    if (!req.user || req.user.nivel_acceso < minLevel) {
+      return res.status(403).json({ ok: false, error: 'Permisos insuficientes' });
+    }
+    next();
+  };
+}
+
+module.exports = { requireAuth, requireLevel };
