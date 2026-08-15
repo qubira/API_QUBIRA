@@ -1,14 +1,63 @@
 'use strict';
 
-const express  = require('express');
-const crypto   = require('crypto');
-const { pool } = require('../db');
+const express    = require('express');
+const crypto     = require('crypto');
+const multer     = require('multer');
+const { pool }   = require('../db');
+const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 router.use(requireAuth); /* toda el area de RRHH exige sesion valida */
 
 function uid() { return crypto.randomUUID(); }
+
+/* ============================================================
+   Subida de foto de perfil — Cloudinary (misma cuenta que usa
+   QUBIRA para los videos, carpeta separada para no mezclarlos)
+   ============================================================ */
+const uploadFoto = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (!file.mimetype.startsWith('image/')) {
+      return cb(new Error('El archivo debe ser una imagen'));
+    }
+    cb(null, true);
+  },
+});
+
+function subirFotoACloudinary(buffer) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'image',
+        folder: 'qubira/rrhh/empleados',
+        transformation: [{ width: 400, height: 400, crop: 'fill', gravity: 'face' }],
+      },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+}
+
+router.post('/empleados/foto', (req, res) => {
+  uploadFoto.single('foto')(req, res, async (err) => {
+    if (err) {
+      return res.status(400).json({ ok: false, error: err.message || 'Error al procesar la imagen' });
+    }
+    try {
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: 'Debes adjuntar una imagen' });
+      }
+      const result = await subirFotoACloudinary(req.file.buffer);
+      return res.json({ ok: true, data: { url: result.secure_url } });
+    } catch (cloudErr) {
+      console.error('[RRHH] Error subiendo foto a Cloudinary:', cloudErr.message);
+      return res.status(502).json({ ok: false, error: 'No se pudo subir la imagen a Cloudinary' });
+    }
+  });
+});
 
 /* ============================================================
    Esquema — se crea solo si no existe (misma base Neon que QUBIRA,
