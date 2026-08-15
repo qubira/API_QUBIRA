@@ -6,6 +6,7 @@ const multer     = require('multer');
 const { pool }   = require('../db');
 const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
+const { getEmployeeArea } = require('../lib/employeeArea');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -73,11 +74,38 @@ function ensureSchema() {
         type TEXT DEFAULT 'functional', description TEXT NOT NULL, progress INTEGER DEFAULT 0,
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
     `);
   }
   return ready;
 }
 router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
+
+/* ============================================================
+   Flujo ADG <-> TI:
+   - ADG crea el proyecto (status "pending") y sube contrato/proforma.
+   - TI ve los "pending", los reclama (claim) y pasa a trabajar en él.
+   - TI marca "finished_by_ti" cuando termina.
+   - ADG revisa y recién ahí pasa a "completed" (a partir de ahí TI ya
+     no puede editar nada de ese proyecto).
+   Solo ADG puede crear proyectos, subir contratos/proformas y aprobar
+   el cierre. Solo TI puede reclamar proyectos y marcarlos finalizados.
+   ============================================================ */
+async function requireArea(req, res, area) {
+  const mine = await getEmployeeArea(req.user.username);
+  if (mine !== area && req.user.nivel_acceso < 100) {
+    res.status(403).json({ error: `Esta acción es exclusiva del área ${area}` });
+    return false;
+  }
+  return true;
+}
+
+async function isProjectLockedForTi(projectId) {
+  const { rows } = await pool.query('SELECT status FROM ti.projects WHERE id = $1', [projectId]);
+  return rows.length ? rows[0].status === 'completed' : false;
+}
 
 /* Lista liviana de cuentas para los selects de "responsable" — cualquier
    usuario autenticado la necesita, no solo ADMIN/CEO (a diferencia de
@@ -121,7 +149,7 @@ function uploadToCloudinary(buffer, folder, resourceType, originalName) {
 /* ============================================================
    Proyectos
    ============================================================ */
-const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', completed:'Completado', cancelled:'Cancelado' };
+const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', finished_by_ti:'Finalizado (por revisar)', completed:'Completado', cancelled:'Cancelado' };
 const PRIORITY_LABEL = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
 const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte' };
 const FIELD_LABEL = {
@@ -143,11 +171,13 @@ router.get('/projects', async (req, res) => {
       where += ` AND (p.name ILIKE $${n} OR p.client ILIKE $${n} OR p.code ILIKE $${n})`;
     }
     const { rows } = await pool.query(`
-      SELECT p.*, u.nombre AS responsible_name,
+      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name,
         (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
         (SELECT COUNT(*) FROM ti.documents  d WHERE d.project_id = p.id)::int AS documents_count,
         (SELECT COUNT(*) FROM ti.whatsapp_messages w WHERE w.project_id = p.id)::int AS messages_count
-      FROM ti.projects p LEFT JOIN public.usuarios u ON u.id = p.responsible_id
+      FROM ti.projects p
+      LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
+      LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
       ${where} ORDER BY p.created_at DESC`, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -157,10 +187,11 @@ router.get('/projects/stats', async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const one = (q, p = []) => pool.query(q, p).then(r => r.rows[0]);
-    const [total, active, pending, completed, overdue, budget] = await Promise.all([
+    const [total, active, pending, finishedByTi, completed, overdue, budget] = await Promise.all([
       one("SELECT COUNT(*)::int AS c FROM ti.projects"),
       one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'active'"),
       one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'pending'"),
+      one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'finished_by_ti'"),
       one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'completed'"),
       one(
         "SELECT COUNT(*)::int AS c FROM ti.projects WHERE end_date IS NOT NULL AND end_date <> '' AND end_date < $1 AND status NOT IN ('completed','cancelled')",
@@ -168,14 +199,18 @@ router.get('/projects/stats', async (req, res) => {
       ),
       one("SELECT COALESCE(SUM(budget),0) AS s FROM ti.projects WHERE status != 'cancelled'"),
     ]);
-    res.json({ total: total.c, active: active.c, pending: pending.c, completed: completed.c, overdue: overdue.c, budget: budget.s });
+    res.json({ total: total.c, active: active.c, pending: pending.c, finishedByTi: finishedByTi.c, completed: completed.c, overdue: overdue.c, budget: budget.s });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.get('/projects/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT p.*, u.nombre AS responsible_name FROM ti.projects p LEFT JOIN public.usuarios u ON u.id = p.responsible_id WHERE p.id = $1',
+      `SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name
+       FROM ti.projects p
+       LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
+       LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
+       WHERE p.id = $1`,
       [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
@@ -185,6 +220,7 @@ router.get('/projects/:id', async (req, res) => {
 
 router.post('/projects', upload.single('logo_file'), async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { name, client, description, status, progress, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
@@ -222,6 +258,23 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
+
+    const myArea = await getEmployeeArea(req.user.username);
+    const privileged = req.user.nivel_acceso >= 100;
+
+    if (old.status === 'completed' && myArea !== 'ADG' && !privileged) {
+      return res.status(403).json({ error: 'Este proyecto ya fue completado y aprobado por ADG — TI ya no puede modificarlo' });
+    }
+
+    if (status && status !== old.status) {
+      if (status === 'finished_by_ti') {
+        if (myArea !== 'TI' && !privileged) return res.status(403).json({ error: 'Solo TI puede marcar un proyecto como finalizado' });
+        if (!['active', 'paused'].includes(old.status)) return res.status(400).json({ error: 'Solo se puede finalizar un proyecto activo o pausado' });
+      } else if (status === 'completed') {
+        if (myArea !== 'ADG' && !privileged) return res.status(403).json({ error: 'Solo ADG puede aprobar y completar un proyecto' });
+        if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por TI' });
+      }
+    }
 
     let company_logo = null;
     if (req.file) {
@@ -283,8 +336,26 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* TI reclama un proyecto pendiente creado por ADG */
+router.post('/projects/:id/claim', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'TI'))) return;
+    const { rows } = await pool.query('SELECT status, name FROM ti.projects WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    if (rows[0].status !== 'pending') return res.status(400).json({ error: 'Este proyecto ya fue reclamado o no está pendiente' });
+
+    await pool.query(
+      `UPDATE ti.projects SET status = 'active', claimed_by = $1, claimed_at = NOW(), updated_at = NOW() WHERE id = $2`,
+      [req.user.id, req.params.id]
+    );
+    await logActivity(req.params.id, req.user.id, 'claimed', `${req.user.nombre || req.user.username} (TI) anexó el proyecto "${rows[0].name}" a su área`);
+    res.json({ message: 'Proyecto anexado a TI' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.delete('/projects/:id', async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     await pool.query('DELETE FROM ti.projects WHERE id = $1', [req.params.id]);
     res.json({ message: 'Proyecto eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -306,12 +377,20 @@ router.get('/contracts', async (req, res) => {
       LEFT JOIN ti.projects p ON p.id = c.project_id
       LEFT JOIN public.usuarios u ON u.id = c.created_by
       ${where} ORDER BY c.created_at DESC`, params);
+
+    /* TI ve toda la información del contrato/proforma menos el archivo en
+       sí — eso queda exclusivo de ADG. */
+    const myArea = await getEmployeeArea(req.user.username);
+    if (myArea !== 'ADG' && req.user.nivel_acceso < 100) {
+      rows.forEach(r => { r.file_path = null; });
+    }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.post('/contracts', upload.single('file'), async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { project_id, type, title, amount, currency, status, notes, signed_date } = req.body;
     if (!title) return res.status(400).json({ error: 'Título requerido' });
 
@@ -337,6 +416,7 @@ router.post('/contracts', upload.single('file'), async (req, res) => {
 
 router.put('/contracts/:id', upload.single('file'), async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { title, amount, currency, status, notes, signed_date } = req.body;
     const sets = []; const params = [];
     const add = (col, val) => { if (val !== undefined && val !== null) { params.push(val); sets.push(`${col}=$${params.length}`); } };
@@ -357,6 +437,7 @@ router.put('/contracts/:id', upload.single('file'), async (req, res) => {
 
 router.delete('/contracts/:id', async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     await pool.query('DELETE FROM ti.contracts WHERE id=$1', [req.params.id]);
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
