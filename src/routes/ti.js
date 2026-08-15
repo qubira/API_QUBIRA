@@ -1,0 +1,652 @@
+'use strict';
+
+const express    = require('express');
+const crypto     = require('crypto');
+const multer     = require('multer');
+const { pool }   = require('../db');
+const cloudinary = require('../config/cloudinary');
+const { requireAuth } = require('../middleware/auth');
+
+const router = express.Router();
+router.use(requireAuth);
+
+function uid() { return crypto.randomUUID(); }
+
+/* ============================================================
+   Esquema — proyectos, contratos, documentos, whatsapp, emails,
+   actividad y requerimientos del área de TI. Las referencias a
+   "usuario" (responsible_id, created_by, user_id) apuntan al id
+   de la tabla `usuarios` compartida (schema public), no a una
+   tabla propia — TI ya no tiene su propia lista de cuentas.
+   ============================================================ */
+let ready = null;
+function ensureSchema() {
+  if (!ready) {
+    ready = pool.query(`
+      CREATE SCHEMA IF NOT EXISTS ti;
+
+      CREATE TABLE IF NOT EXISTS ti.projects (
+        id TEXT PRIMARY KEY, code TEXT UNIQUE NOT NULL, name TEXT NOT NULL, client TEXT NOT NULL,
+        description TEXT, status TEXT DEFAULT 'pending', progress INTEGER DEFAULT 0,
+        budget NUMERIC DEFAULT 0, currency TEXT DEFAULT 'USD', start_date TEXT, end_date TEXT,
+        responsible_id INTEGER, priority TEXT DEFAULT 'medium', created_by INTEGER,
+        company_name TEXT, company_logo TEXT, id_document_type TEXT, id_document_number TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ti.contracts (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        type TEXT DEFAULT 'contract', title TEXT NOT NULL, amount NUMERIC DEFAULT 0, currency TEXT DEFAULT 'USD',
+        status TEXT DEFAULT 'draft', file_path TEXT, file_name TEXT, notes TEXT, signed_date TEXT,
+        created_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ti.documents (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        category TEXT DEFAULT 'general', title TEXT NOT NULL, description TEXT,
+        file_path TEXT, file_name TEXT, file_size INTEGER, mime_type TEXT, tags TEXT,
+        created_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ti.whatsapp_messages (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        contact_name TEXT NOT NULL, phone TEXT, direction TEXT DEFAULT 'received', content TEXT NOT NULL,
+        msg_date TIMESTAMPTZ, starred INTEGER DEFAULT 0, created_by INTEGER,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ti.emails (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        subject TEXT NOT NULL, from_name TEXT, from_email TEXT, to_email TEXT, body TEXT,
+        direction TEXT DEFAULT 'received', email_date TIMESTAMPTZ, starred INTEGER DEFAULT 0, attachments TEXT,
+        created_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ti.activities (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        user_id INTEGER, type TEXT NOT NULL, description TEXT NOT NULL, metadata TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS ti.requirements (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        type TEXT DEFAULT 'functional', description TEXT NOT NULL, progress INTEGER DEFAULT 0,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+  }
+  return ready;
+}
+router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
+
+function logActivity(projectId, userId, type, description) {
+  if (!projectId) return Promise.resolve();
+  return pool.query(
+    'INSERT INTO ti.activities (id, project_id, user_id, type, description) VALUES ($1,$2,$3,$4,$5)',
+    [uid(), projectId, userId, type, description]
+  );
+}
+
+/* ============================================================
+   Subida de archivos — Cloudinary (misma cuenta que usa QUBIRA)
+   ============================================================ */
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+function uploadToCloudinary(buffer, folder, resourceType, originalName) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: resourceType,
+        folder,
+        public_id: `${uid()}_${(originalName || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+      },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+}
+
+/* ============================================================
+   Proyectos
+   ============================================================ */
+const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', completed:'Completado', cancelled:'Cancelado' };
+const PRIORITY_LABEL = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
+const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte' };
+const FIELD_LABEL = {
+  name:'Nombre', client:'Cliente', description:'Descripción', status:'Estado', progress:'Avance (%)',
+  budget:'Presupuesto', currency:'Moneda', start_date:'Fecha de Inicio', end_date:'Fecha de Entrega',
+  responsible_id:'Responsable', priority:'Prioridad', company_name:'Nombre de Empresa',
+  id_document_type:'Tipo de Documento', id_document_number:'Número de Documento',
+};
+
+router.get('/projects', async (req, res) => {
+  try {
+    const { status, search } = req.query;
+    const params = [];
+    let where = 'WHERE 1=1';
+    if (status) { params.push(status); where += ` AND p.status = $${params.length}`; }
+    if (search) {
+      params.push(`%${search}%`);
+      const n = params.length;
+      where += ` AND (p.name ILIKE $${n} OR p.client ILIKE $${n} OR p.code ILIKE $${n})`;
+    }
+    const { rows } = await pool.query(`
+      SELECT p.*, u.nombre AS responsible_name,
+        (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
+        (SELECT COUNT(*) FROM ti.documents  d WHERE d.project_id = p.id)::int AS documents_count,
+        (SELECT COUNT(*) FROM ti.whatsapp_messages w WHERE w.project_id = p.id)::int AS messages_count
+      FROM ti.projects p LEFT JOIN public.usuarios u ON u.id = p.responsible_id
+      ${where} ORDER BY p.created_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/projects/stats', async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const one = (q, p = []) => pool.query(q, p).then(r => r.rows[0]);
+    const [total, active, pending, completed, overdue, budget] = await Promise.all([
+      one("SELECT COUNT(*)::int AS c FROM ti.projects"),
+      one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'active'"),
+      one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'pending'"),
+      one("SELECT COUNT(*)::int AS c FROM ti.projects WHERE status = 'completed'"),
+      one(
+        "SELECT COUNT(*)::int AS c FROM ti.projects WHERE end_date IS NOT NULL AND end_date <> '' AND end_date < $1 AND status NOT IN ('completed','cancelled')",
+        [today]
+      ),
+      one("SELECT COALESCE(SUM(budget),0) AS s FROM ti.projects WHERE status != 'cancelled'"),
+    ]);
+    res.json({ total: total.c, active: active.c, pending: pending.c, completed: completed.c, overdue: overdue.c, budget: budget.s });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/projects/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT p.*, u.nombre AS responsible_name FROM ti.projects p LEFT JOIN public.usuarios u ON u.id = p.responsible_id WHERE p.id = $1',
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/projects', upload.single('logo_file'), async (req, res) => {
+  try {
+    const { name, client, description, status, progress, budget, currency, start_date, end_date,
+            responsible_id, priority, company_name, id_document_type, id_document_number } = req.body;
+    if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
+
+    const id = uid();
+    const year = new Date().getFullYear();
+    const { rows: seqRows } = await pool.query(
+      "SELECT COUNT(*)+1 AS n FROM ti.projects WHERE code LIKE $1", [`PROJ-${year}-%`]
+    );
+    const code = `PROJ-${year}-${String(parseInt(seqRows[0].n)).padStart(3, '0')}`;
+
+    let company_logo = null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/logos', 'image', req.file.originalname);
+      company_logo = result.secure_url;
+    }
+
+    await pool.query(`
+      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      [id, code, name, client, description || null, status || 'pending', progress || 0,
+       budget || 0, currency || 'USD', start_date || null, end_date || null,
+       responsible_id || null, priority || 'medium', req.user.id,
+       company_name || null, company_logo, id_document_type || null, id_document_number || null]
+    );
+    await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
+    res.status(201).json({ id, code, name });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
+  try {
+    const { name, client, description, status, progress, budget, currency, start_date, end_date,
+            responsible_id, priority, company_name, id_document_type, id_document_number } = req.body;
+    const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    const old = oldRows[0];
+
+    let company_logo = null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/logos', 'image', req.file.originalname);
+      company_logo = result.secure_url;
+    }
+
+    await pool.query(`
+      UPDATE ti.projects SET
+        name=COALESCE($1,name), client=COALESCE($2,client), description=COALESCE($3,description),
+        status=COALESCE($4,status), progress=COALESCE($5,progress), budget=COALESCE($6,budget),
+        currency=COALESCE($7,currency), start_date=COALESCE($8,start_date), end_date=COALESCE($9,end_date),
+        responsible_id=COALESCE($10,responsible_id), priority=COALESCE($11,priority),
+        company_name=COALESCE($12,company_name), company_logo=COALESCE($13,company_logo),
+        id_document_type=COALESCE($14,id_document_type), id_document_number=COALESCE($15,id_document_number),
+        updated_at=NOW()
+      WHERE id=$16`,
+      [name||null, client||null, description||null, status||null, progress??null,
+       budget??null, currency||null, start_date||null, end_date||null,
+       responsible_id||null, priority||null, company_name||null, company_logo,
+       id_document_type||null, id_document_number||null, req.params.id]
+    );
+
+    const submitted = { name, client, description, status, progress, budget, currency, start_date, end_date,
+      responsible_id, priority, company_name, id_document_type, id_document_number, company_logo };
+    const changes = [];
+    for (const [field, label] of Object.entries(FIELD_LABEL)) {
+      const newVal = submitted[field];
+      if (newVal === undefined || newVal === null || newVal === '') continue;
+      const oldVal = old[field];
+      if (String(oldVal ?? '') === String(newVal)) continue;
+
+      let oldDisplay = oldVal ?? '—';
+      let newDisplay = newVal;
+      if (field === 'status') {
+        oldDisplay = STATUS_LABEL[oldVal] || oldDisplay; newDisplay = STATUS_LABEL[newVal] || newVal;
+      } else if (field === 'priority') {
+        oldDisplay = PRIORITY_LABEL[oldVal] || oldDisplay; newDisplay = PRIORITY_LABEL[newVal] || newVal;
+      } else if (field === 'id_document_type') {
+        oldDisplay = DOC_LABEL[oldVal] || oldDisplay; newDisplay = DOC_LABEL[newVal] || newVal;
+      } else if (field === 'budget') {
+        oldDisplay = oldVal != null ? `$${Number(oldVal).toLocaleString()}` : '—';
+        newDisplay = `$${Number(newVal).toLocaleString()}`;
+      } else if (field === 'responsible_id') {
+        const [oldU, newU] = await Promise.all([
+          oldVal ? pool.query('SELECT nombre FROM public.usuarios WHERE id=$1', [oldVal]).then(r => r.rows[0]) : null,
+          pool.query('SELECT nombre FROM public.usuarios WHERE id=$1', [newVal]).then(r => r.rows[0]),
+        ]);
+        oldDisplay = oldU?.nombre || 'Sin asignar'; newDisplay = newU?.nombre || newVal;
+      }
+      changes.push(`${label}: "${oldDisplay}" → "${newDisplay}"`);
+    }
+    if (company_logo) changes.push('Logo: nueva imagen');
+
+    if (changes.length > 0) {
+      await logActivity(req.params.id, req.user.id, 'updated', `${req.user.nombre || req.user.username} actualizó — ${changes.join(' · ')}`);
+    }
+    res.json({ message: 'Proyecto actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/projects/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.projects WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Proyecto eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Contratos / proformas
+   ============================================================ */
+router.get('/contracts', async (req, res) => {
+  try {
+    const { project_id, type, status } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id); where += ` AND c.project_id=$${params.length}`; }
+    if (type)       { params.push(type);       where += ` AND c.type=$${params.length}`; }
+    if (status)     { params.push(status);     where += ` AND c.status=$${params.length}`; }
+    const { rows } = await pool.query(`
+      SELECT c.*, p.name AS project_name, p.code AS project_code, u.nombre AS created_by_name
+      FROM ti.contracts c
+      LEFT JOIN ti.projects p ON p.id = c.project_id
+      LEFT JOIN public.usuarios u ON u.id = c.created_by
+      ${where} ORDER BY c.created_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/contracts', upload.single('file'), async (req, res) => {
+  try {
+    const { project_id, type, title, amount, currency, status, notes, signed_date } = req.body;
+    if (!title) return res.status(400).json({ error: 'Título requerido' });
+
+    let file_path = null, file_name = null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/contracts', 'raw', req.file.originalname);
+      file_path = result.secure_url;
+      file_name = req.file.originalname;
+    }
+
+    const id = uid();
+    await pool.query(`
+      INSERT INTO ti.contracts (id,project_id,type,title,amount,currency,status,file_path,file_name,notes,signed_date,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, project_id||null, type||'contract', title, amount||0, currency||'USD',
+       status||'draft', file_path, file_name, notes||null, signed_date||null, req.user.id]
+    );
+    await logActivity(project_id, req.user.id, 'contract_uploaded',
+      `Contrato/Proforma "${title}" agregado por ${req.user.nombre || req.user.username}`);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/contracts/:id', upload.single('file'), async (req, res) => {
+  try {
+    const { title, amount, currency, status, notes, signed_date } = req.body;
+    const sets = []; const params = [];
+    const add = (col, val) => { if (val !== undefined && val !== null) { params.push(val); sets.push(`${col}=$${params.length}`); } };
+    add('title', title); add('amount', amount); add('currency', currency);
+    add('status', status); add('notes', notes); add('signed_date', signed_date);
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/contracts', 'raw', req.file.originalname);
+      params.push(result.secure_url); sets.push(`file_path=$${params.length}`);
+      params.push(req.file.originalname); sets.push(`file_name=$${params.length}`);
+    }
+    if (sets.length) {
+      params.push(req.params.id);
+      await pool.query(`UPDATE ti.contracts SET ${sets.join(',')} WHERE id=$${params.length}`, params);
+    }
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/contracts/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.contracts WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Documentos
+   ============================================================ */
+router.get('/documents', async (req, res) => {
+  try {
+    const { project_id, category, search } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id); where += ` AND d.project_id=$${params.length}`; }
+    if (category)   { params.push(category);   where += ` AND d.category=$${params.length}`; }
+    if (search) {
+      params.push(`%${search}%`);
+      const n = params.length;
+      where += ` AND (d.title ILIKE $${n} OR d.description ILIKE $${n} OR d.tags ILIKE $${n})`;
+    }
+    const { rows } = await pool.query(`
+      SELECT d.*, p.name AS project_name, u.nombre AS created_by_name
+      FROM ti.documents d
+      LEFT JOIN ti.projects p ON p.id = d.project_id
+      LEFT JOIN public.usuarios u ON u.id = d.created_by
+      ${where} ORDER BY d.created_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/documents', upload.single('file'), async (req, res) => {
+  try {
+    const { project_id, category, title, description, tags } = req.body;
+    if (!title) return res.status(400).json({ error: 'Título requerido' });
+
+    let file_path = null, file_name = null, file_size = null, mime_type = null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/documents', 'raw', req.file.originalname);
+      file_path = result.secure_url;
+      file_name = req.file.originalname;
+      file_size = req.file.size;
+      mime_type = req.file.mimetype;
+    }
+
+    const id = uid();
+    await pool.query(`
+      INSERT INTO ti.documents (id,project_id,category,title,description,file_path,file_name,file_size,mime_type,tags,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, project_id||null, category||'general', title, description||null,
+       file_path, file_name, file_size, mime_type, tags||null, req.user.id]
+    );
+    await logActivity(project_id, req.user.id, 'document_uploaded',
+      `Documento "${title}" subido por ${req.user.nombre || req.user.username}`);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/documents/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.documents WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   WhatsApp
+   ============================================================ */
+router.get('/whatsapp', async (req, res) => {
+  try {
+    const { project_id, contact_name, starred } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id)   { params.push(project_id);         where += ` AND w.project_id=$${params.length}`; }
+    if (contact_name) { params.push(`%${contact_name}%`); where += ` AND w.contact_name ILIKE $${params.length}`; }
+    if (starred)      { where += ' AND w.starred=1'; }
+    const { rows } = await pool.query(`
+      SELECT w.*, p.name AS project_name, p.code AS project_code, u.nombre AS created_by_name
+      FROM ti.whatsapp_messages w
+      LEFT JOIN ti.projects p ON p.id = w.project_id
+      LEFT JOIN public.usuarios u ON u.id = w.created_by
+      ${where} ORDER BY w.msg_date DESC, w.created_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/whatsapp/contacts', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT contact_name, phone, COUNT(*)::int AS message_count, MAX(msg_date) AS last_message
+      FROM ti.whatsapp_messages
+      GROUP BY contact_name, phone
+      ORDER BY last_message DESC`);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/whatsapp', async (req, res) => {
+  try {
+    const { project_id, contact_name, phone, direction, content, msg_date } = req.body;
+    if (!contact_name || !content) return res.status(400).json({ error: 'Contacto y contenido requeridos' });
+    const id = uid();
+    await pool.query(`
+      INSERT INTO ti.whatsapp_messages (id,project_id,contact_name,phone,direction,content,msg_date,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, project_id||null, contact_name, phone||null, direction||'received',
+       content, msg_date||new Date().toISOString(), req.user.id]
+    );
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/whatsapp/bulk', async (req, res) => {
+  try {
+    const { project_id, messages } = req.body;
+    if (!Array.isArray(messages) || messages.length === 0)
+      return res.status(400).json({ error: 'Se requiere un array de mensajes' });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const m of messages) {
+        await client.query(`
+          INSERT INTO ti.whatsapp_messages (id,project_id,contact_name,phone,direction,content,msg_date,created_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [uid(), project_id||null, m.contact_name, m.phone||null,
+           m.direction||'received', m.content, m.msg_date||new Date().toISOString(), req.user.id]
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+    res.status(201).json({ inserted: messages.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/whatsapp/:id/star', async (req, res) => {
+  try {
+    await pool.query('UPDATE ti.whatsapp_messages SET starred = CASE WHEN starred=1 THEN 0 ELSE 1 END WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/whatsapp/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.whatsapp_messages WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Emails
+   ============================================================ */
+router.get('/emails', async (req, res) => {
+  try {
+    const { project_id, direction, starred, search } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id);   where += ` AND e.project_id=$${params.length}`; }
+    if (direction)  { params.push(direction);     where += ` AND e.direction=$${params.length}`; }
+    if (starred)    { where += ' AND e.starred=1'; }
+    if (search) {
+      params.push(`%${search}%`);
+      const n = params.length;
+      where += ` AND (e.subject ILIKE $${n} OR e.from_email ILIKE $${n} OR e.body ILIKE $${n})`;
+    }
+    const { rows } = await pool.query(`
+      SELECT e.*, p.name AS project_name, p.code AS project_code, u.nombre AS created_by_name
+      FROM ti.emails e
+      LEFT JOIN ti.projects p ON p.id = e.project_id
+      LEFT JOIN public.usuarios u ON u.id = e.created_by
+      ${where} ORDER BY e.email_date DESC, e.created_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/emails', async (req, res) => {
+  try {
+    const { project_id, subject, from_name, from_email, to_email, body, direction, email_date, attachments } = req.body;
+    if (!subject) return res.status(400).json({ error: 'Asunto requerido' });
+    const id = uid();
+    await pool.query(`
+      INSERT INTO ti.emails (id,project_id,subject,from_name,from_email,to_email,body,direction,email_date,attachments,created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [id, project_id||null, subject, from_name||null, from_email||null, to_email||null,
+       body||null, direction||'received', email_date||new Date().toISOString(),
+       attachments ? JSON.stringify(attachments) : null, req.user.id]
+    );
+    await logActivity(project_id, req.user.id, 'email_added',
+      `Email "${subject}" registrado por ${req.user.nombre || req.user.username}`);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/emails/:id/star', async (req, res) => {
+  try {
+    await pool.query('UPDATE ti.emails SET starred = CASE WHEN starred=1 THEN 0 ELSE 1 END WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/emails/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.emails WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Actividad (historial)
+   ============================================================ */
+router.get('/activities', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id); where += ` AND a.project_id=$${params.length}`; }
+    params.push(limit);
+    const { rows } = await pool.query(`
+      SELECT a.*, u.nombre AS user_name, p.name AS project_name, p.code AS project_code
+      FROM ti.activities a
+      LEFT JOIN public.usuarios u ON u.id = a.user_id
+      LEFT JOIN ti.projects p ON p.id = a.project_id
+      ${where} ORDER BY a.created_at DESC LIMIT $${params.length}`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Requerimientos
+   ============================================================ */
+const REQ_TYPE_LABEL = { functional: 'Funcional', non_functional: 'No Funcional' };
+
+router.get('/requirements', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id); where += ` AND project_id=$${params.length}`; }
+    const { rows } = await pool.query(`SELECT * FROM ti.requirements ${where} ORDER BY created_at ASC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/requirements', async (req, res) => {
+  try {
+    const { project_id, type, description } = req.body;
+    if (!project_id || !description) return res.status(400).json({ error: 'Proyecto y descripción son requeridos' });
+    const id = uid();
+    const finalType = type === 'non_functional' ? 'non_functional' : 'functional';
+    await pool.query(
+      'INSERT INTO ti.requirements (id,project_id,type,description,progress) VALUES ($1,$2,$3,$4,$5)',
+      [id, project_id, finalType, description, 0]
+    );
+    await logActivity(project_id, req.user.id, 'requirement_change',
+      `${req.user.nombre || req.user.username} agregó el requerimiento ${REQ_TYPE_LABEL[finalType]} "${description}"`);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/requirements/:id', async (req, res) => {
+  try {
+    const { description, type, progress } = req.body;
+    const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
+    const old = oldRows[0];
+
+    const sets = []; const params = [];
+    const add = (col, val) => { if (val !== undefined) { params.push(val); sets.push(`${col}=$${params.length}`); } };
+    add('description', description);
+    add('type', type);
+    const clampedProgress = progress !== undefined ? Math.max(0, Math.min(100, parseInt(progress) || 0)) : undefined;
+    if (clampedProgress !== undefined) add('progress', clampedProgress);
+    if (sets.length) {
+      params.push(req.params.id);
+      await pool.query(`UPDATE ti.requirements SET ${sets.join(',')} WHERE id=$${params.length}`, params);
+    }
+
+    const label = old.type === 'non_functional' ? 'No Funcional' : 'Funcional';
+    const who = req.user.nombre || req.user.username;
+    if (clampedProgress !== undefined && clampedProgress !== old.progress) {
+      await logActivity(old.project_id, req.user.id, 'requirement_change',
+        `${who} actualizó el avance de "${old.description}" (${label}) de ${old.progress||0}% a ${clampedProgress}%`);
+    }
+    if (description !== undefined && description !== old.description) {
+      await logActivity(old.project_id, req.user.id, 'requirement_change',
+        `${who} cambió la descripción del requerimiento "${old.description}" a "${description}"`);
+    }
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/requirements/:id', async (req, res) => {
+  try {
+    const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
+    const old = oldRows[0];
+    await pool.query('DELETE FROM ti.requirements WHERE id=$1', [req.params.id]);
+    const label = old.type === 'non_functional' ? 'No Funcional' : 'Funcional';
+    await logActivity(old.project_id, req.user.id, 'requirement_change',
+      `${req.user.nombre || req.user.username} eliminó el requerimiento ${label} "${old.description}"`);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+module.exports = router;

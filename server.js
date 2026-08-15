@@ -11,6 +11,7 @@ const authRouter     = require('./src/routes/auth');
 const soporteRouter  = require('./src/routes/soporte');
 const rrhhRouter     = require('./src/routes/rrhh');
 const usuariosRouter = require('./src/routes/usuarios');
+const tiRouter       = require('./src/routes/ti');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -91,6 +92,7 @@ app.use('/api/auth',       authRouter);
 app.use('/api/soporte',    soporteRouter);
 app.use('/api/rrhh',       rrhhRouter);
 app.use('/api/usuarios',   usuariosRouter);
+app.use('/api/ti',         tiRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });
