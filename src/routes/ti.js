@@ -35,6 +35,11 @@ function ensureSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS ti.document_types (
+        id TEXT PRIMARY KEY, label TEXT NOT NULL,
+        created_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       CREATE TABLE IF NOT EXISTS ti.contracts (
         id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
         type TEXT DEFAULT 'contract', title TEXT NOT NULL, amount NUMERIC DEFAULT 0, currency TEXT DEFAULT 'USD',
@@ -77,6 +82,9 @@ function ensureSchema() {
 
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS github_url TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS website_url TEXT;
     `);
   }
   return ready;
@@ -119,6 +127,47 @@ router.get('/users', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* ============================================================
+   Tipos de documento personalizados — el set base (DNI/CE/Pasaporte/RUC)
+   vive fijo en el frontend; acá solo se guardan los que ADG agrega con
+   el "+" cuando necesita uno que no está en la lista.
+   ============================================================ */
+router.get('/document-types', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM ti.document_types ORDER BY label');
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/document-types', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { label } = req.body;
+    if (!label || !label.trim()) return res.status(400).json({ error: 'Nombre requerido' });
+    const id = uid();
+    await pool.query('INSERT INTO ti.document_types (id, label, created_by) VALUES ($1,$2,$3)', [id, label.trim(), req.user.id]);
+    res.status(201).json({ id, label: label.trim() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/document-types/:id', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { label } = req.body;
+    if (!label || !label.trim()) return res.status(400).json({ error: 'Nombre requerido' });
+    await pool.query('UPDATE ti.document_types SET label=$1 WHERE id=$2', [label.trim(), req.params.id]);
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/document-types/:id', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    await pool.query('DELETE FROM ti.document_types WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 function logActivity(projectId, userId, type, description) {
   if (!projectId) return Promise.resolve();
   return pool.query(
@@ -151,12 +200,14 @@ function uploadToCloudinary(buffer, folder, resourceType, originalName) {
    ============================================================ */
 const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', finished_by_ti:'Finalizado (por revisar)', completed:'Completado', cancelled:'Cancelado' };
 const PRIORITY_LABEL = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
-const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte' };
+const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte', ruc:'RUC' };
+const PROJECT_TYPE_LABEL = { web:'Web', mobile:'Aplicativo Móvil', desktop:'Aplicativo de Escritorio' };
 const FIELD_LABEL = {
   name:'Nombre', client:'Cliente', description:'Descripción', status:'Estado', progress:'Avance (%)',
   budget:'Presupuesto', currency:'Moneda', start_date:'Fecha de Inicio', end_date:'Fecha de Entrega',
   responsible_id:'Responsable', priority:'Prioridad', company_name:'Nombre de Empresa',
   id_document_type:'Tipo de Documento', id_document_number:'Número de Documento',
+  project_type:'Tipo de Proyecto', github_url:'Link de GitHub', website_url:'Link de la Página',
 };
 
 router.get('/projects', async (req, res) => {
@@ -222,7 +273,8 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
     const { name, client, description, status, progress, budget, currency, start_date, end_date,
-            responsible_id, priority, company_name, id_document_type, id_document_number } = req.body;
+            responsible_id, priority, company_name, id_document_type, id_document_number,
+            project_type, github_url, website_url } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
 
     const id = uid();
@@ -239,12 +291,13 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     }
 
     await pool.query(`
-      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
       [id, code, name, client, description || null, status || 'pending', progress || 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
-       company_name || null, company_logo, id_document_type || null, id_document_number || null]
+       company_name || null, company_logo, id_document_type || null, id_document_number || null,
+       project_type || null, github_url || null, website_url || null]
     );
     await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
     res.status(201).json({ id, code, name });
@@ -254,7 +307,8 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
 router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   try {
     const { name, client, description, status, progress, budget, currency, start_date, end_date,
-            responsible_id, priority, company_name, id_document_type, id_document_number } = req.body;
+            responsible_id, priority, company_name, id_document_type, id_document_number,
+            project_type, github_url, website_url } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
@@ -290,16 +344,19 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         responsible_id=COALESCE($10,responsible_id), priority=COALESCE($11,priority),
         company_name=COALESCE($12,company_name), company_logo=COALESCE($13,company_logo),
         id_document_type=COALESCE($14,id_document_type), id_document_number=COALESCE($15,id_document_number),
+        project_type=COALESCE($16,project_type), github_url=COALESCE($17,github_url), website_url=COALESCE($18,website_url),
         updated_at=NOW()
-      WHERE id=$16`,
+      WHERE id=$19`,
       [name||null, client||null, description||null, status||null, progress??null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
-       id_document_type||null, id_document_number||null, req.params.id]
+       id_document_type||null, id_document_number||null,
+       project_type||null, github_url||null, website_url||null, req.params.id]
     );
 
     const submitted = { name, client, description, status, progress, budget, currency, start_date, end_date,
-      responsible_id, priority, company_name, id_document_type, id_document_number, company_logo };
+      responsible_id, priority, company_name, id_document_type, id_document_number,
+      project_type, github_url, website_url, company_logo };
     const changes = [];
     for (const [field, label] of Object.entries(FIELD_LABEL)) {
       const newVal = submitted[field];
@@ -315,6 +372,8 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         oldDisplay = PRIORITY_LABEL[oldVal] || oldDisplay; newDisplay = PRIORITY_LABEL[newVal] || newVal;
       } else if (field === 'id_document_type') {
         oldDisplay = DOC_LABEL[oldVal] || oldDisplay; newDisplay = DOC_LABEL[newVal] || newVal;
+      } else if (field === 'project_type') {
+        oldDisplay = PROJECT_TYPE_LABEL[oldVal] || oldDisplay; newDisplay = PROJECT_TYPE_LABEL[newVal] || newVal;
       } else if (field === 'budget') {
         oldDisplay = oldVal != null ? `$${Number(oldVal).toLocaleString()}` : '—';
         newDisplay = `$${Number(newVal).toLocaleString()}`;
