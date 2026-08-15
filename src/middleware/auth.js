@@ -17,7 +17,7 @@ async function requireAuth(req, res, next) {
 
     /* Verificar que la sesión todavía existe y no ha expirado */
     const { rows } = await pool.query(
-      `SELECT s.id, u.id AS usuario_id, u.username, u.nombre, u.estado,
+      `SELECT s.id, u.id AS usuario_id, u.username, u.nombre, u.apellidos, u.estado,
               r.nombre AS rol, r.nivel_acceso, u.avatar_color
        FROM sesiones s
        JOIN usuarios u ON u.id = s.usuario_id
@@ -40,6 +40,7 @@ async function requireAuth(req, res, next) {
       id:           sesion.usuario_id,
       username:     sesion.username,
       nombre:       sesion.nombre,
+      apellidos:    sesion.apellidos,
       rol:          sesion.rol,
       nivel_acceso: sesion.nivel_acceso,
       avatar_color: sesion.avatar_color,
