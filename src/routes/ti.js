@@ -85,6 +85,7 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS github_url TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS website_url TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
     `);
   }
   return ready;
@@ -208,14 +209,16 @@ const FIELD_LABEL = {
   responsible_id:'Responsable', priority:'Prioridad', company_name:'Nombre de Empresa',
   id_document_type:'Tipo de Documento', id_document_number:'Número de Documento',
   project_type:'Tipo de Proyecto', github_url:'Link de GitHub', website_url:'Link de la Página',
+  family:'Familia de Proyecto',
 };
 
 router.get('/projects', async (req, res) => {
   try {
-    const { status, search } = req.query;
+    const { status, search, family } = req.query;
     const params = [];
     let where = 'WHERE 1=1';
     if (status) { params.push(status); where += ` AND p.status = $${params.length}`; }
+    if (family) { params.push(family); where += ` AND p.family = $${params.length}`; }
     if (search) {
       params.push(`%${search}%`);
       const n = params.length;
@@ -230,6 +233,15 @@ router.get('/projects', async (req, res) => {
       LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
       LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
       ${where} ORDER BY p.created_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/projects/families', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT family, COUNT(*)::int AS count FROM ti.projects WHERE family IS NOT NULL AND family <> '' GROUP BY family ORDER BY family`
+    );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -274,7 +286,7 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     if (!(await requireArea(req, res, 'ADG'))) return;
     const { name, client, description, status, progress, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
-            project_type, github_url, website_url } = req.body;
+            project_type, github_url, website_url, family } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
 
     const id = uid();
@@ -291,13 +303,13 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     }
 
     await pool.query(`
-      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
+      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
       [id, code, name, client, description || null, status || 'pending', progress || 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
        company_name || null, company_logo, id_document_type || null, id_document_number || null,
-       project_type || null, github_url || null, website_url || null]
+       project_type || null, github_url || null, website_url || null, family || null]
     );
     await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
     res.status(201).json({ id, code, name });
@@ -308,7 +320,7 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   try {
     const { name, client, description, status, progress, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
-            project_type, github_url, website_url } = req.body;
+            project_type, github_url, website_url, family } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
@@ -345,18 +357,19 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         company_name=COALESCE($12,company_name), company_logo=COALESCE($13,company_logo),
         id_document_type=COALESCE($14,id_document_type), id_document_number=COALESCE($15,id_document_number),
         project_type=COALESCE($16,project_type), github_url=COALESCE($17,github_url), website_url=COALESCE($18,website_url),
+        family=COALESCE($19,family),
         updated_at=NOW()
-      WHERE id=$19`,
+      WHERE id=$20`,
       [name||null, client||null, description||null, status||null, progress??null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
        id_document_type||null, id_document_number||null,
-       project_type||null, github_url||null, website_url||null, req.params.id]
+       project_type||null, github_url||null, website_url||null, family||null, req.params.id]
     );
 
     const submitted = { name, client, description, status, progress, budget, currency, start_date, end_date,
       responsible_id, priority, company_name, id_document_type, id_document_number,
-      project_type, github_url, website_url, company_logo };
+      project_type, github_url, website_url, family, company_logo };
     const changes = [];
     for (const [field, label] of Object.entries(FIELD_LABEL)) {
       const newVal = submitted[field];
