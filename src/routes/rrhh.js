@@ -678,15 +678,16 @@ router.delete('/catalogos/item/:id', async (req, res) => {
    de Qubira), con rol VIEWER por defecto. La contraseña en texto
    plano nunca se guarda: solo se usa para generar el hash.
    ============================================================ */
-async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apellidos, rol }) {
+async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apellidos, rol, estado }) {
   const username = usuario.trim().toLowerCase();
   const email = (correo || '').trim().toLowerCase() || `${username}@qubira.local`;
   const hash = await bcrypt.hash(contrasena, 12);
+  const cuentaEstado = estado === 'inactivo' ? 'inactivo' : 'activo';
 
   const { rows: existing } = await pool.query('SELECT id FROM usuarios WHERE username = $1', [username]);
 
   if (existing.length) {
-    await pool.query('UPDATE usuarios SET password_hash = $1 WHERE id = $2', [hash, existing[0].id]);
+    await pool.query('UPDATE usuarios SET password_hash = $1, estado = $2 WHERE id = $3', [hash, cuentaEstado, existing[0].id]);
     await pool.query('DELETE FROM sesiones WHERE usuario_id = $1', [existing[0].id]);
     return username;
   }
@@ -701,8 +702,8 @@ async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apel
 
   await pool.query(
     `INSERT INTO usuarios (nombre, apellidos, correo, username, password_hash, rol_id, estado)
-     VALUES ($1,$2,$3,$4,$5,$6,'activo')`,
-    [nombre || username, apellidos || '', email, username, hash, rolId]
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [nombre || username, apellidos || '', email, username, hash, rolId, cuentaEstado]
   );
   return username;
 }
@@ -724,6 +725,7 @@ router.post('/empleados', async (req, res) => {
           nombre: data.primerNombre,
           apellidos: `${data.primerApellido || ''} ${data.segundoApellido || ''}`.trim(),
           rol: data.rol,
+          estado: data.estado,
         });
       } catch (accErr) {
         return res.status(409).json({ ok: false, error: accErr.message });
@@ -779,6 +781,20 @@ router.put('/empleados/:id', async (req, res) => {
       const { rows: rolRows } = await pool.query('SELECT id FROM roles WHERE nombre = $1', [rol.toUpperCase()]);
       if (rolRows.length) {
         await pool.query('UPDATE usuarios SET rol_id = $1 WHERE lower(username) = lower($2)', [rolRows[0].id, before.usuario]);
+      }
+    }
+
+    /* Regla dura: si el empleado queda inactivo, su cuenta de acceso queda
+       inactiva también (y se cierra cualquier sesión activa al toque). Si
+       vuelve a activo, la cuenta se reactiva igual. */
+    if (changes.estado && changes.estado !== before.estado && before.usuario) {
+      const cuentaEstado = changes.estado === 'inactivo' ? 'inactivo' : 'activo';
+      const { rows: acc } = await pool.query(
+        'UPDATE usuarios SET estado = $1 WHERE lower(username) = lower($2) RETURNING id',
+        [cuentaEstado, before.usuario]
+      );
+      if (acc.length && cuentaEstado === 'inactivo') {
+        await pool.query('DELETE FROM sesiones WHERE usuario_id = $1', [acc[0].id]);
       }
     }
 
