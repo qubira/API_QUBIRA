@@ -406,13 +406,15 @@ function maskEmployee(emp) {
   return masked;
 }
 
-async function isPrivilegedViewer(username) {
-  if (!username) return false;
+/* Área/cargo (en mayúsculas) del empleado propio de esta cuenta, según su
+   campo `usuario`. Base para las reglas de permisos de RRHH. */
+async function getViewerAreaCargo(username) {
+  if (!username) return null;
   const { rows } = await pool.query(
     'SELECT area_trabajo_id, cargo_id FROM rrhh.empleados WHERE lower(usuario) = lower($1) LIMIT 1',
     [username]
   );
-  if (!rows.length || !rows[0].area_trabajo_id || !rows[0].cargo_id) return false;
+  if (!rows.length || !rows[0].area_trabajo_id || !rows[0].cargo_id) return null;
 
   const { rows: cats } = await pool.query(
     'SELECT id, nombre FROM rrhh.catalogos WHERE id = $1 OR id = $2',
@@ -420,8 +422,21 @@ async function isPrivilegedViewer(username) {
   );
   const area = cats.find(c => c.id === rows[0].area_trabajo_id);
   const cargo = cats.find(c => c.id === rows[0].cargo_id);
-  return !!area && area.nombre.trim().toUpperCase() === 'ADG'
-      && !!cargo && cargo.nombre.trim().toUpperCase() === 'GERENTE';
+  if (!area || !cargo) return null;
+  return { area: area.nombre.trim().toUpperCase(), cargo: cargo.nombre.trim().toUpperCase() };
+}
+
+async function isPrivilegedViewer(username) {
+  const ac = await getViewerAreaCargo(username);
+  return !!ac && ac.area === 'ADG' && ac.cargo === 'GERENTE';
+}
+
+/* Eliminar empleados: Área ADG o RRHH, y Cargo Coordinador/Supervisor/Gerente */
+async function canDeleteEmployees(username) {
+  const ac = await getViewerAreaCargo(username);
+  return !!ac
+    && ['ADG', 'RRHH'].includes(ac.area)
+    && ['COORDINADOR', 'SUPERVISOR', 'GERENTE'].includes(ac.cargo);
 }
 
 /* ============================================================
@@ -448,6 +463,21 @@ router.post('/empleados/:id/unlock', async (req, res) => {
   } catch (err) {
     console.error('[RRHH] POST /empleados/:id/unlock error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error al verificar la contraseña' });
+  }
+});
+
+/* ============================================================
+   GET /api/rrhh/roles
+   Lista de roles disponibles (para asignar al crear/editar la cuenta
+   de acceso de un empleado)
+   ============================================================ */
+router.get('/roles', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT nombre, descripcion, nivel_acceso FROM roles ORDER BY nivel_acceso DESC');
+    return res.json({ ok: true, data: rows });
+  } catch (err) {
+    console.error('[RRHH] GET /roles error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al obtener roles' });
   }
 });
 
@@ -648,7 +678,7 @@ router.delete('/catalogos/item/:id', async (req, res) => {
    de Qubira), con rol VIEWER por defecto. La contraseña en texto
    plano nunca se guarda: solo se usa para generar el hash.
    ============================================================ */
-async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apellidos }) {
+async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apellidos, rol }) {
   const username = usuario.trim().toLowerCase();
   const email = (correo || '').trim().toLowerCase() || `${username}@qubira.local`;
   const hash = await bcrypt.hash(contrasena, 12);
@@ -666,11 +696,13 @@ async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apel
     throw new Error('Ya existe una cuenta con ese correo. Usa otro correo o un nombre de usuario distinto.');
   }
 
-  const { rows: rol } = await pool.query(`SELECT id FROM roles WHERE nombre = 'VIEWER'`);
+  const { rows: rolRows } = await pool.query('SELECT id FROM roles WHERE nombre = $1', [(rol || 'VIEWER').toUpperCase()]);
+  const rolId = rolRows.length ? rolRows[0].id : (await pool.query(`SELECT id FROM roles WHERE nombre = 'VIEWER'`)).rows[0].id;
+
   await pool.query(
     `INSERT INTO usuarios (nombre, apellidos, correo, username, password_hash, rol_id, estado)
      VALUES ($1,$2,$3,$4,$5,$6,'activo')`,
-    [nombre || username, apellidos || '', email, username, hash, rol[0].id]
+    [nombre || username, apellidos || '', email, username, hash, rolId]
   );
   return username;
 }
@@ -691,6 +723,7 @@ router.post('/empleados', async (req, res) => {
           correo: data.email,
           nombre: data.primerNombre,
           apellidos: `${data.primerApellido || ''} ${data.segundoApellido || ''}`.trim(),
+          rol: data.rol,
         });
       } catch (accErr) {
         return res.status(409).json({ ok: false, error: accErr.message });
@@ -699,6 +732,7 @@ router.post('/empleados', async (req, res) => {
       data.usuario = data.usuario || '';
     }
     data.contrasena = '';
+    delete data.rol;
 
     const created = await insertRow('empleados', data);
 
@@ -722,10 +756,11 @@ router.put('/empleados/:id', async (req, res) => {
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Empleado no encontrado' });
     const before = toCamel('empleados', rows[0]);
 
-    /* Editar un empleado NUNCA toca sus credenciales de acceso — la cuenta
-       solo se crea una vez, al dar de alta (POST /empleados). Restablecer
-       la contraseña de ahí en más es exclusivo del panel de Soporte. */
-    const { meta, usuario, contrasena, password, ...changes } = req.body || {};
+    /* Editar un empleado NUNCA toca usuario/contraseña — la cuenta se crea
+       una sola vez, al dar de alta (POST /empleados), y restablecer la
+       contraseña de ahí en más es exclusivo del panel de Soporte. El ROL
+       sí se puede cambiar acá (es un dato organizacional, no un secreto). */
+    const { meta, usuario, contrasena, password, rol, ...changes } = req.body || {};
 
     /* Editar campos sensibles exige ser ADG/Gerente o confirmar la propia
        contraseña en este mismo request (igual criterio que para verlos). */
@@ -738,6 +773,13 @@ router.put('/empleados/:id', async (req, res) => {
       const { rows: userRows } = await pool.query('SELECT password_hash FROM usuarios WHERE id = $1', [req.user.id]);
       const match = userRows.length && await bcrypt.compare(password, userRows[0].password_hash);
       if (!match) return res.status(401).json({ ok: false, error: 'Contraseña incorrecta' });
+    }
+
+    if (rol && before.usuario) {
+      const { rows: rolRows } = await pool.query('SELECT id FROM roles WHERE nombre = $1', [rol.toUpperCase()]);
+      if (rolRows.length) {
+        await pool.query('UPDATE usuarios SET rol_id = $1 WHERE lower(username) = lower($2)', [rolRows[0].id, before.usuario]);
+      }
     }
 
     const updated = await updateRow('empleados', id, changes);
@@ -769,6 +811,27 @@ router.put('/empleados/:id', async (req, res) => {
 
 router.delete('/empleados/:id', async (req, res) => {
   try {
+    if (!(await canDeleteEmployees(req.user.username))) {
+      return res.status(403).json({ ok: false, error: 'No tienes permiso para eliminar empleados (requiere Área ADG o RRHH, y Cargo Coordinador, Supervisor o Gerente)' });
+    }
+
+    const { rows } = await pool.query('SELECT usuario FROM rrhh.empleados WHERE id = $1', [req.params.id]);
+    const username = rows[0]?.usuario;
+
+    /* Si el empleado tiene cuenta de acceso vinculada, se elimina también
+       de la tabla `usuarios` compartida por todo Qubira. No se puede
+       eliminar la propia cuenta de quien está haciendo el borrado. */
+    if (username) {
+      const { rows: acc } = await pool.query('SELECT id FROM usuarios WHERE lower(username) = lower($1)', [username]);
+      if (acc.length) {
+        if (acc[0].id === req.user.id) {
+          return res.status(400).json({ ok: false, error: 'No puedes eliminar tu propio empleado/cuenta' });
+        }
+        await pool.query('DELETE FROM sesiones WHERE usuario_id = $1', [acc[0].id]);
+        await pool.query('DELETE FROM usuarios WHERE id = $1', [acc[0].id]);
+      }
+    }
+
     await deleteRow('empleados', req.params.id);
     return res.json({ ok: true });
   } catch (err) {
