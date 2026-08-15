@@ -386,6 +386,72 @@ async function listAll(mapKey) {
 }
 
 /* ============================================================
+   Datos sensibles del empleado — solo visibles sin restricción
+   para quien, según SU PROPIO registro de empleado, pertenece a
+   Área de trabajo "ADG" y Cargo "Gerente". Todos los demás ven
+   estos campos como "••••••" hasta que ingresan SU propia
+   contraseña de acceso (POST /empleados/:id/unlock).
+   ============================================================ */
+const EMPLOYEE_SAFE_FIELDS = new Set([
+  'id', 'primerNombre', 'primerApellido', 'nombre', 'apellido', 'usuario',
+  'departmentId', 'areaTrabajoId', 'cargoId', 'cargo', 'jefeInmediatoId',
+  'fechaIngreso', 'email', 'emailLocal', 'emailDominioId', 'estado', 'foto',
+]);
+
+function maskEmployee(emp) {
+  const masked = { ...emp };
+  for (const key of Object.keys(masked)) {
+    if (!EMPLOYEE_SAFE_FIELDS.has(key) && masked[key]) masked[key] = '••••••';
+  }
+  return masked;
+}
+
+async function isPrivilegedViewer(username) {
+  if (!username) return false;
+  const { rows } = await pool.query(
+    'SELECT area_trabajo_id, cargo_id FROM rrhh.empleados WHERE lower(usuario) = lower($1) LIMIT 1',
+    [username]
+  );
+  if (!rows.length || !rows[0].area_trabajo_id || !rows[0].cargo_id) return false;
+
+  const { rows: cats } = await pool.query(
+    'SELECT id, nombre FROM rrhh.catalogos WHERE id = $1 OR id = $2',
+    [rows[0].area_trabajo_id, rows[0].cargo_id]
+  );
+  const area = cats.find(c => c.id === rows[0].area_trabajo_id);
+  const cargo = cats.find(c => c.id === rows[0].cargo_id);
+  return !!area && area.nombre.trim().toUpperCase() === 'ADG'
+      && !!cargo && cargo.nombre.trim().toUpperCase() === 'GERENTE';
+}
+
+/* ============================================================
+   POST /api/rrhh/empleados/:id/unlock
+   Verifica LA PROPIA contraseña de quien llama y, si es correcta,
+   devuelve ese empleado sin enmascarar. No persiste ningún estado:
+   hay que repetirlo cada vez que se quiera ver/editar sin permisos.
+   ============================================================ */
+router.post('/empleados/:id/unlock', async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    if (!password) return res.status(400).json({ ok: false, error: 'Falta la contraseña' });
+
+    const { rows: userRows } = await pool.query('SELECT password_hash FROM usuarios WHERE id = $1', [req.user.id]);
+    if (!userRows.length) return res.status(404).json({ ok: false, error: 'Usuario no encontrado' });
+
+    const match = await bcrypt.compare(password, userRows[0].password_hash);
+    if (!match) return res.status(401).json({ ok: false, error: 'Contraseña incorrecta' });
+
+    const { rows } = await pool.query('SELECT * FROM rrhh.empleados WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Empleado no encontrado' });
+
+    return res.json({ ok: true, data: toCamel('empleados', rows[0]) });
+  } catch (err) {
+    console.error('[RRHH] POST /empleados/:id/unlock error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al verificar la contraseña' });
+  }
+});
+
+/* ============================================================
    GET /api/rrhh/bootstrap
    Trae todo el estado de RRHH en un solo request (igual forma
    que el seedData() original del frontend)
@@ -399,7 +465,7 @@ router.get('/bootstrap', async (req, res) => {
       jobPostings, candidates, payrollRecords, vacations,
       trainings, trainingEnrollments, performanceReviews,
       climateSurveys, climateSurveyResponses, conflictCases,
-      catalogRows, auditRows,
+      catalogRows, auditRows, privileged,
     ] = await Promise.all([
       listAll('departamentos'), listAll('empleados'), listAll('contratos'), listAll('documentos'),
       listAll('vacantes'), listAll('candidatos'), listAll('nomina'), listAll('vacaciones'),
@@ -407,6 +473,7 @@ router.get('/bootstrap', async (req, res) => {
       listAll('encuestasClima'), listAll('respuestasClima'), listAll('casosConflicto'),
       pool.query('SELECT * FROM rrhh.catalogos'),
       pool.query('SELECT * FROM rrhh.auditoria_empleados ORDER BY fecha DESC'),
+      isPrivilegedViewer(req.user.username),
     ]);
 
     const catalogs = {};
@@ -417,18 +484,21 @@ router.get('/bootstrap', async (req, res) => {
 
     const auditLog = auditRows.rows.map(a => ({
       id: a.id, employeeId: a.employee_id, campo: a.campo,
-      valorAnterior: a.valor_anterior, valorNuevo: a.valor_nuevo,
+      valorAnterior: (privileged || EMPLOYEE_SAFE_FIELDS.has(a.campo)) ? a.valor_anterior : (a.valor_anterior ? '••••••' : a.valor_anterior),
+      valorNuevo: (privileged || EMPLOYEE_SAFE_FIELDS.has(a.campo)) ? a.valor_nuevo : (a.valor_nuevo ? '••••••' : a.valor_nuevo),
       usuario: a.usuario, ip: a.ip, fecha: a.fecha,
     }));
 
     return res.json({
       ok: true,
       data: {
-        departments, employees, contracts, documents,
+        departments,
+        employees: privileged ? employees : employees.map(maskEmployee),
+        contracts, documents,
         jobPostings, candidates, payrollRecords, vacations,
         trainings, trainingEnrollments, performanceReviews,
         climateSurveys, climateSurveyResponses, conflictCases,
-        catalogs, auditLog,
+        catalogs, auditLog, privileged,
       },
     });
   } catch (err) {
@@ -655,7 +725,20 @@ router.put('/empleados/:id', async (req, res) => {
     /* Editar un empleado NUNCA toca sus credenciales de acceso — la cuenta
        solo se crea una vez, al dar de alta (POST /empleados). Restablecer
        la contraseña de ahí en más es exclusivo del panel de Soporte. */
-    const { meta, usuario, contrasena, ...changes } = req.body || {};
+    const { meta, usuario, contrasena, password, ...changes } = req.body || {};
+
+    /* Editar campos sensibles exige ser ADG/Gerente o confirmar la propia
+       contraseña en este mismo request (igual criterio que para verlos). */
+    const touchesSensitive = Object.keys(changes)
+      .some(field => field in MAPS.empleados.cols && !EMPLOYEE_SAFE_FIELDS.has(field));
+    if (touchesSensitive && !(await isPrivilegedViewer(req.user.username))) {
+      if (!password) {
+        return res.status(403).json({ ok: false, error: 'Se requiere tu contraseña para editar estos datos' });
+      }
+      const { rows: userRows } = await pool.query('SELECT password_hash FROM usuarios WHERE id = $1', [req.user.id]);
+      const match = userRows.length && await bcrypt.compare(password, userRows[0].password_hash);
+      if (!match) return res.status(401).json({ ok: false, error: 'Contraseña incorrecta' });
+    }
 
     const updated = await updateRow('empleados', id, changes);
 
