@@ -80,6 +80,12 @@ function ensureSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS ti.scrum_roles (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, user_id INTEGER NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
@@ -810,6 +816,57 @@ router.delete('/requirements/:id', async (req, res) => {
     const label = old.type === 'non_functional' ? 'No Funcional' : 'Funcional';
     await logActivity(old.project_id, req.user.id, 'requirement_change',
       `${req.user.nombre || req.user.username} eliminó el requerimiento ${label} "${old.description}"`);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Roles Scrum — quién representa cada rol (Product Owner, Scrum
+   Master, Equipo de Desarrollo) en el proyecto. Un mismo trabajador
+   puede repetirse en más de un rol, y un rol puede tener más de un
+   trabajador (ej: varios devs).
+   ============================================================ */
+const SCRUM_ROLE_LABEL = { product_owner: 'Product Owner', scrum_master: 'Scrum Master', developer: 'Equipo de Desarrollo' };
+
+router.get('/scrum-roles', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id); where += ` AND s.project_id=$${params.length}`; }
+    const { rows } = await pool.query(`
+      SELECT s.*, u.nombre AS user_name
+      FROM ti.scrum_roles s
+      LEFT JOIN public.usuarios u ON u.id = s.user_id
+      ${where} ORDER BY s.created_at ASC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/scrum-roles', async (req, res) => {
+  try {
+    const { project_id, role, user_id } = req.body;
+    if (!project_id || !role || !user_id) return res.status(400).json({ error: 'Proyecto, rol y trabajador son requeridos' });
+    if (!SCRUM_ROLE_LABEL[role]) return res.status(400).json({ error: 'Rol inválido' });
+    const { rows: userRows } = await pool.query('SELECT nombre FROM public.usuarios WHERE id=$1', [user_id]);
+    if (!userRows.length) return res.status(400).json({ error: 'Trabajador no encontrado' });
+    const id = uid();
+    await pool.query('INSERT INTO ti.scrum_roles (id,project_id,role,user_id) VALUES ($1,$2,$3,$4)', [id, project_id, role, user_id]);
+    await logActivity(project_id, req.user.id, 'scrum_role_change',
+      `${req.user.nombre || req.user.username} inscribió a ${userRows[0].nombre} como ${SCRUM_ROLE_LABEL[role]}`);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/scrum-roles/:id', async (req, res) => {
+  try {
+    const { rows: oldRows } = await pool.query(`
+      SELECT s.*, u.nombre AS user_name FROM ti.scrum_roles s
+      LEFT JOIN public.usuarios u ON u.id = s.user_id WHERE s.id=$1`, [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'No encontrado' });
+    const old = oldRows[0];
+    await pool.query('DELETE FROM ti.scrum_roles WHERE id=$1', [req.params.id]);
+    await logActivity(old.project_id, req.user.id, 'scrum_role_change',
+      `${req.user.nombre || req.user.username} quitó a ${old.user_name} de ${SCRUM_ROLE_LABEL[old.role] || old.role}`);
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
