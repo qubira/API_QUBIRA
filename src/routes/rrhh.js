@@ -609,24 +609,10 @@ router.put('/empleados/:id', async (req, res) => {
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Empleado no encontrado' });
     const before = toCamel('empleados', rows[0]);
 
-    const { meta, ...changes } = req.body || {};
-
-    if (changes.usuario && changes.contrasena) {
-      try {
-        changes.usuario = await upsertEmployeeAccount({
-          usuario: changes.usuario,
-          contrasena: changes.contrasena,
-          correo: changes.email ?? before.email,
-          nombre: changes.primerNombre ?? before.primerNombre,
-          apellidos: `${changes.primerApellido ?? before.primerApellido ?? ''} ${changes.segundoApellido ?? before.segundoApellido ?? ''}`.trim(),
-        });
-      } catch (accErr) {
-        return res.status(409).json({ ok: false, error: accErr.message });
-      }
-    } else {
-      delete changes.contrasena;
-    }
-    if ('contrasena' in changes) changes.contrasena = '';
+    /* Editar un empleado NUNCA toca sus credenciales de acceso — la cuenta
+       solo se crea una vez, al dar de alta (POST /empleados). Restablecer
+       la contraseña de ahí en más es exclusivo del panel de Soporte. */
+    const { meta, usuario, contrasena, ...changes } = req.body || {};
 
     const updated = await updateRow('empleados', id, changes);
 
