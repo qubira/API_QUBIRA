@@ -417,10 +417,10 @@ router.post('/projects/:id/claim', async (req, res) => {
     if (rows[0].status !== 'pending') return res.status(400).json({ error: 'Este proyecto ya fue reclamado o no está pendiente' });
 
     await pool.query(
-      `UPDATE ti.projects SET status = 'active', claimed_by = $1, claimed_at = NOW(), updated_at = NOW() WHERE id = $2`,
+      `UPDATE ti.projects SET status = 'active', claimed_by = $1, claimed_at = NOW(), responsible_id = $1, updated_at = NOW() WHERE id = $2`,
       [req.user.id, req.params.id]
     );
-    await logActivity(req.params.id, req.user.id, 'claimed', `${req.user.nombre || req.user.username} (TI) anexó el proyecto "${rows[0].name}" a su área`);
+    await logActivity(req.params.id, req.user.id, 'claimed', `${req.user.nombre || req.user.username} (TI) anexó el proyecto "${rows[0].name}" a su área y quedó como responsable`);
     res.json({ message: 'Proyecto anexado a TI' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
