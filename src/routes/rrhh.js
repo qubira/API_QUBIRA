@@ -3,6 +3,7 @@
 const express    = require('express');
 const crypto     = require('crypto');
 const multer     = require('multer');
+const bcrypt     = require('bcryptjs');
 const { pool }   = require('../db');
 const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
@@ -529,12 +530,63 @@ router.post('/catalogos/:catalogo', async (req, res) => {
 });
 
 /* ============================================================
+   Credenciales de acceso del empleado — crea o resetea una cuenta
+   real en la tabla `usuarios` (la misma que usan todos los paneles
+   de Qubira), con rol VIEWER por defecto. La contraseña en texto
+   plano nunca se guarda: solo se usa para generar el hash.
+   ============================================================ */
+async function upsertEmployeeAccount({ usuario, contrasena, correo, nombre, apellidos }) {
+  const username = usuario.trim().toLowerCase();
+  const email = (correo || '').trim().toLowerCase() || `${username}@qubira.local`;
+  const hash = await bcrypt.hash(contrasena, 12);
+
+  const { rows: existing } = await pool.query('SELECT id FROM usuarios WHERE username = $1', [username]);
+
+  if (existing.length) {
+    await pool.query('UPDATE usuarios SET password_hash = $1 WHERE id = $2', [hash, existing[0].id]);
+    await pool.query('DELETE FROM sesiones WHERE usuario_id = $1', [existing[0].id]);
+    return username;
+  }
+
+  const { rows: correoTaken } = await pool.query('SELECT id FROM usuarios WHERE correo = $1', [email]);
+  if (correoTaken.length) {
+    throw new Error('Ya existe una cuenta con ese correo. Usa otro correo o un nombre de usuario distinto.');
+  }
+
+  const { rows: rol } = await pool.query(`SELECT id FROM roles WHERE nombre = 'VIEWER'`);
+  await pool.query(
+    `INSERT INTO usuarios (nombre, apellidos, correo, username, password_hash, rol_id, estado)
+     VALUES ($1,$2,$3,$4,$5,$6,'activo')`,
+    [nombre || username, apellidos || '', email, username, hash, rol[0].id]
+  );
+  return username;
+}
+
+/* ============================================================
    Empleados — alta/edición con auditoría de cambios campo a campo
    (misma lógica que recordAudit() del storage.js original)
    ============================================================ */
 router.post('/empleados', async (req, res) => {
   try {
-    const data = { ...req.body, estado: req.body.estado || 'activo', usuario: '', contrasena: '' };
+    const data = { ...req.body, estado: req.body.estado || 'activo' };
+
+    if (data.usuario && data.contrasena) {
+      try {
+        data.usuario = await upsertEmployeeAccount({
+          usuario: data.usuario,
+          contrasena: data.contrasena,
+          correo: data.email,
+          nombre: data.primerNombre,
+          apellidos: `${data.primerApellido || ''} ${data.segundoApellido || ''}`.trim(),
+        });
+      } catch (accErr) {
+        return res.status(409).json({ ok: false, error: accErr.message });
+      }
+    } else {
+      data.usuario = data.usuario || '';
+    }
+    data.contrasena = '';
+
     const created = await insertRow('empleados', data);
 
     await pool.query(
@@ -558,6 +610,24 @@ router.put('/empleados/:id', async (req, res) => {
     const before = toCamel('empleados', rows[0]);
 
     const { meta, ...changes } = req.body || {};
+
+    if (changes.usuario && changes.contrasena) {
+      try {
+        changes.usuario = await upsertEmployeeAccount({
+          usuario: changes.usuario,
+          contrasena: changes.contrasena,
+          correo: changes.email ?? before.email,
+          nombre: changes.primerNombre ?? before.primerNombre,
+          apellidos: `${changes.primerApellido ?? before.primerApellido ?? ''} ${changes.segundoApellido ?? before.segundoApellido ?? ''}`.trim(),
+        });
+      } catch (accErr) {
+        return res.status(409).json({ ok: false, error: accErr.message });
+      }
+    } else {
+      delete changes.contrasena;
+    }
+    if ('contrasena' in changes) changes.contrasena = '';
+
     const updated = await updateRow('empleados', id, changes);
 
     const entries = [];
