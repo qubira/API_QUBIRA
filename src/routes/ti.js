@@ -79,6 +79,18 @@ function ensureSchema() {
 }
 router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
 
+/* Lista liviana de cuentas para los selects de "responsable" — cualquier
+   usuario autenticado la necesita, no solo ADMIN/CEO (a diferencia de
+   /api/usuarios, que sí exige nivel >= 80). */
+router.get('/users', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, TRIM(nombre || ' ' || COALESCE(apellidos, '')) AS name
+      FROM public.usuarios WHERE estado = 'activo' ORDER BY nombre`);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 function logActivity(projectId, userId, type, description) {
   if (!projectId) return Promise.resolve();
   return pool.query(
