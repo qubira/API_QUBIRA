@@ -530,6 +530,49 @@ router.post('/catalogos/:catalogo', async (req, res) => {
 });
 
 /* ============================================================
+   PUT /api/rrhh/catalogos/item/:id
+   Renombrar un ítem de catálogo
+   ============================================================ */
+router.put('/catalogos/item/:id', async (req, res) => {
+  try {
+    const { nombre } = req.body || {};
+    if (!nombre) return res.status(400).json({ ok: false, error: 'Falta el nombre' });
+
+    const { rows } = await pool.query(
+      'UPDATE rrhh.catalogos SET nombre = $1 WHERE id = $2 RETURNING id, catalogo, nombre, parent_id',
+      [nombre, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Ítem no encontrado' });
+    return res.json({ ok: true, data: { id: rows[0].id, catalogo: rows[0].catalogo, nombre: rows[0].nombre, parentId: rows[0].parent_id } });
+  } catch (err) {
+    console.error('[RRHH] PUT /catalogos/item error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al renombrar el ítem de catálogo' });
+  }
+});
+
+/* ============================================================
+   DELETE /api/rrhh/catalogos/item/:id
+   Elimina un ítem de catálogo y, si es jerárquico (geo), sus hijos
+   en cascada (provincia -> distritos, departamento -> provincias/distritos).
+   ============================================================ */
+router.delete('/catalogos/item/:id', async (req, res) => {
+  try {
+    const id = req.params.id;
+    const nivel1 = await pool.query('SELECT id FROM rrhh.catalogos WHERE parent_id = $1', [id]);
+    for (const { id: hijoId } of nivel1.rows) {
+      await pool.query('DELETE FROM rrhh.catalogos WHERE parent_id = $1', [hijoId]);
+    }
+    await pool.query('DELETE FROM rrhh.catalogos WHERE parent_id = $1', [id]);
+    const { rowCount } = await pool.query('DELETE FROM rrhh.catalogos WHERE id = $1', [id]);
+    if (!rowCount) return res.status(404).json({ ok: false, error: 'Ítem no encontrado' });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[RRHH] DELETE /catalogos/item error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al eliminar el ítem de catálogo' });
+  }
+});
+
+/* ============================================================
    Credenciales de acceso del empleado — crea o resetea una cuenta
    real en la tabla `usuarios` (la misma que usan todos los paneles
    de Qubira), con rol VIEWER por defecto. La contraseña en texto
