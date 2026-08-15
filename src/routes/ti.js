@@ -210,7 +210,7 @@ const PRIORITY_LABEL = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgent
 const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte', ruc:'RUC' };
 const PROJECT_TYPE_LABEL = { web:'Web', mobile:'Aplicativo Móvil', desktop:'Aplicativo de Escritorio' };
 const FIELD_LABEL = {
-  name:'Nombre', client:'Cliente', description:'Descripción', status:'Estado', progress:'Avance (%)',
+  name:'Nombre', client:'Cliente', description:'Descripción', status:'Estado',
   budget:'Presupuesto', currency:'Moneda', start_date:'Fecha de Inicio', end_date:'Fecha de Entrega',
   responsible_id:'Responsable', priority:'Prioridad', company_name:'Nombre de Empresa',
   id_document_type:'Tipo de Documento', id_document_number:'Número de Documento',
@@ -290,7 +290,7 @@ router.get('/projects/:id', async (req, res) => {
 router.post('/projects', upload.single('logo_file'), async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
-    const { name, client, description, status, progress, budget, currency, start_date, end_date,
+    const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
             project_type, github_url, website_url, family } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
@@ -311,7 +311,7 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     await pool.query(`
       INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-      [id, code, name, client, description || null, status || 'pending', progress || 0,
+      [id, code, name, client, description || null, status || 'pending', 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
        company_name || null, company_logo, id_document_type || null, id_document_number || null,
@@ -324,7 +324,7 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
 
 router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   try {
-    const { name, client, description, status, progress, budget, currency, start_date, end_date,
+    const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
             project_type, github_url, website_url, family } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
@@ -357,23 +357,23 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     await pool.query(`
       UPDATE ti.projects SET
         name=COALESCE($1,name), client=COALESCE($2,client), description=COALESCE($3,description),
-        status=COALESCE($4,status), progress=COALESCE($5,progress), budget=COALESCE($6,budget),
-        currency=COALESCE($7,currency), start_date=COALESCE($8,start_date), end_date=COALESCE($9,end_date),
-        responsible_id=COALESCE($10,responsible_id), priority=COALESCE($11,priority),
-        company_name=COALESCE($12,company_name), company_logo=COALESCE($13,company_logo),
-        id_document_type=COALESCE($14,id_document_type), id_document_number=COALESCE($15,id_document_number),
-        project_type=COALESCE($16,project_type), github_url=COALESCE($17,github_url), website_url=COALESCE($18,website_url),
-        family=COALESCE($19,family),
+        status=COALESCE($4,status), budget=COALESCE($5,budget),
+        currency=COALESCE($6,currency), start_date=COALESCE($7,start_date), end_date=COALESCE($8,end_date),
+        responsible_id=COALESCE($9,responsible_id), priority=COALESCE($10,priority),
+        company_name=COALESCE($11,company_name), company_logo=COALESCE($12,company_logo),
+        id_document_type=COALESCE($13,id_document_type), id_document_number=COALESCE($14,id_document_number),
+        project_type=COALESCE($15,project_type), github_url=COALESCE($16,github_url), website_url=COALESCE($17,website_url),
+        family=COALESCE($18,family),
         updated_at=NOW()
-      WHERE id=$20`,
-      [name||null, client||null, description||null, status||null, progress??null,
+      WHERE id=$19`,
+      [name||null, client||null, description||null, status||null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
        id_document_type||null, id_document_number||null,
        project_type||null, github_url||null, website_url||null, family||null, req.params.id]
     );
 
-    const submitted = { name, client, description, status, progress, budget, currency, start_date, end_date,
+    const submitted = { name, client, description, status, budget, currency, start_date, end_date,
       responsible_id, priority, company_name, id_document_type, id_document_number,
       project_type, github_url, website_url, family, company_logo };
     const changes = [];
@@ -749,6 +749,16 @@ router.get('/activities', async (req, res) => {
    ============================================================ */
 const REQ_TYPE_LABEL = { functional: 'Funcional', non_functional: 'No Funcional' };
 
+/* El avance del proyecto ya no se escribe a mano — se calcula como el
+   promedio del avance de todos sus requisitos (funcionales y no
+   funcionales juntos), y se recalcula cada vez que uno cambia. */
+async function recalcProjectProgress(projectId) {
+  const { rows } = await pool.query(
+    'SELECT COALESCE(ROUND(AVG(progress)),0)::int AS avg FROM ti.requirements WHERE project_id=$1', [projectId]
+  );
+  await pool.query('UPDATE ti.projects SET progress=$1, updated_at=NOW() WHERE id=$2', [rows[0].avg, projectId]);
+}
+
 router.get('/requirements', async (req, res) => {
   try {
     const { project_id } = req.query;
@@ -771,6 +781,7 @@ router.post('/requirements', async (req, res) => {
     );
     await logActivity(project_id, req.user.id, 'requirement_change',
       `${req.user.nombre || req.user.username} agregó el requerimiento ${REQ_TYPE_LABEL[finalType]} "${description}"`);
+    await recalcProjectProgress(project_id);
     res.status(201).json({ id });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -803,6 +814,9 @@ router.put('/requirements/:id', async (req, res) => {
       await logActivity(old.project_id, req.user.id, 'requirement_change',
         `${who} cambió la descripción del requerimiento "${old.description}" a "${description}"`);
     }
+    if (clampedProgress !== undefined && clampedProgress !== old.progress) {
+      await recalcProjectProgress(old.project_id);
+    }
     res.json({ message: 'Actualizado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -816,6 +830,7 @@ router.delete('/requirements/:id', async (req, res) => {
     const label = old.type === 'non_functional' ? 'No Funcional' : 'Funcional';
     await logActivity(old.project_id, req.user.id, 'requirement_change',
       `${req.user.nombre || req.user.username} eliminó el requerimiento ${label} "${old.description}"`);
+    await recalcProjectProgress(old.project_id);
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
