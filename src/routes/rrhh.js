@@ -97,6 +97,8 @@ function ensureSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      ALTER TABLE rrhh.empleados ADD COLUMN IF NOT EXISTS pais_id TEXT;
+
       CREATE TABLE IF NOT EXISTS rrhh.contratos (
         id TEXT PRIMARY KEY, employee_id TEXT REFERENCES rrhh.empleados(id) ON DELETE CASCADE,
         tipo TEXT, fecha_inicio TEXT, fecha_fin TEXT, salario NUMERIC,
@@ -243,6 +245,21 @@ async function seedCatalogsIfEmpty() {
   await pool.query(`INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id) VALUES ${values.join(',')}`, params);
 }
 
+/* "paises" se agregó después de que el catálogo ya tenía datos en producción,
+   así que seedCatalogsIfEmpty() (que solo corre si la tabla está vacía) no lo
+   sembraría — se revisa aparte, solo para este catalogo puntual. */
+async function seedPaisesIfEmpty() {
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM rrhh.catalogos WHERE catalogo = 'paises'");
+  if (rows[0].n > 0) return;
+  const paises = ['Perú', 'Argentina', 'Chile', 'Colombia', 'Venezuela'];
+  const values = []; const params = []; let i = 1;
+  for (const nombre of paises) {
+    values.push(`($${i++}, $${i++}, $${i++}, $${i++})`);
+    params.push(uid(), 'paises', nombre, null);
+  }
+  await pool.query(`INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id) VALUES ${values.join(',')}`, params);
+}
+
 /* ============================================================
    Mapeo camelCase (frontend) <-> snake_case (Postgres)
    ============================================================ */
@@ -258,7 +275,7 @@ const MAPS = {
     nacionalidadId:'nacionalidad_id', estadoCivilId:'estado_civil_id',
     emailLocal:'email_local', emailDominioId:'email_dominio_id', email:'email',
     telefono:'telefono', hijos:'hijos',
-    departamentoGeoId:'departamento_geo_id', provinciaId:'provincia_id', distritoId:'distrito_id',
+    paisId:'pais_id', departamentoGeoId:'departamento_geo_id', provinciaId:'provincia_id', distritoId:'distrito_id',
     direccion:'direccion', coordenadas:'coordenadas', codigoPostal:'codigo_postal',
     cuentaAntecedentes:'cuenta_antecedentes', tipoAntecedenteId:'tipo_antecedente_id',
     areaTrabajoId:'area_trabajo_id', cargoId:'cargo_id', jefeInmediatoId:'jefe_inmediato_id',
@@ -489,6 +506,7 @@ router.get('/roles', async (req, res) => {
 router.get('/bootstrap', async (req, res) => {
   try {
     await seedCatalogsIfEmpty();
+    await seedPaisesIfEmpty();
 
     const [
       departments, employees, contracts, documents,
