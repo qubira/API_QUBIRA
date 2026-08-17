@@ -122,6 +122,50 @@ async function isProjectLockedForTi(projectId) {
   return rows.length ? rows[0].status === 'completed' : false;
 }
 
+/* ============================================================
+   Visibilidad por proyecto (lado TI): para que no cualquier persona
+   de TI pueda ver la documentación/requisitos/etc. de un proyecto
+   ajeno, solo puede entrar al detalle de un proyecto quien:
+   - es de área ADG (o tiene nivel_acceso >= 100), o
+   - es el Responsable del proyecto, o
+   - está inscrito en algún rol Scrum de ese proyecto.
+   El listado general de /projects (vista superficial: nombre, cliente,
+   estado, familia, responsable, avance) NO se restringe.
+   ============================================================ */
+async function isPrivilegedViewer(req) {
+  const myArea = await getEmployeeArea(req.user.username);
+  return myArea === 'ADG' || req.user.nivel_acceso >= 100;
+}
+
+async function canAccessProject(req, projectId) {
+  if (await isPrivilegedViewer(req)) return true;
+  const { rows } = await pool.query('SELECT responsible_id FROM ti.projects WHERE id=$1', [projectId]);
+  if (!rows.length) return false;
+  if (rows[0].responsible_id != null && String(rows[0].responsible_id) === String(req.user.id)) return true;
+  const { rows: sc } = await pool.query(
+    'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [projectId, req.user.id]
+  );
+  return sc.length > 0;
+}
+
+async function isProjectResponsible(req, projectId) {
+  if (await isPrivilegedViewer(req)) return true;
+  const { rows } = await pool.query('SELECT responsible_id FROM ti.projects WHERE id=$1', [projectId]);
+  return rows.length > 0 && rows[0].responsible_id != null && String(rows[0].responsible_id) === String(req.user.id);
+}
+
+/* Ids de proyectos donde el usuario es Responsable o está en el equipo
+   Scrum — usado para filtrar los listados "sin proyecto" (Documentos,
+   WhatsApp, Correos) cuando el que pregunta no es privilegiado. */
+async function getAccessibleProjectIds(userId) {
+  const { rows } = await pool.query(`
+    SELECT id FROM ti.projects WHERE responsible_id = $1
+    UNION
+    SELECT project_id AS id FROM ti.scrum_roles WHERE user_id = $1
+  `, [userId]);
+  return rows.map(r => r.id);
+}
+
 /* Lista liviana de cuentas para los selects de "responsable" — cualquier
    usuario autenticado la necesita, no solo ADMIN/CEO (a diferencia de
    /api/usuarios, que sí exige nivel >= 80). */
@@ -283,6 +327,12 @@ router.get('/projects/:id', async (req, res) => {
       [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    if (!(await isPrivilegedViewer(req)) && String(rows[0].responsible_id) !== String(req.user.id)) {
+      const { rows: sc } = await pool.query(
+        'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [req.params.id, req.user.id]
+      );
+      if (!sc.length) return res.status(403).json({ error: 'No tienes acceso a este proyecto — solo el responsable y el equipo Scrum asignado pueden verlo' });
+    }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -527,8 +577,16 @@ router.delete('/contracts/:id', async (req, res) => {
 router.get('/documents', async (req, res) => {
   try {
     const { project_id, category, search } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id); where += ` AND d.project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND d.project_id = ANY($${params.length})`;
+    }
     if (category)   { params.push(category);   where += ` AND d.category=$${params.length}`; }
     if (search) {
       params.push(`%${search}%`);
@@ -549,6 +607,12 @@ router.post('/documents', upload.single('file'), async (req, res) => {
   try {
     const { project_id, category, title, description, tags } = req.body;
     if (!title) return res.status(400).json({ error: 'Título requerido' });
+    if (!(await isPrivilegedViewer(req))) {
+      if (!project_id) return res.status(403).json({ error: 'Selecciona un proyecto' });
+      if (!(await isProjectResponsible(req, project_id))) {
+        return res.status(403).json({ error: 'Solo el responsable del proyecto puede subir documentos' });
+      }
+    }
 
     let file_path = null, file_name = null, file_size = null, mime_type = null;
     if (req.file) {
@@ -574,6 +638,11 @@ router.post('/documents', upload.single('file'), async (req, res) => {
 
 router.delete('/documents/:id', async (req, res) => {
   try {
+    const { rows } = await pool.query('SELECT project_id FROM ti.documents WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+    if (!(await isPrivilegedViewer(req)) && !(await isProjectResponsible(req, rows[0].project_id))) {
+      return res.status(403).json({ error: 'Solo el responsable del proyecto puede eliminar documentos' });
+    }
     await pool.query('DELETE FROM ti.documents WHERE id=$1', [req.params.id]);
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -585,8 +654,16 @@ router.delete('/documents/:id', async (req, res) => {
 router.get('/whatsapp', async (req, res) => {
   try {
     const { project_id, contact_name, starred } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id)   { params.push(project_id);         where += ` AND w.project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND w.project_id = ANY($${params.length})`;
+    }
     if (contact_name) { params.push(`%${contact_name}%`); where += ` AND w.contact_name ILIKE $${params.length}`; }
     if (starred)      { where += ' AND w.starred=1'; }
     const { rows } = await pool.query(`
@@ -673,8 +750,16 @@ router.delete('/whatsapp/:id', async (req, res) => {
 router.get('/emails', async (req, res) => {
   try {
     const { project_id, direction, starred, search } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id);   where += ` AND e.project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND e.project_id = ANY($${params.length})`;
+    }
     if (direction)  { params.push(direction);     where += ` AND e.direction=$${params.length}`; }
     if (starred)    { where += ' AND e.starred=1'; }
     if (search) {
@@ -730,9 +815,17 @@ router.delete('/emails/:id', async (req, res) => {
 router.get('/activities', async (req, res) => {
   try {
     const { project_id } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const limit = Math.min(parseInt(req.query.limit) || 50, 200);
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id); where += ` AND a.project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND a.project_id = ANY($${params.length})`;
+    }
     params.push(limit);
     const { rows } = await pool.query(`
       SELECT a.*, u.nombre AS user_name, p.name AS project_name, p.code AS project_code
@@ -762,8 +855,16 @@ async function recalcProjectProgress(projectId) {
 router.get('/requirements', async (req, res) => {
   try {
     const { project_id } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id); where += ` AND project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND project_id = ANY($${params.length})`;
+    }
     const { rows } = await pool.query(`SELECT * FROM ti.requirements ${where} ORDER BY created_at ASC`, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -790,12 +891,16 @@ router.post('/requirements', async (req, res) => {
 router.put('/requirements/:id', async (req, res) => {
   try {
     const { description, type, progress } = req.body;
-    if (description !== undefined || type !== undefined) {
-      if (!(await requireArea(req, res, 'ADG'))) return;
-    }
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
     const old = oldRows[0];
+
+    if (description !== undefined || type !== undefined) {
+      if (!(await requireArea(req, res, 'ADG'))) return;
+    }
+    if (progress !== undefined && !(await isProjectResponsible(req, old.project_id))) {
+      return res.status(403).json({ error: 'Solo el responsable del proyecto puede actualizar el avance' });
+    }
 
     const sets = []; const params = [];
     const add = (col, val) => { if (val !== undefined) { params.push(val); sets.push(`${col}=$${params.length}`); } };
@@ -851,8 +956,16 @@ const SCRUM_ROLE_LABEL = { product_owner: 'Product Owner', scrum_master: 'Scrum 
 router.get('/scrum-roles', async (req, res) => {
   try {
     const { project_id } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id); where += ` AND s.project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND s.project_id = ANY($${params.length})`;
+    }
     const { rows } = await pool.query(`
       SELECT s.*, u.nombre AS user_name
       FROM ti.scrum_roles s
@@ -866,6 +979,9 @@ router.post('/scrum-roles', async (req, res) => {
   try {
     const { project_id, role, user_id } = req.body;
     if (!project_id || !role || !user_id) return res.status(400).json({ error: 'Proyecto, rol y trabajador son requeridos' });
+    if (!(await isProjectResponsible(req, project_id))) {
+      return res.status(403).json({ error: 'Solo el responsable del proyecto puede armar el equipo Scrum' });
+    }
     if (!SCRUM_ROLE_LABEL[role]) return res.status(400).json({ error: 'Rol inválido' });
     const { rows: userRows } = await pool.query('SELECT nombre FROM public.usuarios WHERE id=$1', [user_id]);
     if (!userRows.length) return res.status(400).json({ error: 'Trabajador no encontrado' });
@@ -884,6 +1000,9 @@ router.delete('/scrum-roles/:id', async (req, res) => {
       LEFT JOIN public.usuarios u ON u.id = s.user_id WHERE s.id=$1`, [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'No encontrado' });
     const old = oldRows[0];
+    if (!(await isProjectResponsible(req, old.project_id))) {
+      return res.status(403).json({ error: 'Solo el responsable del proyecto puede modificar el equipo Scrum' });
+    }
     await pool.query('DELETE FROM ti.scrum_roles WHERE id=$1', [req.params.id]);
     await logActivity(old.project_id, req.user.id, 'scrum_role_change',
       `${req.user.nombre || req.user.username} quitó a ${old.user_name} de ${SCRUM_ROLE_LABEL[old.role] || old.role}`);
