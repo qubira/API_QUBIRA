@@ -771,6 +771,7 @@ router.get('/requirements', async (req, res) => {
 
 router.post('/requirements', async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { project_id, type, description } = req.body;
     if (!project_id || !description) return res.status(400).json({ error: 'Proyecto y descripción son requeridos' });
     const id = uid();
@@ -789,6 +790,9 @@ router.post('/requirements', async (req, res) => {
 router.put('/requirements/:id', async (req, res) => {
   try {
     const { description, type, progress } = req.body;
+    if (description !== undefined || type !== undefined) {
+      if (!(await requireArea(req, res, 'ADG'))) return;
+    }
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
     const old = oldRows[0];
@@ -823,6 +827,7 @@ router.put('/requirements/:id', async (req, res) => {
 
 router.delete('/requirements/:id', async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
     const old = oldRows[0];
