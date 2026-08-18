@@ -92,12 +92,21 @@ function ensureSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS ti.technology_catalog (
+        id TEXT PRIMARY KEY, category TEXT NOT NULL, name TEXT NOT NULL,
+        image_url TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS technology_catalog_category_name_idx
+        ON ti.technology_catalog (category, LOWER(name));
+
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS github_url TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS website_url TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
+      ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
+      ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
     `);
   }
   return ready;
@@ -1020,7 +1029,23 @@ router.delete('/scrum-roles/:id', async (req, res) => {
    Tecnologías del proyecto — lenguajes y herramientas usados.
    Tanto TI como ADG pueden agregarlas, editarlas y borrarlas;
    solo se exige tener acceso de visualización al proyecto.
+   Cada tecnología vive también en un catálogo compartido
+   (ti.technology_catalog) para poder reutilizar nombre + imagen
+   en otros proyectos vía el menú desplegable de selección.
    ============================================================ */
+router.get('/technology-catalog', async (req, res) => {
+  try {
+    const { category, q } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (category) { params.push(category === 'tool' ? 'tool' : 'language'); where += ` AND category=$${params.length}`; }
+    if (q) { params.push(`%${q}%`); where += ` AND name ILIKE $${params.length}`; }
+    const { rows } = await pool.query(
+      `SELECT * FROM ti.technology_catalog ${where} ORDER BY name ASC LIMIT 50`, params
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/technologies', async (req, res) => {
   try {
     const { project_id } = req.query;
@@ -1039,22 +1064,50 @@ router.get('/technologies', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/technologies', async (req, res) => {
+router.post('/technologies', upload.single('image'), async (req, res) => {
   try {
-    const { project_id, category, name } = req.body;
+    const { project_id, category, name, catalog_id } = req.body;
     if (!project_id || !category || !name) return res.status(400).json({ error: 'Proyecto, categoría y nombre son requeridos' });
     if (!(await canAccessProject(req, project_id))) {
       return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
     }
     const finalCategory = category === 'tool' ? 'tool' : 'language';
+
+    let catalogRow = null;
+    if (catalog_id) {
+      const { rows } = await pool.query(
+        'SELECT * FROM ti.technology_catalog WHERE id=$1 AND category=$2', [catalog_id, finalCategory]
+      );
+      catalogRow = rows[0] || null;
+    }
+    if (!catalogRow) {
+      const { rows } = await pool.query(
+        'SELECT * FROM ti.technology_catalog WHERE category=$1 AND LOWER(name)=LOWER($2)', [finalCategory, name]
+      );
+      catalogRow = rows[0] || null;
+    }
+    if (!catalogRow) {
+      let image_url = null;
+      if (req.file) {
+        const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/technologies', 'image', req.file.originalname);
+        image_url = result.secure_url;
+      }
+      const catalogId = uid();
+      await pool.query(
+        'INSERT INTO ti.technology_catalog (id,category,name,image_url) VALUES ($1,$2,$3,$4)',
+        [catalogId, finalCategory, name, image_url]
+      );
+      catalogRow = { id: catalogId, category: finalCategory, name, image_url };
+    }
+
     const id = uid();
     await pool.query(
-      'INSERT INTO ti.project_technologies (id,project_id,category,name) VALUES ($1,$2,$3,$4)',
-      [id, project_id, finalCategory, name]
+      'INSERT INTO ti.project_technologies (id,project_id,category,name,image_url,catalog_id) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, project_id, finalCategory, catalogRow.name, catalogRow.image_url, catalogRow.id]
     );
     await logActivity(project_id, req.user.id, 'technology_change',
-      `${req.user.nombre || req.user.username} agregó ${finalCategory === 'tool' ? 'la herramienta' : 'el lenguaje'} "${name}"`);
-    res.status(201).json({ id });
+      `${req.user.nombre || req.user.username} agregó ${finalCategory === 'tool' ? 'la herramienta' : 'el lenguaje'} "${catalogRow.name}"`);
+    res.status(201).json({ id, image_url: catalogRow.image_url, name: catalogRow.name });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
