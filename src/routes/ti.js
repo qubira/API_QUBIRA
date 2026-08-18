@@ -86,6 +86,12 @@ function ensureSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS ti.project_technologies (
+        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
+        category TEXT NOT NULL, name TEXT NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
@@ -1006,6 +1012,80 @@ router.delete('/scrum-roles/:id', async (req, res) => {
     await pool.query('DELETE FROM ti.scrum_roles WHERE id=$1', [req.params.id]);
     await logActivity(old.project_id, req.user.id, 'scrum_role_change',
       `${req.user.nombre || req.user.username} quitó a ${old.user_name} de ${SCRUM_ROLE_LABEL[old.role] || old.role}`);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Tecnologías del proyecto — lenguajes y herramientas usados.
+   Tanto TI como ADG pueden agregarlas, editarlas y borrarlas;
+   solo se exige tener acceso de visualización al proyecto.
+   ============================================================ */
+router.get('/technologies', async (req, res) => {
+  try {
+    const { project_id } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
+    const params = []; let where = 'WHERE 1=1';
+    if (project_id) { params.push(project_id); where += ` AND project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND project_id = ANY($${params.length})`;
+    }
+    const { rows } = await pool.query(`SELECT * FROM ti.project_technologies ${where} ORDER BY created_at ASC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/technologies', async (req, res) => {
+  try {
+    const { project_id, category, name } = req.body;
+    if (!project_id || !category || !name) return res.status(400).json({ error: 'Proyecto, categoría y nombre son requeridos' });
+    if (!(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
+    const finalCategory = category === 'tool' ? 'tool' : 'language';
+    const id = uid();
+    await pool.query(
+      'INSERT INTO ti.project_technologies (id,project_id,category,name) VALUES ($1,$2,$3,$4)',
+      [id, project_id, finalCategory, name]
+    );
+    await logActivity(project_id, req.user.id, 'technology_change',
+      `${req.user.nombre || req.user.username} agregó ${finalCategory === 'tool' ? 'la herramienta' : 'el lenguaje'} "${name}"`);
+    res.status(201).json({ id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/technologies/:id', async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Nombre requerido' });
+    const { rows: oldRows } = await pool.query('SELECT * FROM ti.project_technologies WHERE id=$1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'No encontrado' });
+    const old = oldRows[0];
+    if (!(await canAccessProject(req, old.project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
+    await pool.query('UPDATE ti.project_technologies SET name=$1 WHERE id=$2', [name, req.params.id]);
+    await logActivity(old.project_id, req.user.id, 'technology_change',
+      `${req.user.nombre || req.user.username} cambió "${old.name}" a "${name}"`);
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/technologies/:id', async (req, res) => {
+  try {
+    const { rows: oldRows } = await pool.query('SELECT * FROM ti.project_technologies WHERE id=$1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'No encontrado' });
+    const old = oldRows[0];
+    if (!(await canAccessProject(req, old.project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
+    await pool.query('DELETE FROM ti.project_technologies WHERE id=$1', [req.params.id]);
+    await logActivity(old.project_id, req.user.id, 'technology_change',
+      `${req.user.nombre || req.user.username} quitó ${old.category === 'tool' ? 'la herramienta' : 'el lenguaje'} "${old.name}"`);
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
