@@ -107,33 +107,6 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
-
-      /* Cronograma — reuniones por proyecto, con control de cruce de
-         horarios por participante a través de TODOS los proyectos. */
-      CREATE EXTENSION IF NOT EXISTS btree_gist;
-
-      CREATE TABLE IF NOT EXISTS ti.meetings (
-        id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
-        name TEXT NOT NULL, meeting_date DATE NOT NULL,
-        start_time TIME NOT NULL, end_time TIME NOT NULL,
-        description TEXT, clients TEXT, observations TEXT,
-        status TEXT DEFAULT 'scheduled', created_by INTEGER,
-        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      CREATE TABLE IF NOT EXISTS ti.meeting_participants (
-        id TEXT PRIMARY KEY, meeting_id TEXT REFERENCES ti.meetings(id) ON DELETE CASCADE,
-        user_id INTEGER NOT NULL, role TEXT, time_range TSRANGE NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS meeting_participants_user_idx ON ti.meeting_participants(user_id);
-
-      DO $$
-      BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'no_double_booking') THEN
-          ALTER TABLE ti.meeting_participants
-            ADD CONSTRAINT no_double_booking EXCLUDE USING gist (user_id WITH =, time_range WITH &&);
-        END IF;
-      END $$;
     `);
   }
   return ready;
@@ -206,57 +179,6 @@ async function getAccessibleProjectIds(userId) {
     SELECT project_id AS id FROM ti.scrum_roles WHERE user_id = $1
   `, [userId]);
   return rows.map(r => r.id);
-}
-
-/* Cronograma: personas que pueden seleccionarse como participantes de una
-   reunión — el equipo Scrum del proyecto más su responsable (aunque no
-   esté inscrito en el Scrum). Un Map user_id -> {user_id, name, role}. */
-async function getProjectParticipantPool(projectId) {
-  const { rows: proj } = await pool.query('SELECT responsible_id FROM ti.projects WHERE id=$1', [projectId]);
-  const responsibleId = proj[0]?.responsible_id ?? null;
-  const { rows: scrum } = await pool.query(`
-    SELECT s.user_id, s.role, u.nombre AS user_name
-    FROM ti.scrum_roles s LEFT JOIN public.usuarios u ON u.id = s.user_id
-    WHERE s.project_id=$1`, [projectId]);
-  const pool_ = new Map();
-  scrum.forEach(r => pool_.set(r.user_id, { user_id: r.user_id, name: r.user_name, role: r.role }));
-  if (responsibleId != null && !pool_.has(responsibleId)) {
-    const { rows: ru } = await pool.query('SELECT nombre FROM public.usuarios WHERE id=$1', [responsibleId]);
-    pool_.set(responsibleId, { user_id: responsibleId, name: ru[0]?.nombre ?? null, role: 'responsible' });
-  }
-  return pool_;
-}
-
-/* Cronograma: reuniones ya existentes que se cruzan con [startTime,endTime)
-   de la fecha dada, para cualquiera de los userIds, en CUALQUIER proyecto.
-   excludeMeetingId se usa al editar, para no chocar contra sí misma. */
-async function findScheduleConflicts({ userIds, date, startTime, endTime, excludeMeetingId }) {
-  if (!userIds || !userIds.length) return [];
-  const { rows } = await pool.query(`
-    SELECT mp.user_id, u.nombre AS user_name,
-           m.id AS meeting_id, m.name AS meeting_name, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
-           m.start_time, m.end_time, m.project_id, p.name AS project_name
-    FROM ti.meeting_participants mp
-    JOIN ti.meetings m ON m.id = mp.meeting_id
-    LEFT JOIN public.usuarios u ON u.id = mp.user_id
-    LEFT JOIN ti.projects p ON p.id = m.project_id
-    WHERE mp.user_id = ANY($1)
-      AND m.meeting_date = $2
-      AND m.start_time < $3
-      AND m.end_time > $4
-      AND ($5::text IS NULL OR m.id <> $5)
-    ORDER BY m.start_time ASC
-  `, [userIds, date, endTime, startTime, excludeMeetingId || null]);
-  return rows;
-}
-
-function formatConflicts(rows) {
-  return rows.map(r => ({
-    user_id: r.user_id, user_name: r.user_name,
-    meeting_id: r.meeting_id, meeting_name: r.meeting_name,
-    project_id: r.project_id, project_name: r.project_name,
-    date: r.meeting_date, start_time: r.start_time, end_time: r.end_time,
-  }));
 }
 
 /* Lista liviana de cuentas para los selects de "responsable" — cualquier
@@ -1143,193 +1065,6 @@ router.delete('/scrum-roles/:id', async (req, res) => {
 });
 
 /* ============================================================
-   Cronograma — reuniones por proyecto, con control de cruce de
-   horarios por participante a través de TODOS los proyectos (una
-   persona no puede tener dos reuniones al mismo tiempo, sin importar
-   a qué proyecto pertenezca cada una). El chequeo autoritativo vive
-   acá en el backend: además de la consulta que arma el mensaje de
-   conflicto detallado, la tabla ti.meeting_participants tiene una
-   restricción EXCLUDE a nivel de base de datos que bloquea cualquier
-   doble-reserva aunque dos personas guarden al mismo tiempo.
-   ============================================================ */
-router.get('/meetings', async (req, res) => {
-  try {
-    const { project_id } = req.query;
-    if (!project_id) return res.status(400).json({ error: 'project_id es requerido' });
-    if (!(await canAccessProject(req, project_id))) {
-      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
-    }
-    const { rows: meetings } = await pool.query(`
-      SELECT m.id, m.project_id, m.name, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
-             m.start_time, m.end_time, m.description, m.clients, m.observations, m.status,
-             m.created_by, m.created_at, m.updated_at, u.nombre AS created_by_name
-      FROM ti.meetings m
-      LEFT JOIN public.usuarios u ON u.id = m.created_by
-      WHERE m.project_id=$1
-      ORDER BY m.meeting_date ASC, m.start_time ASC`, [project_id]);
-    if (!meetings.length) return res.json([]);
-    const ids = meetings.map(m => m.id);
-    const { rows: participants } = await pool.query(`
-      SELECT mp.meeting_id, mp.user_id, mp.role, u.nombre AS user_name
-      FROM ti.meeting_participants mp
-      LEFT JOIN public.usuarios u ON u.id = mp.user_id
-      WHERE mp.meeting_id = ANY($1)`, [ids]);
-    const byMeeting = {};
-    participants.forEach(p => { (byMeeting[p.meeting_id] ||= []).push(p); });
-    meetings.forEach(m => { m.participants = byMeeting[m.id] || []; });
-    res.json(meetings);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/meetings/check-availability', async (req, res) => {
-  try {
-    const { date, start_time, end_time, participant_ids, exclude_meeting_id } = req.body;
-    if (!date || !start_time || !end_time || !Array.isArray(participant_ids) || !participant_ids.length || end_time <= start_time) {
-      return res.json({ conflicts: [] });
-    }
-    const conflicts = await findScheduleConflicts({
-      userIds: participant_ids, date, startTime: start_time, endTime: end_time, excludeMeetingId: exclude_meeting_id,
-    });
-    res.json({ conflicts: formatConflicts(conflicts) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.post('/meetings', async (req, res) => {
-  try {
-    const { project_id, name, date, start_time, end_time, description, participants, clients, observations } = req.body;
-    if (!project_id || !name || !date || !start_time || !end_time) {
-      return res.status(400).json({ error: 'Nombre, fecha, hora de inicio y hora de fin son requeridos' });
-    }
-    if (!(await canAccessProject(req, project_id))) {
-      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
-    }
-    if (end_time <= start_time) {
-      return res.status(400).json({ error: 'La hora de fin debe ser posterior a la hora de inicio' });
-    }
-    const participantList = Array.isArray(participants) ? participants : [];
-    if (!participantList.length) return res.status(400).json({ error: 'Selecciona al menos un participante' });
-    const ids = participantList.map(p => p.user_id);
-    if (new Set(ids).size !== ids.length) return res.status(400).json({ error: 'Hay participantes duplicados' });
-
-    const pool_ = await getProjectParticipantPool(project_id);
-    for (const p of participantList) {
-      if (!pool_.has(p.user_id)) return res.status(400).json({ error: 'Uno de los participantes no pertenece al equipo del proyecto' });
-    }
-
-    const conflicts = await findScheduleConflicts({ userIds: ids, date, startTime: start_time, endTime: end_time });
-    if (conflicts.length) {
-      return res.status(409).json({ error: 'Existen conflictos de horario', conflicts: formatConflicts(conflicts) });
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const id = uid();
-      await client.query(`
-        INSERT INTO ti.meetings (id,project_id,name,meeting_date,start_time,end_time,description,clients,observations,created_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-        [id, project_id, name, date, start_time, end_time, description || null, clients || null, observations || null, req.user.id]
-      );
-      for (const p of participantList) {
-        await client.query(`
-          INSERT INTO ti.meeting_participants (id, meeting_id, user_id, role, time_range)
-          VALUES ($1,$2,$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'))`,
-          [uid(), id, p.user_id, pool_.get(p.user_id).role, date, start_time, end_time]
-        );
-      }
-      await client.query('COMMIT');
-      await logActivity(project_id, req.user.id, 'meeting_scheduled', `${req.user.nombre || req.user.username} programó la reunión "${name}"`);
-      res.status(201).json({ id });
-    } catch (e) {
-      await client.query('ROLLBACK');
-      if (e.code === '23P01') {
-        return res.status(409).json({ error: 'Uno de los participantes quedó ocupado en ese horario justo ahora. Intenta de nuevo.' });
-      }
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.put('/meetings/:id', async (req, res) => {
-  try {
-    const { rows: oldRows } = await pool.query('SELECT project_id FROM ti.meetings WHERE id=$1', [req.params.id]);
-    if (!oldRows.length) return res.status(404).json({ error: 'No encontrado' });
-    const projectId = oldRows[0].project_id;
-    if (!(await canAccessProject(req, projectId))) {
-      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
-    }
-    const { name, date, start_time, end_time, description, participants, clients, observations } = req.body;
-    if (!name || !date || !start_time || !end_time) {
-      return res.status(400).json({ error: 'Nombre, fecha, hora de inicio y hora de fin son requeridos' });
-    }
-    if (end_time <= start_time) {
-      return res.status(400).json({ error: 'La hora de fin debe ser posterior a la hora de inicio' });
-    }
-    const participantList = Array.isArray(participants) ? participants : [];
-    if (!participantList.length) return res.status(400).json({ error: 'Selecciona al menos un participante' });
-    const ids = participantList.map(p => p.user_id);
-    if (new Set(ids).size !== ids.length) return res.status(400).json({ error: 'Hay participantes duplicados' });
-
-    const pool_ = await getProjectParticipantPool(projectId);
-    for (const p of participantList) {
-      if (!pool_.has(p.user_id)) return res.status(400).json({ error: 'Uno de los participantes no pertenece al equipo del proyecto' });
-    }
-
-    const conflicts = await findScheduleConflicts({
-      userIds: ids, date, startTime: start_time, endTime: end_time, excludeMeetingId: req.params.id,
-    });
-    if (conflicts.length) {
-      return res.status(409).json({ error: 'Existen conflictos de horario', conflicts: formatConflicts(conflicts) });
-    }
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`
-        UPDATE ti.meetings SET name=$1, meeting_date=$2, start_time=$3, end_time=$4,
-          description=$5, clients=$6, observations=$7, updated_at=NOW()
-        WHERE id=$8`,
-        [name, date, start_time, end_time, description || null, clients || null, observations || null, req.params.id]
-      );
-      await client.query('DELETE FROM ti.meeting_participants WHERE meeting_id=$1', [req.params.id]);
-      for (const p of participantList) {
-        await client.query(`
-          INSERT INTO ti.meeting_participants (id, meeting_id, user_id, role, time_range)
-          VALUES ($1,$2,$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'))`,
-          [uid(), req.params.id, p.user_id, pool_.get(p.user_id).role, date, start_time, end_time]
-        );
-      }
-      await client.query('COMMIT');
-      await logActivity(projectId, req.user.id, 'meeting_scheduled', `${req.user.nombre || req.user.username} actualizó la reunión "${name}"`);
-      res.json({ message: 'Actualizado' });
-    } catch (e) {
-      await client.query('ROLLBACK');
-      if (e.code === '23P01') {
-        return res.status(409).json({ error: 'Uno de los participantes quedó ocupado en ese horario justo ahora. Intenta de nuevo.' });
-      }
-      throw e;
-    } finally {
-      client.release();
-    }
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-router.delete('/meetings/:id', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT project_id, name FROM ti.meetings WHERE id=$1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
-    if (!(await canAccessProject(req, rows[0].project_id))) {
-      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
-    }
-    await pool.query('DELETE FROM ti.meetings WHERE id=$1', [req.params.id]);
-    await logActivity(rows[0].project_id, req.user.id, 'meeting_scheduled', `${req.user.nombre || req.user.username} eliminó la reunión "${rows[0].name}"`);
-    res.json({ message: 'Eliminado' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* ============================================================
    Tecnologías del proyecto — lenguajes y herramientas usados.
    Tanto TI como ADG pueden agregarlas, editarlas y borrarlas;
    solo se exige tener acceso de visualización al proyecto.
@@ -1446,5 +1181,9 @@ router.delete('/technologies/:id', async (req, res) => {
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+/* Compartidos con otros módulos (p.ej. calendar.js) que necesitan las mismas
+   reglas de acceso a un proyecto sin reimplementarlas. */
+router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds };
 
 module.exports = router;
