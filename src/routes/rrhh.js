@@ -42,6 +42,36 @@ function subirFotoACloudinary(buffer) {
   });
 }
 
+/* ============================================================
+   Subida de documentos de empleado — mismo patrón que la foto,
+   pero como archivo "raw" (PDF, imágenes, etc.) en otra carpeta.
+   ============================================================ */
+const uploadDoc = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+function subirDocumentoACloudinary(buffer, originalName) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'raw',
+        folder: 'qubira/rrhh/documentos',
+        public_id: `${uid()}_${(originalName || 'archivo').replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+      },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+}
+
+/* Cloudinary bloquea la entrega pública de PDF subidos como "raw" (ACL
+   deny). Para verlos igual, generamos un link de descarga firmado vía el
+   Admin API (autenticado con la API key/secret) en vez de la URL pública. */
+function signedRawFileUrl(cloudinaryUrl) {
+  const m = cloudinaryUrl.match(/\/raw\/upload\/v\d+\/(.+)$/);
+  if (!m) return null;
+  const publicId = decodeURIComponent(m[1]);
+  return cloudinary.utils.private_download_url(publicId, null, { resource_type: 'raw', type: 'upload' });
+}
+
 router.post('/empleados/foto', (req, res) => {
   uploadFoto.single('foto')(req, res, async (err) => {
     if (err) {
@@ -109,6 +139,7 @@ function ensureSchema() {
         id TEXT PRIMARY KEY, employee_id TEXT REFERENCES rrhh.empleados(id) ON DELETE CASCADE,
         categoria TEXT, nombre_archivo TEXT, tamano BIGINT, fecha_subida TEXT, notas TEXT
       );
+      ALTER TABLE rrhh.documentos ADD COLUMN IF NOT EXISTS file_path TEXT;
 
       CREATE TABLE IF NOT EXISTS rrhh.vacantes (
         id TEXT PRIMARY KEY, titulo TEXT, department_id TEXT REFERENCES rrhh.departamentos(id) ON DELETE SET NULL,
@@ -291,7 +322,7 @@ const MAPS = {
   }},
   documentos: { table: 'rrhh.documentos', cols: {
     id:'id', employeeId:'employee_id', categoria:'categoria', nombreArchivo:'nombre_archivo',
-    tamano:'tamano', fechaSubida:'fecha_subida', notas:'notas',
+    tamano:'tamano', fechaSubida:'fecha_subida', notas:'notas', filePath:'file_path',
   }},
   vacantes: { table: 'rrhh.vacantes', cols: {
     id:'id', titulo:'titulo', departmentId:'department_id', modalidad:'modalidad',
@@ -593,9 +624,70 @@ function crud(mapKey, path) {
   });
 }
 
+/* documentos tiene rutas propias para poder subir el archivo real a
+   Cloudinary (el resto de recursos de este archivo son solo metadata). */
+router.post('/documentos', uploadDoc.single('archivo'), async (req, res) => {
+  try {
+    const { employeeId, categoria, notas, fechaSubida } = req.body;
+    let filePath = null, nombreArchivo = null, tamano = null;
+    if (req.file) {
+      const result = await subirDocumentoACloudinary(req.file.buffer, req.file.originalname);
+      filePath = result.secure_url;
+      nombreArchivo = req.file.originalname;
+      tamano = req.file.size;
+    }
+    const created = await insertRow('documentos', {
+      employeeId, categoria, nombreArchivo, tamano,
+      fechaSubida: fechaSubida || new Date().toISOString().slice(0, 10),
+      notas, filePath,
+    });
+    return res.status(201).json({ ok: true, data: created });
+  } catch (err) {
+    console.error('[RRHH] POST /documentos error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al crear el registro' });
+  }
+});
+
+router.put('/documentos/:id', uploadDoc.single('archivo'), async (req, res) => {
+  try {
+    const changes = { ...req.body };
+    if (req.file) {
+      const result = await subirDocumentoACloudinary(req.file.buffer, req.file.originalname);
+      changes.filePath = result.secure_url;
+      changes.nombreArchivo = req.file.originalname;
+      changes.tamano = req.file.size;
+    }
+    const updated = await updateRow('documentos', req.params.id, changes);
+    if (!updated) return res.status(404).json({ ok: false, error: 'No encontrado' });
+    return res.json({ ok: true, data: updated });
+  } catch (err) {
+    console.error('[RRHH] PUT /documentos error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al actualizar el registro' });
+  }
+});
+
+router.delete('/documentos/:id', async (req, res) => {
+  try {
+    await deleteRow('documentos', req.params.id);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[RRHH] DELETE /documentos error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al eliminar el registro' });
+  }
+});
+
+router.get('/documentos/:id/file', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT file_path FROM rrhh.documentos WHERE id=$1', [req.params.id]);
+    if (!rows.length || !rows[0].file_path) return res.status(404).json({ ok: false, error: 'Archivo no encontrado' });
+    const signedUrl = signedRawFileUrl(rows[0].file_path);
+    if (!signedUrl) return res.status(404).json({ ok: false, error: 'Archivo no encontrado' });
+    res.json({ ok: true, url: signedUrl });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 crud('departamentos', 'departamentos');
 crud('contratos', 'contratos');
-crud('documentos', 'documentos');
 crud('vacantes', 'vacantes');
 crud('candidatos', 'candidatos');
 crud('nomina', 'nomina');
