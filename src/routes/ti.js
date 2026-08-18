@@ -261,6 +261,18 @@ function uploadToCloudinary(buffer, folder, resourceType, originalName) {
   });
 }
 
+/* Cloudinary bloquea la entrega pública de PDF/ZIP subidos como "raw" (ACL
+   deny), incluso con la opción de la cuenta activada. Para verlos igual,
+   generamos un link de descarga firmado vía el Admin API (dominio
+   api.cloudinary.com, autenticado con la API key/secret) en vez de usar la
+   URL pública de res.cloudinary.com. */
+function signedRawFileUrl(cloudinaryUrl) {
+  const m = cloudinaryUrl.match(/\/raw\/upload\/v\d+\/(.+)$/);
+  if (!m) return null;
+  const publicId = decodeURIComponent(m[1]);
+  return cloudinary.utils.private_download_url(publicId, null, { resource_type: 'raw', type: 'upload' });
+}
+
 /* ============================================================
    Proyectos
    ============================================================ */
@@ -531,6 +543,20 @@ router.get('/contracts', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+router.get('/contracts/:id/file', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT file_path FROM ti.contracts WHERE id=$1', [req.params.id]);
+    if (!rows.length || !rows[0].file_path) return res.status(404).json({ error: 'Archivo no encontrado' });
+    const myArea = await getEmployeeArea(req.user.username);
+    if (myArea !== 'ADG' && req.user.nivel_acceso < 100) {
+      return res.status(403).json({ error: 'No tienes acceso a este archivo' });
+    }
+    const signedUrl = signedRawFileUrl(rows[0].file_path);
+    if (!signedUrl) return res.status(404).json({ error: 'Archivo no encontrado' });
+    res.json({ url: signedUrl });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/contracts', upload.single('file'), async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
@@ -615,6 +641,19 @@ router.get('/documents', async (req, res) => {
       LEFT JOIN public.usuarios u ON u.id = d.created_by
       ${where} ORDER BY d.created_at DESC`, params);
     res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/documents/:id/file', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT project_id, file_path FROM ti.documents WHERE id=$1', [req.params.id]);
+    if (!rows.length || !rows[0].file_path) return res.status(404).json({ error: 'Archivo no encontrado' });
+    const { project_id } = rows[0];
+    const allowed = project_id ? await canAccessProject(req, project_id) : await isPrivilegedViewer(req);
+    if (!allowed) return res.status(403).json({ error: 'No tienes acceso a este archivo' });
+    const signedUrl = signedRawFileUrl(rows[0].file_path);
+    if (!signedUrl) return res.status(404).json({ error: 'Archivo no encontrado' });
+    res.json({ url: signedUrl });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
