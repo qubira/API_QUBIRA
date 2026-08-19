@@ -2,6 +2,7 @@
 
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
+const { logAudit } = require('../lib/audit');
 
 /* Verifica el JWT en el header Authorization: Bearer <token> */
 async function requireAuth(req, res, next) {
@@ -45,6 +46,14 @@ async function requireAuth(req, res, next) {
       nivel_acceso: sesion.nivel_acceso,
       avatar_color: sesion.avatar_color,
     };
+
+    /* Registro genérico de auditoría — cubre automáticamente toda ruta
+       autenticada (presente y futura) desde este único punto. Se excluye
+       el propio panel de auditoría para no generar ruido/recursión si
+       alguien lo deja abierto con auto-refresh. */
+    if (!req.originalUrl.startsWith('/api/audit')) {
+      res.on('finish', () => { logAudit(req, res).catch(() => {}); });
+    }
 
     next();
   } catch (err) {

@@ -5,6 +5,7 @@ const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { getEmployeeCargo, logLoginAudit } = require('../lib/audit');
 
 const router = express.Router();
 
@@ -72,6 +73,9 @@ router.post('/login', async (req, res) => {
        VALUES ($1, 'LOGIN', $1)`,
       [user.id]
     );
+    await logLoginAudit(user.id, '/api/auth/login').catch(() => {});
+
+    const cargo = await getEmployeeCargo(user.username).catch(() => null);
 
     return res.json({
       ok: true,
@@ -85,6 +89,7 @@ router.post('/login', async (req, res) => {
         rol:          user.rol,
         nivel_acceso: user.nivel_acceso,
         avatar_color: user.avatar_color,
+        cargo,
       },
     });
 
@@ -121,8 +126,9 @@ router.post('/logout', requireAuth, async (req, res) => {
    GET /api/auth/me
    Devuelve info del usuario autenticado
    ============================================================ */
-router.get('/me', requireAuth, (req, res) => {
-  return res.json({ ok: true, user: req.user });
+router.get('/me', requireAuth, async (req, res) => {
+  const cargo = await getEmployeeCargo(req.user.username).catch(() => null);
+  return res.json({ ok: true, user: { ...req.user, cargo } });
 });
 
 module.exports = router;
