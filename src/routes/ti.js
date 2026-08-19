@@ -1184,6 +1184,6 @@ router.delete('/technologies/:id', async (req, res) => {
 
 /* Compartidos con otros módulos (p.ej. calendar.js) que necesitan las mismas
    reglas de acceso a un proyecto sin reimplementarlas. */
-router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds };
+router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds, logActivity };
 
 module.exports = router;

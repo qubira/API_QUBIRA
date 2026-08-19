@@ -373,6 +373,10 @@ router.post('/meetings', async (req, res) => {
         );
       }
       await client.query('COMMIT');
+      if (fields.project_id) {
+        await ti.helpers.logActivity(fields.project_id, req.user.id, 'meeting_scheduled',
+          `${req.user.nombre || req.user.username} agendó la reunión "${fields.title}" (${fields.date} ${fields.start_time.slice(0,5)}–${fields.end_time.slice(0,5)})`);
+      }
       res.status(201).json({ id });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -431,6 +435,10 @@ router.put('/meetings/:id', async (req, res) => {
         );
       }
       await client.query('COMMIT');
+      if (fields.project_id) {
+        await ti.helpers.logActivity(fields.project_id, req.user.id, 'meeting_updated',
+          `${req.user.nombre || req.user.username} editó la reunión "${fields.title}" (${fields.date} ${fields.start_time.slice(0,5)}–${fields.end_time.slice(0,5)})`);
+      }
       res.json({ message: 'Actualizado' });
     } catch (e) {
       await client.query('ROLLBACK');
@@ -451,6 +459,10 @@ router.post('/meetings/:id/cancel', async (req, res) => {
     }
     await pool.query("UPDATE calendar.meetings SET status='cancelled', updated_at=NOW() WHERE id=$1", [req.params.id]);
     await pool.query('DELETE FROM calendar.meeting_participants WHERE meeting_id=$1', [req.params.id]);
+    if (rows[0].project_id) {
+      await ti.helpers.logActivity(rows[0].project_id, req.user.id, 'meeting_cancelled',
+        `${req.user.nombre || req.user.username} canceló la reunión "${rows[0].title}"`);
+    }
     res.json({ message: 'Cancelada' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -463,6 +475,10 @@ router.delete('/meetings/:id', async (req, res) => {
       return res.status(403).json({ error: 'No tienes permiso para eliminar esta reunión' });
     }
     await pool.query('DELETE FROM calendar.meetings WHERE id=$1', [req.params.id]);
+    if (rows[0].project_id) {
+      await ti.helpers.logActivity(rows[0].project_id, req.user.id, 'meeting_deleted',
+        `${req.user.nombre || req.user.username} eliminó la reunión "${rows[0].title}"`);
+    }
     res.json({ message: 'Eliminada' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
