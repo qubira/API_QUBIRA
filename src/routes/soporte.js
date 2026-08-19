@@ -4,13 +4,16 @@ const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
+const { requireModuleAccess } = require('../lib/moduleAccess');
 
 const router = express.Router();
 
-/* Todos los endpoints de este módulo requieren estar logueado.
-   Cualquier trabajador con sesión activa puede usarlos (estilo mesa de ayuda) —
-   el filtro real de acceso es la contraseña maestra, no el rol. */
+/* Todos los endpoints de este módulo requieren estar logueado Y
+   pertenecer al área de Soporte — dentro de eso, cualquier trabajador
+   con sesión activa puede usarlos (estilo mesa de ayuda); el filtro
+   fino adicional es la contraseña maestra, no el cargo. */
 router.use(requireAuth);
+router.use(requireModuleAccess('SOPORTE'));
 
 /* ============================================================
    Middleware — exige la contraseña maestra en cada petición

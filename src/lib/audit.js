@@ -17,10 +17,12 @@ function ensureAuditSchema() {
         action_type TEXT NOT NULL,
         query TEXT,
         body TEXT,
+        ip TEXT,
         status_code INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
       ALTER TABLE audit.logs ADD COLUMN IF NOT EXISTS body TEXT;
+      ALTER TABLE audit.logs ADD COLUMN IF NOT EXISTS ip TEXT;
       CREATE INDEX IF NOT EXISTS audit_logs_user_idx ON audit.logs(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit.logs(created_at DESC);
     `);
@@ -96,23 +98,31 @@ async function logAudit(req, res) {
   const path = req.originalUrl.split('?')[0];
   const query = Object.keys(req.query || {}).length ? JSON.stringify(req.query) : null;
   const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? serializeBody(req.body) : null;
+  const ip = req.ip || req.connection?.remoteAddress || null;
   await pool.query(
-    `INSERT INTO audit.logs (user_id, method, path, action_type, query, body, status_code)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [req.user.id, req.method, path, actionTypeFor(req.method, path), query, body, res.statusCode]
+    `INSERT INTO audit.logs (user_id, method, path, action_type, query, body, ip, status_code)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [req.user.id, req.method, path, actionTypeFor(req.method, path), query, body, ip, res.statusCode]
   );
 }
 
-/* Inserta explícitamente un evento de login exitoso — /login no pasa
-   por requireAuth (todavía no hay sesión), así que no queda cubierto
-   por el enganche genérico. */
-async function logLoginAudit(userId, path) {
+/* Eventos de seguridad explícitos que no pasan por requireAuth (login,
+   intentos fallidos, bloqueos, traspasos) — /login y /exchange no
+   tienen sesión todavía, así que no quedan cubiertos por el enganche
+   genérico de logAudit(). userId puede ser null (ej. intento fallido
+   contra un usuario que no existe). */
+async function logSecurityEvent({ userId, path, actionType, ip, statusCode }) {
   await ensureAuditSchema();
   await pool.query(
-    `INSERT INTO audit.logs (user_id, method, path, action_type, status_code)
-     VALUES ($1,'POST',$2,'login',200)`,
-    [userId, path]
+    `INSERT INTO audit.logs (user_id, method, path, action_type, ip, status_code)
+     VALUES ($1,'POST',$2,$3,$4,$5)`,
+    [userId || null, path, actionType, ip || null, statusCode || 200]
   );
 }
 
-module.exports = { ensureAuditSchema, getEmployeeCargo, canViewAudit, logAudit, logLoginAudit, QUALIFYING_CARGOS };
+/* Alias retrocompatible — login exitoso. */
+function logLoginAudit(userId, path) {
+  return logSecurityEvent({ userId, path, actionType: 'login', statusCode: 200 });
+}
+
+module.exports = { ensureAuditSchema, getEmployeeCargo, canViewAudit, logAudit, logLoginAudit, logSecurityEvent, QUALIFYING_CARGOS };

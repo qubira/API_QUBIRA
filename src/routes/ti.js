@@ -7,9 +7,14 @@ const { pool }   = require('../db');
 const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
 const { getEmployeeArea } = require('../lib/employeeArea');
+const { requireModuleAccess } = require('../lib/moduleAccess');
 
 const router = express.Router();
 router.use(requireAuth);
+/* Este router sirve tanto al panel de TI como al de ADG (comparten
+   backend) — cualquier otra área queda fuera, cerrando el hueco de
+   que hoy cualquier cuenta autenticada podía llamar estos endpoints. */
+router.use(requireModuleAccess('TI', 'ADG'));
 
 function uid() { return crypto.randomUUID(); }
 

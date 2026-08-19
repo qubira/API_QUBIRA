@@ -14,9 +14,15 @@ const usuariosRouter = require('./src/routes/usuarios');
 const tiRouter       = require('./src/routes/ti');
 const calendarRouter = require('./src/routes/calendar');
 const auditRouter    = require('./src/routes/audit');
+const securityRouter = require('./src/routes/security');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
+
+/* Detrás de Vercel/Render hay un proxy delante de esta API — sin esto,
+   req.ip devuelve la IP del proxy para todo el mundo, lo que rompe el
+   rate limiting por IP y el registro de intentos/bloqueos. */
+app.set('trust proxy', 1);
 
 /* ============================================================
    MIDDLEWARES GLOBALES
@@ -97,6 +103,7 @@ app.use('/api/usuarios',   usuariosRouter);
 app.use('/api/ti',         tiRouter);
 app.use('/api/calendar',   calendarRouter);
 app.use('/api/audit',      auditRouter);
+app.use('/api/security',   securityRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });

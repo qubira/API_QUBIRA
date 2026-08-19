@@ -7,9 +7,11 @@ const bcrypt     = require('bcryptjs');
 const { pool }   = require('../db');
 const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
+const { requireModuleAccess } = require('../lib/moduleAccess');
 
 const router = express.Router();
 router.use(requireAuth); /* toda el area de RRHH exige sesion valida */
+router.use(requireModuleAccess('RRHH'));
 
 function uid() { return crypto.randomUUID(); }
 
