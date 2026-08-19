@@ -48,6 +48,14 @@ function fullPath(row) {
   } catch { return row.path; }
 }
 
+/* Campos enviados en la petición (ya redactados al guardarse) — lo que
+   se creó/actualizó, para que la auditoría muestre no solo "Actualizó
+   technologies" sino también qué valores se mandaron. */
+function parsedBody(row) {
+  if (!row.body) return null;
+  try { return JSON.parse(row.body); } catch { return { raw: row.body }; }
+}
+
 router.get('/logs', async (req, res) => {
   try {
     const { area, user_id, action_type, q } = req.query;
@@ -99,7 +107,7 @@ router.get('/logs', async (req, res) => {
     params.push(limit); params.push(offset);
     const { rows } = await pool.query(`
       SELECT l.id, l.user_id, u.nombre AS user_name, u.username, c.nombre AS area, cg.nombre AS cargo,
-             l.method, l.path, l.query, l.action_type, l.status_code, l.created_at
+             l.method, l.path, l.query, l.body, l.action_type, l.status_code, l.created_at
       FROM audit.logs l
       LEFT JOIN public.usuarios u ON u.id = l.user_id
       LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
@@ -110,7 +118,7 @@ router.get('/logs', async (req, res) => {
       LIMIT $${params.length - 1} OFFSET $${params.length}`, params);
 
     res.json({
-      rows: rows.map(r => ({ ...r, description: friendlyDescription(r), full_path: fullPath(r) })),
+      rows: rows.map(r => ({ ...r, description: friendlyDescription(r), full_path: fullPath(r), changes: parsedBody(r), body: undefined })),
       total: countRows[0].total,
       canSeeOtherAreas,
     });

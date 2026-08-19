@@ -16,9 +16,11 @@ function ensureAuditSchema() {
         path TEXT NOT NULL,
         action_type TEXT NOT NULL,
         query TEXT,
+        body TEXT,
         status_code INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE audit.logs ADD COLUMN IF NOT EXISTS body TEXT;
       CREATE INDEX IF NOT EXISTS audit_logs_user_idx ON audit.logs(user_id, created_at DESC);
       CREATE INDEX IF NOT EXISTS audit_logs_created_idx ON audit.logs(created_at DESC);
     `);
@@ -48,6 +50,30 @@ async function canViewAudit(req) {
   return !!(cargo && QUALIFYING_CARGOS.includes(cargo));
 }
 
+const SENSITIVE_KEY = /pass|contrasena|contraseña|token|secret|hash/i;
+const BODY_MAX_LEN = 2000;
+
+/* Oculta cualquier campo que huela a contraseña/token/secreto antes de
+   guardar — nunca se persiste ese valor, ni siquiera cifrado. Recorre
+   objetos anidados; deja arrays/valores simples tal cual. */
+function redactBody(value) {
+  if (Array.isArray(value)) return value.map(redactBody);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = SENSITIVE_KEY.test(k) ? '[oculto]' : redactBody(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function serializeBody(body) {
+  if (!body || typeof body !== 'object' || !Object.keys(body).length) return null;
+  const json = JSON.stringify(redactBody(body));
+  return json.length > BODY_MAX_LEN ? json.slice(0, BODY_MAX_LEN) : json;
+}
+
 function actionTypeFor(method, path) {
   if (path.endsWith('/login')) return 'login';
   if (path.endsWith('/logout')) return 'logout';
@@ -69,10 +95,11 @@ async function logAudit(req, res) {
   if (!req.user) return;
   const path = req.originalUrl.split('?')[0];
   const query = Object.keys(req.query || {}).length ? JSON.stringify(req.query) : null;
+  const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? serializeBody(req.body) : null;
   await pool.query(
-    `INSERT INTO audit.logs (user_id, method, path, action_type, query, status_code)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [req.user.id, req.method, path, actionTypeFor(req.method, path), query, res.statusCode]
+    `INSERT INTO audit.logs (user_id, method, path, action_type, query, body, status_code)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [req.user.id, req.method, path, actionTypeFor(req.method, path), query, body, res.statusCode]
   );
 }
 
