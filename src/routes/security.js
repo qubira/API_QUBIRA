@@ -291,6 +291,15 @@ router.get('/dashboard', requirePrivileged, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Detalle crudo de los intentos de login de hoy — usado por la
+   tarjeta "Logins hoy" del dashboard para desplegar el detalle. */
+router.get('/logins-today', requirePrivileged, async (req, res) => {
+  try {
+    const rows = await sec.getLoginsToday();
+    res.json({ rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* ============================================================
    Amenazas — señales de fuerza bruta / abuso de login, agrupadas
    sobre los mismos datos que ya se registran en cada intento.

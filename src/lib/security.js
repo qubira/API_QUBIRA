@@ -310,6 +310,19 @@ async function getSessionsByArea() {
   return rows;
 }
 
+/* Lista cruda de intentos de login de hoy — para el detalle que
+   despliega la tarjeta "Logins hoy" del dashboard (incluye fallidos,
+   que no quedan en audit.logs porque esa tabla solo registra
+   peticiones ya autenticadas). */
+async function getLoginsToday(limit = 100) {
+  const { rows } = await pool.query(`
+    SELECT username, ip, success, user_agent, created_at
+    FROM security.login_attempts
+    WHERE created_at >= CURRENT_DATE
+    ORDER BY created_at DESC LIMIT $1`, [limit]);
+  return rows;
+}
+
 /* ============================================================
    Señales de fuerza bruta / abuso de login — sobre los mismos datos
    que ya se registran en cada intento (security.login_attempts) y en
@@ -358,7 +371,7 @@ async function getLoginHistory(username, days = 30) {
     SELECT date_trunc('day', created_at)::date AS dia,
            count(*) FILTER (WHERE success) ::int AS exitosos,
            count(*) FILTER (WHERE NOT success)::int AS fallidos,
-           json_agg(json_build_object('created_at', created_at, 'ip', ip, 'success', success)
+           json_agg(json_build_object('created_at', created_at, 'ip', ip, 'success', success, 'user_agent', user_agent)
                     ORDER BY created_at DESC) AS eventos
     FROM security.login_attempts
     WHERE username = $1 AND created_at >= NOW() - ($2 || ' days')::interval
@@ -374,7 +387,7 @@ module.exports = {
   createHandoffCode, consumeHandoffCode,
   getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,
   getDbHealth, getLoginSeries, getAccessDeniedSeries, getSessionsByArea,
-  getThreatSignals, getLoginHistory,
+  getThreatSignals, getLoginHistory, getLoginsToday,
   MAX_LOGIN_ATTEMPTS, LOCKOUT_MINUTES, IP_EVASION_DISTINCT_IPS,
   BRUTE_FORCE_THRESHOLD, BRUTE_FORCE_WINDOW_MINUTES,
 };
