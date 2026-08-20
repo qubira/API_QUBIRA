@@ -28,7 +28,7 @@ const ACTION_LABEL = {
   login: 'Inició sesión', logout: 'Cerró sesión', access_denied: 'Acceso denegado',
   permission_change: 'Cambió permisos', account_suspended: 'Suspendió cuenta',
   account_unsuspended: 'Reactivó cuenta', session_revoked: 'Cerró sesión (admin)',
-  account_locked: 'Cuenta bloqueada', ip_blocked: 'Bloqueó IP', ip_status_changed: 'Cambió estado de IP',
+  account_locked: 'Cuenta bloqueada', account_unlocked: 'Desbloqueó cuenta', ip_blocked: 'Bloqueó IP', ip_status_changed: 'Cambió estado de IP',
   ip_blocked_attempt: 'Intento desde IP bloqueada', ip_marked_suspicious: 'IP marcada sospechosa',
   handoff_used: 'Traspaso de sesión',
 };

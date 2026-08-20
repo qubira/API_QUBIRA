@@ -201,6 +201,21 @@ router.post('/users/:id/unsuspend', requirePrivileged, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Desbloqueo manual del bloqueo automático por intentos fallidos
+   (bloqueada_hasta) — distinto de unsuspend, que es para la
+   suspensión manual. Sin esto, la única forma de "desbloquear" era
+   esperar a que venza bloqueada_hasta solo. */
+router.post('/users/:id/unlock', requirePrivileged, async (req, res) => {
+  try {
+    await sec.resetFailedAttempts(req.params.id);
+    await logSecurityEvent({
+      userId: req.user.id, path: `/api/security/users/${req.params.id}/unlock`,
+      actionType: 'account_unlocked', ip: sec.clientIp(req), statusCode: 200,
+    });
+    res.json({ message: 'Cuenta desbloqueada' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* ============================================================
    Sesiones activas — "última actividad" se aproxima con la última
    fila de audit.logs de ese usuario, sin agregar una columna que
@@ -209,11 +224,14 @@ router.post('/users/:id/unsuspend', requirePrivileged, async (req, res) => {
 router.get('/sessions', requirePrivileged, async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT s.id, s.usuario_id, u.nombre, u.apellidos, u.username, s.ip_address, s.user_agent,
-             s.created_at, s.expires_at,
-             (SELECT max(l.created_at) FROM audit.logs l WHERE l.user_id = s.usuario_id) AS ultima_actividad
+      SELECT s.id, s.usuario_id, u.nombre, u.apellidos, u.username, c.nombre AS area,
+             s.ip_address, s.user_agent, s.created_at, s.expires_at,
+             (SELECT max(l.created_at) FROM audit.logs l WHERE l.user_id = s.usuario_id) AS ultima_actividad,
+             (SELECT l.path FROM audit.logs l WHERE l.user_id = s.usuario_id ORDER BY l.created_at DESC LIMIT 1) AS ultima_pagina
       FROM sesiones s
       JOIN usuarios u ON u.id = s.usuario_id
+      LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+      LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
       WHERE s.expires_at > NOW()
       ORDER BY s.created_at DESC LIMIT 200`);
     res.json({ rows });
@@ -233,12 +251,18 @@ router.delete('/sessions/:id', requirePrivileged, async (req, res) => {
 });
 
 /* ============================================================
-   Dashboard — contadores reales, nada hardcodeado.
+   Dashboard — contadores reales, nada hardcodeado. Además de los
+   contadores del día, trae series de los últimos 14 días (para los
+   gráficos), la distribución de sesiones por área, y la salud del
+   pool de conexiones a la base (ver getDbHealth en lib/security.js).
    ============================================================ */
 router.get('/dashboard', requirePrivileged, async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const [sessions, loginsOk, loginsFail, ipSospechosas, ipBloqueadas, suspendidas, accesosDenegados] = await Promise.all([
+    const [
+      sessions, loginsOk, loginsFail, ipSospechosas, ipBloqueadas, suspendidas, accesosDenegados,
+      loginsSeries, accessDeniedSeries, sessionsByArea, dbHealth,
+    ] = await Promise.all([
       pool.query('SELECT count(*)::int AS n FROM sesiones WHERE expires_at > NOW()'),
       pool.query("SELECT count(*)::int AS n FROM security.login_attempts WHERE success=true AND created_at >= $1::date", [today]),
       pool.query("SELECT count(*)::int AS n FROM security.login_attempts WHERE success=false AND created_at >= $1::date", [today]),
@@ -246,6 +270,10 @@ router.get('/dashboard', requirePrivileged, async (req, res) => {
       pool.query("SELECT count(*)::int AS n FROM security.ip_status WHERE category='bloqueada'"),
       pool.query('SELECT count(*)::int AS n FROM usuarios WHERE suspendida_en IS NOT NULL'),
       pool.query("SELECT count(*)::int AS n FROM audit.logs WHERE action_type='access_denied' AND created_at >= $1::date", [today]),
+      sec.getLoginSeries(14),
+      sec.getAccessDeniedSeries(14),
+      sec.getSessionsByArea(),
+      sec.getDbHealth(),
     ]);
     res.json({
       sesiones_activas: sessions.rows[0].n,
@@ -255,7 +283,34 @@ router.get('/dashboard', requirePrivileged, async (req, res) => {
       ip_bloqueadas: ipBloqueadas.rows[0].n,
       cuentas_suspendidas: suspendidas.rows[0].n,
       accesos_denegados_hoy: accesosDenegados.rows[0].n,
+      logins_series: loginsSeries,
+      access_denied_series: accessDeniedSeries,
+      sessions_by_area: sessionsByArea,
+      db_health: dbHealth,
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Amenazas — señales de fuerza bruta / abuso de login, agrupadas
+   sobre los mismos datos que ya se registran en cada intento.
+   ============================================================ */
+router.get('/threats', requirePrivileged, async (req, res) => {
+  try {
+    const data = await sec.getThreatSignals();
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Historial de login por día de un usuario puntual — para el
+   desplegable de la vista Sesiones.
+   ============================================================ */
+router.get('/login-history/:username', requirePrivileged, async (req, res) => {
+  try {
+    const days = Math.min(parseInt(req.query.days) || 30, 90);
+    const rows = await sec.getLoginHistory(req.params.username, days);
+    res.json({ rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

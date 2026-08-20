@@ -7,6 +7,8 @@ const MAX_LOGIN_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS) || 5;
 const LOCKOUT_MINUTES = parseInt(process.env.LOCKOUT_MINUTES) || 15;
 const IP_EVASION_DISTINCT_IPS = parseInt(process.env.IP_EVASION_DISTINCT_IPS) || 2;
 const HANDOFF_TTL_SECONDS = 60;
+const BRUTE_FORCE_THRESHOLD = parseInt(process.env.BRUTE_FORCE_THRESHOLD) || 3;
+const BRUTE_FORCE_WINDOW_MINUTES = parseInt(process.env.BRUTE_FORCE_WINDOW_MINUTES) || 60;
 
 let ready = null;
 function ensureSecuritySchema() {
@@ -236,6 +238,134 @@ async function unsuspendUser(userId) {
   );
 }
 
+/* ============================================================
+   Salud de la base de datos ("sondeo"): estado real del pool de
+   conexiones de pg (no hay integración con la API de Neon todavía —
+   eso requeriría un API key de Neon que hoy no existe en el
+   proyecto; esto es lo que sí se puede medir sin credenciales
+   nuevas). ping_ms mide la ida y vuelta de una consulta trivial.
+   ============================================================ */
+async function getDbHealth() {
+  const start = Date.now();
+  await pool.query('SELECT 1');
+  const pingMs = Date.now() - start;
+  return {
+    ping_ms: pingMs,
+    pool_total: pool.totalCount,
+    pool_idle: pool.idleCount,
+    pool_waiting: pool.waitingCount,
+    pool_max: pool.options.max,
+  };
+}
+
+/* Serie diaria de los últimos N días (incluye días sin datos, en 0,
+   para que el gráfico no tenga huecos). */
+async function getLoginSeries(days = 14) {
+  const { rows } = await pool.query(`
+    SELECT d::date AS dia,
+           COALESCE(ok.n, 0)::int AS exitosos,
+           COALESCE(fail.n, 0)::int AS fallidos
+    FROM generate_series(CURRENT_DATE - ($1::int - 1), CURRENT_DATE, interval '1 day') d
+    LEFT JOIN (
+      SELECT date_trunc('day', created_at)::date AS dia, count(*) AS n
+      FROM security.login_attempts
+      WHERE success = true AND created_at >= CURRENT_DATE - ($1::int - 1)
+      GROUP BY 1
+    ) ok ON ok.dia = d::date
+    LEFT JOIN (
+      SELECT date_trunc('day', created_at)::date AS dia, count(*) AS n
+      FROM security.login_attempts
+      WHERE success = false AND created_at >= CURRENT_DATE - ($1::int - 1)
+      GROUP BY 1
+    ) fail ON fail.dia = d::date
+    ORDER BY d`, [days]);
+  return rows;
+}
+
+async function getAccessDeniedSeries(days = 14) {
+  const { rows } = await pool.query(`
+    SELECT d::date AS dia, COALESCE(x.n, 0)::int AS total
+    FROM generate_series(CURRENT_DATE - ($1::int - 1), CURRENT_DATE, interval '1 day') d
+    LEFT JOIN (
+      SELECT date_trunc('day', created_at)::date AS dia, count(*) AS n
+      FROM audit.logs
+      WHERE action_type = 'access_denied' AND created_at >= CURRENT_DATE - ($1::int - 1)
+      GROUP BY 1
+    ) x ON x.dia = d::date
+    ORDER BY d`, [days]);
+  return rows;
+}
+
+/* Distribución de sesiones activas por área — para un gráfico simple
+   de qué tan repartido está el uso del sistema ahora mismo. */
+async function getSessionsByArea() {
+  const { rows } = await pool.query(`
+    SELECT COALESCE(c.nombre, 'Sin área') AS area, count(*)::int AS n
+    FROM sesiones s
+    JOIN usuarios u ON u.id = s.usuario_id
+    LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+    LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+    WHERE s.expires_at > NOW()
+    GROUP BY 1 ORDER BY n DESC`);
+  return rows;
+}
+
+/* ============================================================
+   Señales de fuerza bruta / abuso de login — sobre los mismos datos
+   que ya se registran en cada intento (security.login_attempts) y en
+   el bloqueo automático (usuarios.bloqueada_hasta). No es un motor de
+   detección nuevo: agrupa lo que ya existe con un umbral configurable.
+   ============================================================ */
+async function getThreatSignals() {
+  const [byIp, byUsername, locked] = await Promise.all([
+    pool.query(`
+      SELECT ip, count(*)::int AS fallidos, max(created_at) AS last_attempt,
+             array_agg(DISTINCT username) FILTER (WHERE username IS NOT NULL) AS usernames
+      FROM security.login_attempts
+      WHERE success = false AND ip IS NOT NULL
+        AND created_at >= NOW() - ($1 || ' minutes')::interval
+      GROUP BY ip HAVING count(*) >= $2
+      ORDER BY fallidos DESC LIMIT 20`, [BRUTE_FORCE_WINDOW_MINUTES, BRUTE_FORCE_THRESHOLD]),
+    pool.query(`
+      SELECT username, count(*)::int AS fallidos, max(created_at) AS last_attempt,
+             array_agg(DISTINCT ip) FILTER (WHERE ip IS NOT NULL) AS ips
+      FROM security.login_attempts
+      WHERE success = false AND username IS NOT NULL
+        AND created_at >= NOW() - ($1 || ' minutes')::interval
+      GROUP BY username HAVING count(*) >= $2
+      ORDER BY fallidos DESC LIMIT 20`, [BRUTE_FORCE_WINDOW_MINUTES, BRUTE_FORCE_THRESHOLD]),
+    pool.query(`
+      SELECT id, username, nombre, apellidos, intentos_fallidos, bloqueada_hasta
+      FROM usuarios
+      WHERE bloqueada_hasta IS NOT NULL AND bloqueada_hasta > NOW()
+      ORDER BY bloqueada_hasta DESC LIMIT 50`),
+  ]);
+  return {
+    by_ip: byIp.rows,
+    by_username: byUsername.rows,
+    locked_accounts: locked.rows,
+    threshold: BRUTE_FORCE_THRESHOLD,
+    window_minutes: BRUTE_FORCE_WINDOW_MINUTES,
+  };
+}
+
+/* Historial de login por día de una cuenta puntual (para el
+   desplegable de Sesiones) — se lee de login_attempts, así que
+   incluye tanto los intentos fallidos como los exitosos, no solo las
+   sesiones que siguen activas. */
+async function getLoginHistory(username, days = 30) {
+  const { rows } = await pool.query(`
+    SELECT date_trunc('day', created_at)::date AS dia,
+           count(*) FILTER (WHERE success) ::int AS exitosos,
+           count(*) FILTER (WHERE NOT success)::int AS fallidos,
+           json_agg(json_build_object('created_at', created_at, 'ip', ip, 'success', success)
+                    ORDER BY created_at DESC) AS eventos
+    FROM security.login_attempts
+    WHERE username = $1 AND created_at >= NOW() - ($2 || ' days')::interval
+    GROUP BY 1 ORDER BY 1 DESC`, [username, days]);
+  return rows;
+}
+
 module.exports = {
   ensureSecuritySchema, clientIp,
   getIpStatus, isIpBlocked, isIpBlockedRow, upsertIpStatus, touchIpObservation,
@@ -243,5 +373,8 @@ module.exports = {
   lockAccount, bumpFailedAttempts, resetFailedAttempts,
   createHandoffCode, consumeHandoffCode,
   getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,
+  getDbHealth, getLoginSeries, getAccessDeniedSeries, getSessionsByArea,
+  getThreatSignals, getLoginHistory,
   MAX_LOGIN_ATTEMPTS, LOCKOUT_MINUTES, IP_EVASION_DISTINCT_IPS,
+  BRUTE_FORCE_THRESHOLD, BRUTE_FORCE_WINDOW_MINUTES,
 };
