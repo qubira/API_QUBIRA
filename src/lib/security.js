@@ -49,8 +49,22 @@ function ensureSecuritySchema() {
       );
       CREATE INDEX IF NOT EXISTS handoff_codes_code_idx ON security.handoff_codes(code);
 
+      /* Módulos otorgados explícitamente a una cuenta, ADEMÁS del que ya
+         le da su área real — permite que alguien tenga TI+SOPORTE+ADG
+         sin ser privilegiado y sin tocar rrhh.empleados. */
+      CREATE TABLE IF NOT EXISTS security.usuario_modulos (
+        usuario_id INTEGER NOT NULL,
+        modulo TEXT NOT NULL,
+        otorgado_por INTEGER,
+        otorgado_en TIMESTAMPTZ DEFAULT NOW(),
+        PRIMARY KEY (usuario_id, modulo)
+      );
+
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS intentos_fallidos INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS bloqueada_hasta TIMESTAMPTZ;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_motivo TEXT;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_por INTEGER;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_en TIMESTAMPTZ;
     `);
   }
   return ready;
@@ -178,11 +192,56 @@ async function consumeHandoffCode(code) {
   return rows.length ? rows[0].user_id : null;
 }
 
+/* ============================================================
+   Permisos por módulo, otorgados explícitamente (además del que ya
+   da el área real del empleado — ver moduleAccess.js).
+   ============================================================ */
+async function getGrantedModules(userId) {
+  const { rows } = await pool.query('SELECT modulo FROM security.usuario_modulos WHERE usuario_id=$1', [userId]);
+  return rows.map(r => r.modulo);
+}
+
+async function setGrantedModules(userId, modules, adminId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM security.usuario_modulos WHERE usuario_id=$1', [userId]);
+    for (const m of modules) {
+      await client.query(
+        'INSERT INTO security.usuario_modulos (usuario_id, modulo, otorgado_por) VALUES ($1,$2,$3)',
+        [userId, m, adminId]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally { client.release(); }
+}
+
+/* ============================================================
+   Suspensión manual — distinta del bloqueo automático temporal
+   (bloqueada_hasta): esta no vence sola, la levanta un admin.
+   ============================================================ */
+async function suspendUser(userId, motivo, adminId) {
+  await pool.query(
+    'UPDATE usuarios SET suspendida_motivo=$2, suspendida_por=$3, suspendida_en=NOW() WHERE id=$1',
+    [userId, motivo || null, adminId]
+  );
+}
+async function unsuspendUser(userId) {
+  await pool.query(
+    'UPDATE usuarios SET suspendida_motivo=NULL, suspendida_por=NULL, suspendida_en=NULL WHERE id=$1',
+    [userId]
+  );
+}
+
 module.exports = {
   ensureSecuritySchema, clientIp,
   getIpStatus, isIpBlocked, isIpBlockedRow, upsertIpStatus, touchIpObservation,
   recordLoginAttempt, countRecentFailures, distinctFailureIps,
   lockAccount, bumpFailedAttempts, resetFailedAttempts,
   createHandoffCode, consumeHandoffCode,
+  getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,
   MAX_LOGIN_ATTEMPTS, LOCKOUT_MINUTES, IP_EVASION_DISTINCT_IPS,
 };

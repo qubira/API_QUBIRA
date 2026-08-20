@@ -35,7 +35,7 @@ async function issueSession(user, req) {
 
   const [cargo, authorized_modules] = await Promise.all([
     getEmployeeCargo(user.username).catch(() => null),
-    getAuthorizedModules(user.username, user.nivel_acceso).catch(() => []),
+    getAuthorizedModules(user.username, user.nivel_acceso, user.id).catch(() => []),
   ]);
 
   return {
@@ -73,6 +73,7 @@ router.post('/login', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT u.id, u.nombre, u.apellidos, u.correo, u.username,
               u.password_hash, u.estado, u.avatar_color, u.intentos_fallidos, u.bloqueada_hasta,
+              u.suspendida_en,
               r.nombre AS rol, r.nivel_acceso
        FROM usuarios u
        JOIN roles r ON r.id = u.rol_id
@@ -89,6 +90,11 @@ router.post('/login', async (req, res) => {
 
     if (user.estado !== 'activo') {
       return res.status(403).json({ ok: false, error: 'Cuenta desactivada. Contacta al administrador.' });
+    }
+
+    if (user.suspendida_en) {
+      await sec.recordLoginAttempt({ username, ip, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(403).json({ ok: false, error: 'Cuenta suspendida por seguridad. Contacta al administrador.' });
     }
 
     const stillLocked = user.bloqueada_hasta && new Date(user.bloqueada_hasta) > new Date();
@@ -218,7 +224,7 @@ router.post('/logout', requireAuth, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
   const [cargo, authorized_modules] = await Promise.all([
     getEmployeeCargo(req.user.username).catch(() => null),
-    getAuthorizedModules(req.user.username, req.user.nivel_acceso).catch(() => []),
+    getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id).catch(() => []),
   ]);
   return res.json({ ok: true, user: { ...req.user, cargo, authorized_modules } });
 });

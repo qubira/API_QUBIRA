@@ -99,10 +99,14 @@ async function logAudit(req, res) {
   const query = Object.keys(req.query || {}).length ? JSON.stringify(req.query) : null;
   const body = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? serializeBody(req.body) : null;
   const ip = req.ip || req.connection?.remoteAddress || null;
+  /* Cualquier 403 es, por definición, un acceso denegado — cubre
+     automáticamente requireModuleAccess, el gate de DST, el de
+     canViewAudit, etc. sin tener que instrumentar cada uno. */
+  const actionType = res.statusCode === 403 ? 'access_denied' : actionTypeFor(req.method, path);
   await pool.query(
     `INSERT INTO audit.logs (user_id, method, path, action_type, query, body, ip, status_code)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [req.user.id, req.method, path, actionTypeFor(req.method, path), query, body, ip, res.statusCode]
+    [req.user.id, req.method, path, actionType, query, body, ip, res.statusCode]
   );
 }
 
