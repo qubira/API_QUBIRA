@@ -11,30 +11,45 @@ const express = require('express');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { canViewAudit, logSecurityEvent } = require('../lib/audit');
+const { getAuthorizedModules } = require('../lib/moduleAccess');
 const sec = require('../lib/security');
 
 const router = express.Router();
 router.use(requireAuth);
 router.use((req, res, next) => { sec.ensureSecuritySchema().then(() => next()).catch(next); });
-router.use(async (req, res, next) => {
-  if (!(await canViewAudit(req))) {
-    return res.status(403).json({ error: 'No tienes permiso para administrar seguridad' });
-  }
-  next();
-});
 
 const VALID_CATEGORIES = ['observacion', 'bloqueada', 'autorizada', 'sospechosa'];
 
 /* Las rutas de IP quedan abiertas a cualquier cargo calificado (ya las
-   usa la pestaña IP de Soporte). Todo lo demás en este archivo —
-   usuarios, permisos, sesiones, suspensión — es más sensible y exige
-   nivel_acceso>=100, mismo criterio que el panel QUBIRA_DST. */
-function requirePrivileged(req, res, next) {
+   usa la pestaña IP de Soporte, mismo criterio que la Auditoría) — y
+   también a quien tenga el módulo DST otorgado, porque la pestaña IP
+   del propio panel QUBIRA_DST llama a esta misma ruta. */
+async function requireIpAccess(req, res, next) {
+  if (await canViewAudit(req)) return next();
+  try {
+    const authorized = await getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id);
+    if (authorized.includes('DST')) return next();
+  } catch (e) { return next(e); }
+  return res.status(403).json({ error: 'No tienes permiso para administrar seguridad' });
+}
+
+/* Todo lo demás en este archivo — usuarios, permisos, sesiones,
+   suspensión — es más sensible: exige nivel_acceso>=100 O que le
+   hayan otorgado el módulo DST (el mismo otorgamiento que controla la
+   entrada al panel QUBIRA_DST — una vez dentro, el permiso debe valer
+   para operarlo, no solo para verlo). Deliberadamente NO reutiliza
+   requireIpAccess/canViewAudit: un cargo calificado sin DST otorgado
+   no debe poder administrar usuarios/permisos/sesiones. */
+async function requirePrivileged(req, res, next) {
   if (req.user.nivel_acceso >= 100) return next();
+  try {
+    const authorized = await getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id);
+    if (authorized.includes('DST')) return next();
+  } catch (e) { return next(e); }
   return res.status(403).json({ error: 'Esta acción requiere privilegios de administrador' });
 }
 
-router.get('/ips', async (req, res) => {
+router.get('/ips', requireIpAccess, async (req, res) => {
   try {
     const { category, q } = req.query;
     const params = []; let where = 'WHERE 1=1';
@@ -66,7 +81,7 @@ router.get('/ips', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/ips/:ip', async (req, res) => {
+router.put('/ips/:ip', requireIpAccess, async (req, res) => {
   try {
     const { category, reason, blocked_until, is_permanent, notes } = req.body;
     if (!VALID_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Categoría inválida' });
