@@ -250,6 +250,21 @@ router.delete('/sessions/:id', requirePrivileged, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Cierra TODAS las sesiones activas de un usuario de una sola vez —
+   distinto de borrar una fila puntual: esto es "cerrar sesión en
+   todas las áreas" para esa persona, porque cada panel genera su
+   propia fila en `sesiones` y no se comparten entre sí. */
+router.delete('/sessions/by-user/:userId', requirePrivileged, async (req, res) => {
+  try {
+    const { rows } = await pool.query('DELETE FROM sesiones WHERE usuario_id=$1 RETURNING id', [req.params.userId]);
+    await logSecurityEvent({
+      userId: req.user.id, path: `/api/security/sessions/by-user/${req.params.userId}`,
+      actionType: 'session_revoked', ip: sec.clientIp(req), statusCode: 200,
+    });
+    res.json({ message: 'Sesiones cerradas', count: rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* ============================================================
    Dashboard — contadores reales, nada hardcodeado. Además de los
    contadores del día, trae series de los últimos 14 días (para los
@@ -260,10 +275,11 @@ router.get('/dashboard', requirePrivileged, async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
     const [
-      sessions, loginsOk, loginsFail, ipSospechosas, ipBloqueadas, suspendidas, accesosDenegados,
+      sessions, sessionsDistinctUsers, loginsOk, loginsFail, ipSospechosas, ipBloqueadas, suspendidas, accesosDenegados,
       loginsSeries, accessDeniedSeries, sessionsByArea, dbHealth,
     ] = await Promise.all([
       pool.query('SELECT count(*)::int AS n FROM sesiones WHERE expires_at > NOW()'),
+      pool.query('SELECT count(DISTINCT usuario_id)::int AS n FROM sesiones WHERE expires_at > NOW()'),
       pool.query("SELECT count(*)::int AS n FROM security.login_attempts WHERE success=true AND created_at >= $1::date", [today]),
       pool.query("SELECT count(*)::int AS n FROM security.login_attempts WHERE success=false AND created_at >= $1::date", [today]),
       pool.query("SELECT count(*)::int AS n FROM security.ip_status WHERE category='sospechosa'"),
@@ -277,6 +293,7 @@ router.get('/dashboard', requirePrivileged, async (req, res) => {
     ]);
     res.json({
       sesiones_activas: sessions.rows[0].n,
+      sesiones_activas_usuarios: sessionsDistinctUsers.rows[0].n,
       logins_exitosos_hoy: loginsOk.rows[0].n,
       logins_fallidos_hoy: loginsFail.rows[0].n,
       ip_sospechosas: ipSospechosas.rows[0].n,
