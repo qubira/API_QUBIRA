@@ -11,10 +11,13 @@ const { requireModuleAccess } = require('../lib/moduleAccess');
 
 const router = express.Router();
 router.use(requireAuth);
-/* Este router sirve tanto al panel de TI como al de ADG (comparten
-   backend) — cualquier otra área queda fuera, cerrando el hueco de
-   que hoy cualquier cuenta autenticada podía llamar estos endpoints. */
-router.use(requireModuleAccess('TI', 'ADG'));
+/* Este router sirve al panel de TI y al de ADG (comparten backend), y
+   además a RRHH/SOPORTE/DST solo para el flujo de "solicitar proyecto"
+   (crear su solicitud, verla, reenviarla si la observan) — cada ruta
+   de acá adentro sigue decidiendo puntualmente qué puede hacer cada
+   área (ver canAccessProject/requireArea/getAccessibleProjectIds más
+   abajo); esto solo abre la puerta del módulo, no el acceso a todo. */
+router.use(requireModuleAccess('TI', 'ADG', 'RRHH', 'SOPORTE', 'DST'));
 
 function uid() { return crypto.randomUUID(); }
 
@@ -183,18 +186,39 @@ async function isPrivilegedViewer(req) {
 
 async function canAccessProject(req, projectId) {
   if (await isPrivilegedViewer(req)) return true;
-  const { rows } = await pool.query('SELECT responsible_id, created_by, origin_area FROM ti.projects WHERE id=$1', [projectId]);
+  const { rows } = await pool.query('SELECT status, responsible_id, created_by, origin_area FROM ti.projects WHERE id=$1', [projectId]);
   if (!rows.length) return false;
   if (rows[0].responsible_id != null && String(rows[0].responsible_id) === String(req.user.id)) return true;
   if (rows[0].created_by != null && String(rows[0].created_by) === String(req.user.id)) return true;
-  if (rows[0].origin_area) {
-    const myArea = await getEmployeeArea(req.user.username);
-    if (myArea && myArea === rows[0].origin_area) return true;
-  }
+  const myArea = await getEmployeeArea(req.user.username);
+  if (rows[0].origin_area && myArea && myArea === rows[0].origin_area) return true;
+  /* La cola de "pending" (aprobado, todavía sin reclamar) es visible
+     para todo TI — es la bandeja compartida de donde reclaman, así que
+     necesitan poder abrir el detalle para encontrar el botón Reclamar
+     antes de tener ningún vínculo propio con el proyecto todavía. */
+  if (rows[0].status === 'pending' && myArea === 'TI') return true;
   const { rows: sc } = await pool.query(
     'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [projectId, req.user.id]
   );
   return sc.length > 0;
+}
+
+/* Quién puede definir (agregar/editar texto/borrar) los requisitos de
+   un proyecto: ADG siempre (o privilegiado), y además el área que
+   originó la solicitud mientras todavía la está armando/corrigiendo
+   (pending_approval u observed) — así RRHH/TI/SOPORTE/DST pueden
+   completar su propia ficha de requisitos al pedir un proyecto, igual
+   que ADG lo hace al crear uno directo. Una vez aprobada la solicitud,
+   la definición de requisitos vuelve a ser exclusiva de ADG; el avance
+   (%) lo sigue llevando el responsable del proyecto (isProjectResponsible),
+   sin relación con esto. */
+async function canManageRequirements(req, projectId) {
+  if (await isPrivilegedViewer(req)) return true;
+  const { rows } = await pool.query('SELECT status, origin_area FROM ti.projects WHERE id=$1', [projectId]);
+  if (!rows.length) return false;
+  if (!['pending_approval', 'observed'].includes(rows[0].status)) return false;
+  const myArea = await getEmployeeArea(req.user.username);
+  return !!myArea && myArea === rows[0].origin_area;
 }
 
 async function isProjectResponsible(req, projectId) {
@@ -348,6 +372,19 @@ router.get('/projects', async (req, res) => {
       const n = params.length;
       where += ` AND (p.name ILIKE $${n} OR p.client ILIKE $${n} OR p.code ILIKE $${n})`;
     }
+    /* TI y ADG siguen viendo el listado completo (lo necesitan para su
+       trabajo normal: TI reclama cualquier "pending", ADG aprueba
+       cualquier solicitud). RRHH/SOPORTE/DST solo ven sus propias
+       solicitudes (origin_area) más lo que ya verían por ser
+       responsables o parte del equipo Scrum — mismo criterio que
+       canAccessProject/getAccessibleProjectIds, aplicado acá al
+       listado para no exponer proyectos de otras áreas por esta vía. */
+    const myArea = await getEmployeeArea(req.user.username);
+    if (req.user.nivel_acceso < 100 && myArea !== 'ADG' && myArea !== 'TI') {
+      const accessibleIds = await getAccessibleProjectIds(req.user.id);
+      params.push(myArea || '__none__', accessibleIds);
+      where += ` AND (p.origin_area = $${params.length - 1} OR p.id = ANY($${params.length}))`;
+    }
     const { rows } = await pool.query(`
       SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, cb.nombre AS created_by_name,
         (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
@@ -480,6 +517,13 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
        de otra área antes de que ADG la vea. */
     if (['pending_approval', 'observed'].includes(old.status) && myArea !== old.origin_area && !privileged) {
       return res.status(403).json({ error: 'Este proyecto todavía es una solicitud de otra área — solo esa área o ADG pueden modificarlo' });
+    }
+
+    /* Una vez aprobada la solicitud, el proyecto pasa al flujo normal
+       de TI/ADG — el área que lo originó (si no es TI ni ADG) vuelve a
+       verlo en modo solo lectura, como se le mostró al pedirlo. */
+    if (!['pending_approval', 'observed'].includes(old.status) && !['TI', 'ADG'].includes(myArea) && !privileged) {
+      return res.status(403).json({ error: 'Esta solicitud ya fue aprobada — ahora la gestionan TI y ADG' });
     }
 
     if (status && status !== old.status) {
@@ -675,8 +719,16 @@ router.delete('/projects/:id', async (req, res) => {
 router.get('/contracts', async (req, res) => {
   try {
     const { project_id, type, status } = req.query;
+    if (project_id && !(await canAccessProject(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id); where += ` AND c.project_id=$${params.length}`; }
+    else if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      if (!ids.length) return res.json([]);
+      params.push(ids); where += ` AND c.project_id = ANY($${params.length})`;
+    }
     if (type)       { params.push(type);       where += ` AND c.type=$${params.length}`; }
     if (status)     { params.push(status);     where += ` AND c.status=$${params.length}`; }
     const { rows } = await pool.query(`
@@ -1079,9 +1131,11 @@ router.get('/requirements', async (req, res) => {
 
 router.post('/requirements', async (req, res) => {
   try {
-    if (!(await requireArea(req, res, 'ADG'))) return;
     const { project_id, type, description } = req.body;
     if (!project_id || !description) return res.status(400).json({ error: 'Proyecto y descripción son requeridos' });
+    if (!(await canManageRequirements(req, project_id))) {
+      return res.status(403).json({ error: 'No tienes permiso para definir requisitos de este proyecto' });
+    }
     const id = uid();
     const finalType = type === 'non_functional' ? 'non_functional' : 'functional';
     await pool.query(
@@ -1103,7 +1157,9 @@ router.put('/requirements/:id', async (req, res) => {
     const old = oldRows[0];
 
     if (description !== undefined || type !== undefined) {
-      if (!(await requireArea(req, res, 'ADG'))) return;
+      if (!(await canManageRequirements(req, old.project_id))) {
+        return res.status(403).json({ error: 'No tienes permiso para definir requisitos de este proyecto' });
+      }
     }
     if (progress !== undefined && !(await isProjectResponsible(req, old.project_id))) {
       return res.status(403).json({ error: 'Solo el responsable del proyecto puede actualizar el avance' });
@@ -1139,10 +1195,12 @@ router.put('/requirements/:id', async (req, res) => {
 
 router.delete('/requirements/:id', async (req, res) => {
   try {
-    if (!(await requireArea(req, res, 'ADG'))) return;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
     const old = oldRows[0];
+    if (!(await canManageRequirements(req, old.project_id))) {
+      return res.status(403).json({ error: 'No tienes permiso para definir requisitos de este proyecto' });
+    }
     await pool.query('DELETE FROM ti.requirements WHERE id=$1', [req.params.id]);
     const label = old.type === 'non_functional' ? 'No Funcional' : 'Funcional';
     await logActivity(old.project_id, req.user.id, 'requirement_change',
