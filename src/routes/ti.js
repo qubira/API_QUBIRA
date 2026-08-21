@@ -1155,7 +1155,7 @@ router.post('/technologies', upload.single('image'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/technologies/:id', async (req, res) => {
+router.put('/technologies/:id', upload.single('image'), async (req, res) => {
   try {
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'Nombre requerido' });
@@ -1165,7 +1165,22 @@ router.put('/technologies/:id', async (req, res) => {
     if (!(await canAccessProject(req, old.project_id))) {
       return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
     }
-    await pool.query('UPDATE ti.project_technologies SET name=$1 WHERE id=$2', [name, req.params.id]);
+
+    /* La imagen es opcional al editar: un archivo nuevo la reemplaza, una
+       URL pegada la reemplaza, un string vacío la borra (vuelve al avatar
+       con la inicial), y si no se manda nada se conserva la que ya tenía.
+       Esto solo toca la tecnología de ESTE proyecto — no el catálogo
+       compartido, para no afectar a otros proyectos que reutilizan el
+       mismo nombre. */
+    let image_url = old.image_url;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/technologies', 'image', req.file.originalname);
+      image_url = result.secure_url;
+    } else if (req.body.image_url !== undefined) {
+      image_url = req.body.image_url || null;
+    }
+
+    await pool.query('UPDATE ti.project_technologies SET name=$1, image_url=$2 WHERE id=$3', [name, image_url, req.params.id]);
     await logActivity(old.project_id, req.user.id, 'technology_change',
       `${req.user.nombre || req.user.username} cambió "${old.name}" a "${name}"`);
     res.json({ message: 'Actualizado' });
