@@ -112,6 +112,16 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
+
+      /* Solicitud de proyecto entre áreas (RRHH/TI/SOPORTE/DST piden,
+         ADG aprueba u observa) — ver el bloque de comentario más abajo. */
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS origin_area TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS observation_reason TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS observation_deadline TIMESTAMPTZ;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS archived_reason TEXT;
+      UPDATE ti.projects SET origin_area = 'ADG' WHERE origin_area IS NULL;
     `);
   }
   return ready;
@@ -119,15 +129,26 @@ function ensureSchema() {
 router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
 
 /* ============================================================
-   Flujo ADG <-> TI:
-   - ADG crea el proyecto (status "pending") y sube contrato/proforma.
+   Flujo ADG <-> TI, ahora con solicitud entre áreas:
+   - ADG crea un proyecto directo → "pending" (como siempre, se salta
+     la aprobación porque lo crea quien aprueba).
+   - RRHH/TI/SOPORTE/DST crean una SOLICITUD → "pending_approval",
+     con origin_area fijada a su área. Mientras esté en
+     pending_approval u observed, solo esa área (o un privilegiado)
+     puede editarla — ni TI puede tocarla todavía si no es suya.
+   - ADG aprueba la solicitud → "pending" (entra a la cola de TI de
+     siempre) u observa con motivo → "observed" (+ plazo de 15 días
+     para que el área de origen reenvíe; si no, se archiva solo).
    - TI ve los "pending", los reclama (claim) y pasa a trabajar en él.
    - TI marca "finished_by_ti" cuando termina.
-   - ADG revisa y recién ahí pasa a "completed" (a partir de ahí TI ya
-     no puede editar nada de ese proyecto).
-   Solo ADG puede crear proyectos, subir contratos/proformas y aprobar
-   el cierre. Solo TI puede reclamar proyectos y marcarlos finalizados.
+   - ADG revisa: aprueba → "completed" (TI ya no puede editar nada), u
+     observa el cierre → vuelve a "active" con el motivo en el
+     historial (sin plazo, ya lleva semanas de trabajo real).
+   Solo ADG puede crear proyectos directos, subir contratos/proformas,
+   aprobar/observar solicitudes y aprobar el cierre. Solo TI puede
+   reclamar proyectos y marcarlos finalizados.
    ============================================================ */
+const ORIGIN_AREAS = ['ADG', 'TI', 'RRHH', 'SOPORTE', 'DST'];
 async function requireArea(req, res, area) {
   const mine = await getEmployeeArea(req.user.username);
   if (mine !== area && req.user.nivel_acceso < 100) {
@@ -148,7 +169,10 @@ async function isProjectLockedForTi(projectId) {
    ajeno, solo puede entrar al detalle de un proyecto quien:
    - es de área ADG (o tiene nivel_acceso >= 100), o
    - es el Responsable del proyecto, o
-   - está inscrito en algún rol Scrum de ese proyecto.
+   - está inscrito en algún rol Scrum de ese proyecto, o
+   - creó la solicitud, o es de la misma área que la originó
+     (origin_area) — para que el área que pidió el proyecto pueda
+     seguir viéndolo en modo lectura antes y después de aprobado.
    El listado general de /projects (vista superficial: nombre, cliente,
    estado, familia, responsable, avance) NO se restringe.
    ============================================================ */
@@ -159,9 +183,14 @@ async function isPrivilegedViewer(req) {
 
 async function canAccessProject(req, projectId) {
   if (await isPrivilegedViewer(req)) return true;
-  const { rows } = await pool.query('SELECT responsible_id FROM ti.projects WHERE id=$1', [projectId]);
+  const { rows } = await pool.query('SELECT responsible_id, created_by, origin_area FROM ti.projects WHERE id=$1', [projectId]);
   if (!rows.length) return false;
   if (rows[0].responsible_id != null && String(rows[0].responsible_id) === String(req.user.id)) return true;
+  if (rows[0].created_by != null && String(rows[0].created_by) === String(req.user.id)) return true;
+  if (rows[0].origin_area) {
+    const myArea = await getEmployeeArea(req.user.username);
+    if (myArea && myArea === rows[0].origin_area) return true;
+  }
   const { rows: sc } = await pool.query(
     'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [projectId, req.user.id]
   );
@@ -281,7 +310,7 @@ function signedRawFileUrl(cloudinaryUrl) {
 /* ============================================================
    Proyectos
    ============================================================ */
-const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', finished_by_ti:'Finalizado (por revisar)', completed:'Completado', cancelled:'Cancelado' };
+const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', finished_by_ti:'Finalizado (por revisar)', completed:'Completado', cancelled:'Cancelado', pending_approval:'Por aprobar', observed:'Observado', archived:'Archivado' };
 const PRIORITY_LABEL = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
 const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte', ruc:'RUC' };
 const PROJECT_TYPE_LABEL = { web:'Web', mobile:'Aplicativo Móvil', desktop:'Aplicativo de Escritorio' };
@@ -294,26 +323,40 @@ const FIELD_LABEL = {
   family:'Familia de Proyecto',
 };
 
+/* Archivado automático perezoso: en vez de un cron aparte, cada vez
+   que alguien pide la lista se archivan solas las observaciones que
+   ya vencieron sus 15 días — sin dependencias nuevas, y ADG entra a
+   revisar seguido, así que el retraso real es mínimo. */
+async function archiveExpiredObservations() {
+  await pool.query(`
+    UPDATE ti.projects SET status = 'archived', archived_at = NOW(), archived_reason = 'observation_deadline_expired'
+    WHERE status = 'observed' AND observation_deadline < NOW()`);
+}
+
 router.get('/projects', async (req, res) => {
   try {
-    const { status, search, family } = req.query;
+    await archiveExpiredObservations();
+    const { status, search, family, origin_area } = req.query;
     const params = [];
-    let where = 'WHERE 1=1';
+    let where = "WHERE 1=1";
     if (status) { params.push(status); where += ` AND p.status = $${params.length}`; }
+    else { where += ` AND p.status != 'archived'`; }
     if (family) { params.push(family); where += ` AND p.family = $${params.length}`; }
+    if (origin_area) { params.push(origin_area); where += ` AND p.origin_area = $${params.length}`; }
     if (search) {
       params.push(`%${search}%`);
       const n = params.length;
       where += ` AND (p.name ILIKE $${n} OR p.client ILIKE $${n} OR p.code ILIKE $${n})`;
     }
     const { rows } = await pool.query(`
-      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name,
+      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, cb.nombre AS created_by_name,
         (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
         (SELECT COUNT(*) FROM ti.documents  d WHERE d.project_id = p.id)::int AS documents_count,
         (SELECT COUNT(*) FROM ti.whatsapp_messages w WHERE w.project_id = p.id)::int AS messages_count
       FROM ti.projects p
       LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
       LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
+      LEFT JOIN public.usuarios cb ON cb.id = p.created_by
       ${where} ORDER BY p.created_at DESC`, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -351,28 +394,36 @@ router.get('/projects/stats', async (req, res) => {
 router.get('/projects/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name
+      `SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, cb.nombre AS created_by_name
        FROM ti.projects p
        LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
        LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
+       LEFT JOIN public.usuarios cb ON cb.id = p.created_by
        WHERE p.id = $1`,
       [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
-    if (!(await isPrivilegedViewer(req)) && String(rows[0].responsible_id) !== String(req.user.id)) {
-      const { rows: sc } = await pool.query(
-        'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [req.params.id, req.user.id]
-      );
-      if (!sc.length) return res.status(403).json({ error: 'No tienes acceso a este proyecto — solo el responsable y el equipo Scrum asignado pueden verlo' });
+    if (!(await canAccessProject(req, req.params.id))) {
+      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
     }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Cualquiera de las 5 áreas puede crear un registro: ADG lo crea ya
+   aprobado ("pending", como siempre); las demás quedan como solicitud
+   ("pending_approval") a la espera de que ADG la apruebe u observe. */
 router.post('/projects', upload.single('logo_file'), async (req, res) => {
   try {
-    if (!(await requireArea(req, res, 'ADG'))) return;
-    const { name, client, description, status, budget, currency, start_date, end_date,
+    const myArea = await getEmployeeArea(req.user.username);
+    const privileged = req.user.nivel_acceso >= 100;
+    if (!privileged && !ORIGIN_AREAS.includes(myArea)) {
+      return res.status(403).json({ error: 'Tu área no puede crear proyectos' });
+    }
+    const originArea = privileged && !ORIGIN_AREAS.includes(myArea) ? 'ADG' : myArea;
+    const initialStatus = originArea === 'ADG' ? 'pending' : 'pending_approval';
+
+    const { name, client, description, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
             project_type, github_url, website_url, family } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
@@ -391,16 +442,19 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     }
 
     await pool.query(`
-      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
-      [id, code, name, client, description || null, status || 'pending', 0,
+      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family,origin_area)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+      [id, code, name, client, description || null, initialStatus, 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
        company_name || null, company_logo, id_document_type || null, id_document_number || null,
-       project_type || null, github_url || null, website_url || null, family || null]
+       project_type || null, github_url || null, website_url || null, family || null, originArea]
     );
-    await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
-    res.status(201).json({ id, code, name });
+    const activityMsg = initialStatus === 'pending_approval'
+      ? `Proyecto "${name}" solicitado por ${req.user.nombre || req.user.username} (${originArea}) — a la espera de aprobación de ADG`
+      : `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`;
+    await logActivity(id, req.user.id, 'created', activityMsg);
+    res.status(201).json({ id, code, name, status: initialStatus });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -420,13 +474,26 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
       return res.status(403).json({ error: 'Este proyecto ya fue completado y aprobado por ADG — TI ya no puede modificarlo' });
     }
 
+    /* Mientras la solicitud no fue aprobada (o está observada), solo el
+       área que la originó puede editarla — ni siquiera TI, si el
+       proyecto no es suyo. Evita que alguien "arregle" la solicitud
+       de otra área antes de que ADG la vea. */
+    if (['pending_approval', 'observed'].includes(old.status) && myArea !== old.origin_area && !privileged) {
+      return res.status(403).json({ error: 'Este proyecto todavía es una solicitud de otra área — solo esa área o ADG pueden modificarlo' });
+    }
+
     if (status && status !== old.status) {
+      if (['pending_approval', 'observed', 'archived'].includes(status)) {
+        return res.status(400).json({ error: 'Ese estado se maneja con las acciones de aprobar/observar/reenviar, no editando el proyecto directamente' });
+      }
       if (status === 'finished_by_ti') {
         if (myArea !== 'TI' && !privileged) return res.status(403).json({ error: 'Solo TI puede marcar un proyecto como finalizado' });
         if (!['active', 'paused'].includes(old.status)) return res.status(400).json({ error: 'Solo se puede finalizar un proyecto activo o pausado' });
       } else if (status === 'completed') {
         if (myArea !== 'ADG' && !privileged) return res.status(403).json({ error: 'Solo ADG puede aprobar y completar un proyecto' });
         if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por TI' });
+      } else if (status === 'pending') {
+        return res.status(400).json({ error: 'Ese estado se maneja con la acción de aprobar, no editando el proyecto directamente' });
       }
     }
 
@@ -493,6 +560,87 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
       await logActivity(req.params.id, req.user.id, 'updated', `${req.user.nombre || req.user.username} actualizó — ${changes.join(' · ')}`);
     }
     res.json({ message: 'Proyecto actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ADG aprueba una solicitud de otra área — entra a la cola de TI de
+   siempre, como si ADG la hubiera creado directamente. */
+router.post('/projects/:id/approve', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { rows } = await pool.query('SELECT status, name, origin_area FROM ti.projects WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    if (rows[0].status !== 'pending_approval') return res.status(400).json({ error: 'Este proyecto no está a la espera de aprobación' });
+
+    await pool.query(`UPDATE ti.projects SET status = 'pending', updated_at = NOW() WHERE id = $1`, [req.params.id]);
+    await logActivity(req.params.id, req.user.id, 'approved',
+      `${req.user.nombre || req.user.username} (ADG) aprobó la solicitud de ${rows[0].origin_area} — "${rows[0].name}" queda disponible para que TI la reclame`);
+    res.json({ message: 'Solicitud aprobada' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ADG observa un proyecto — con motivo obligatorio. Dos casos según
+   en qué etapa esté:
+   - pending_approval (solicitud recién llegada): pasa a "observed",
+     con 15 días para que el área de origen la corrija y reenvíe, o
+     se archiva sola (ver el chequeo perezoso en GET /projects).
+   - finished_by_ti (TI dijo que terminó, ADG no está conforme):
+     vuelve directo a "active" para que TI lo siga trabajando — sin
+     plazo ni pestaña de observación, el motivo queda en Actividad. */
+router.post('/projects/:id/observe', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const reason = (req.body?.reason || '').trim();
+    if (!reason) return res.status(400).json({ error: 'El motivo de la observación es obligatorio' });
+
+    const { rows } = await pool.query('SELECT status, name, origin_area FROM ti.projects WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    const old = rows[0];
+
+    if (old.status === 'pending_approval') {
+      await pool.query(
+        `UPDATE ti.projects SET status = 'observed', observation_reason = $1, observed_at = NOW(),
+           observation_deadline = NOW() + INTERVAL '15 days', updated_at = NOW() WHERE id = $2`,
+        [reason, req.params.id]
+      );
+      await logActivity(req.params.id, req.user.id, 'observed',
+        `${req.user.nombre || req.user.username} (ADG) observó la solicitud de ${old.origin_area} — tienen 15 días para subsanar: ${reason}`);
+      res.json({ message: 'Proyecto observado' });
+    } else if (old.status === 'finished_by_ti') {
+      await pool.query(`UPDATE ti.projects SET status = 'active', updated_at = NOW() WHERE id = $1`, [req.params.id]);
+      await logActivity(req.params.id, req.user.id, 'observed_closure',
+        `${req.user.nombre || req.user.username} (ADG) observó el cierre y lo devolvió a TI: ${reason}`);
+      res.json({ message: 'Cierre observado, el proyecto vuelve a estar activo' });
+    } else {
+      return res.status(400).json({ error: 'Este proyecto no está en una etapa que se pueda observar' });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* El área de origen (o un privilegiado) reenvía una solicitud
+   observada, después de corregirla — vuelve a la cola de aprobación
+   de ADG. */
+router.post('/projects/:id/resubmit', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT status, name, origin_area FROM ti.projects WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    const old = rows[0];
+    if (old.status !== 'observed') return res.status(400).json({ error: 'Este proyecto no está observado' });
+
+    const myArea = await getEmployeeArea(req.user.username);
+    const privileged = req.user.nivel_acceso >= 100;
+    if (myArea !== old.origin_area && !privileged) {
+      return res.status(403).json({ error: 'Solo el área que originó esta solicitud puede reenviarla' });
+    }
+
+    await pool.query(
+      `UPDATE ti.projects SET status = 'pending_approval', observation_reason = NULL,
+         observed_at = NULL, observation_deadline = NULL, updated_at = NOW() WHERE id = $1`,
+      [req.params.id]
+    );
+    await logActivity(req.params.id, req.user.id, 'resubmitted',
+      `${req.user.nombre || req.user.username} (${old.origin_area}) reenvió la solicitud "${old.name}" tras subsanar las observaciones`);
+    res.json({ message: 'Solicitud reenviada' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
