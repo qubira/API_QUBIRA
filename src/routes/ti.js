@@ -11,13 +11,10 @@ const { requireModuleAccess } = require('../lib/moduleAccess');
 
 const router = express.Router();
 router.use(requireAuth);
-/* Este router sirve al panel de TI y al de ADG (comparten backend), y
-   además a RRHH/SOPORTE/DST solo para el flujo de "solicitar proyecto"
-   (crear su solicitud, verla, reenviarla si la observan) — cada ruta
-   de acá adentro sigue decidiendo puntualmente qué puede hacer cada
-   área (ver canAccessProject/requireArea/getAccessibleProjectIds más
-   abajo); esto solo abre la puerta del módulo, no el acceso a todo. */
-router.use(requireModuleAccess('TI', 'ADG', 'RRHH', 'SOPORTE', 'DST'));
+/* Este router sirve tanto al panel de TI como al de ADG (comparten
+   backend) — cualquier otra área queda fuera, cerrando el hueco de
+   que hoy cualquier cuenta autenticada podía llamar estos endpoints. */
+router.use(requireModuleAccess('TI', 'ADG'));
 
 function uid() { return crypto.randomUUID(); }
 
@@ -115,16 +112,6 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
-
-      /* Solicitud de proyecto entre áreas (RRHH/TI/SOPORTE/DST piden,
-         ADG aprueba u observa) — ver el bloque de comentario más abajo. */
-      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS origin_area TEXT;
-      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS observation_reason TEXT;
-      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS observed_at TIMESTAMPTZ;
-      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS observation_deadline TIMESTAMPTZ;
-      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
-      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS archived_reason TEXT;
-      UPDATE ti.projects SET origin_area = 'ADG' WHERE origin_area IS NULL;
     `);
   }
   return ready;
@@ -132,26 +119,15 @@ function ensureSchema() {
 router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
 
 /* ============================================================
-   Flujo ADG <-> TI, ahora con solicitud entre áreas:
-   - ADG crea un proyecto directo → "pending" (como siempre, se salta
-     la aprobación porque lo crea quien aprueba).
-   - RRHH/TI/SOPORTE/DST crean una SOLICITUD → "pending_approval",
-     con origin_area fijada a su área. Mientras esté en
-     pending_approval u observed, solo esa área (o un privilegiado)
-     puede editarla — ni TI puede tocarla todavía si no es suya.
-   - ADG aprueba la solicitud → "pending" (entra a la cola de TI de
-     siempre) u observa con motivo → "observed" (+ plazo de 15 días
-     para que el área de origen reenvíe; si no, se archiva solo).
+   Flujo ADG <-> TI:
+   - ADG crea el proyecto (status "pending") y sube contrato/proforma.
    - TI ve los "pending", los reclama (claim) y pasa a trabajar en él.
    - TI marca "finished_by_ti" cuando termina.
-   - ADG revisa: aprueba → "completed" (TI ya no puede editar nada), u
-     observa el cierre → vuelve a "active" con el motivo en el
-     historial (sin plazo, ya lleva semanas de trabajo real).
-   Solo ADG puede crear proyectos directos, subir contratos/proformas,
-   aprobar/observar solicitudes y aprobar el cierre. Solo TI puede
-   reclamar proyectos y marcarlos finalizados.
+   - ADG revisa y recién ahí pasa a "completed" (a partir de ahí TI ya
+     no puede editar nada de ese proyecto).
+   Solo ADG puede crear proyectos, subir contratos/proformas y aprobar
+   el cierre. Solo TI puede reclamar proyectos y marcarlos finalizados.
    ============================================================ */
-const ORIGIN_AREAS = ['ADG', 'TI', 'RRHH', 'SOPORTE', 'DST'];
 async function requireArea(req, res, area) {
   const mine = await getEmployeeArea(req.user.username);
   if (mine !== area && req.user.nivel_acceso < 100) {
@@ -172,10 +148,7 @@ async function isProjectLockedForTi(projectId) {
    ajeno, solo puede entrar al detalle de un proyecto quien:
    - es de área ADG (o tiene nivel_acceso >= 100), o
    - es el Responsable del proyecto, o
-   - está inscrito en algún rol Scrum de ese proyecto, o
-   - creó la solicitud, o es de la misma área que la originó
-     (origin_area) — para que el área que pidió el proyecto pueda
-     seguir viéndolo en modo lectura antes y después de aprobado.
+   - está inscrito en algún rol Scrum de ese proyecto.
    El listado general de /projects (vista superficial: nombre, cliente,
    estado, familia, responsable, avance) NO se restringe.
    ============================================================ */
@@ -186,39 +159,13 @@ async function isPrivilegedViewer(req) {
 
 async function canAccessProject(req, projectId) {
   if (await isPrivilegedViewer(req)) return true;
-  const { rows } = await pool.query('SELECT status, responsible_id, created_by, origin_area FROM ti.projects WHERE id=$1', [projectId]);
+  const { rows } = await pool.query('SELECT responsible_id FROM ti.projects WHERE id=$1', [projectId]);
   if (!rows.length) return false;
   if (rows[0].responsible_id != null && String(rows[0].responsible_id) === String(req.user.id)) return true;
-  if (rows[0].created_by != null && String(rows[0].created_by) === String(req.user.id)) return true;
-  const myArea = await getEmployeeArea(req.user.username);
-  if (rows[0].origin_area && myArea && myArea === rows[0].origin_area) return true;
-  /* La cola de "pending" (aprobado, todavía sin reclamar) es visible
-     para todo TI — es la bandeja compartida de donde reclaman, así que
-     necesitan poder abrir el detalle para encontrar el botón Reclamar
-     antes de tener ningún vínculo propio con el proyecto todavía. */
-  if (rows[0].status === 'pending' && myArea === 'TI') return true;
   const { rows: sc } = await pool.query(
     'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [projectId, req.user.id]
   );
   return sc.length > 0;
-}
-
-/* Quién puede definir (agregar/editar texto/borrar) los requisitos de
-   un proyecto: ADG siempre (o privilegiado), y además el área que
-   originó la solicitud mientras todavía la está armando/corrigiendo
-   (pending_approval u observed) — así RRHH/TI/SOPORTE/DST pueden
-   completar su propia ficha de requisitos al pedir un proyecto, igual
-   que ADG lo hace al crear uno directo. Una vez aprobada la solicitud,
-   la definición de requisitos vuelve a ser exclusiva de ADG; el avance
-   (%) lo sigue llevando el responsable del proyecto (isProjectResponsible),
-   sin relación con esto. */
-async function canManageRequirements(req, projectId) {
-  if (await isPrivilegedViewer(req)) return true;
-  const { rows } = await pool.query('SELECT status, origin_area FROM ti.projects WHERE id=$1', [projectId]);
-  if (!rows.length) return false;
-  if (!['pending_approval', 'observed'].includes(rows[0].status)) return false;
-  const myArea = await getEmployeeArea(req.user.username);
-  return !!myArea && myArea === rows[0].origin_area;
 }
 
 async function isProjectResponsible(req, projectId) {
@@ -334,7 +281,7 @@ function signedRawFileUrl(cloudinaryUrl) {
 /* ============================================================
    Proyectos
    ============================================================ */
-const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', finished_by_ti:'Finalizado (por revisar)', completed:'Completado', cancelled:'Cancelado', pending_approval:'Por aprobar', observed:'Observado', archived:'Archivado' };
+const STATUS_LABEL   = { pending:'Pendiente', active:'Activo', paused:'Pausado', finished_by_ti:'Finalizado (por revisar)', completed:'Completado', cancelled:'Cancelado' };
 const PRIORITY_LABEL = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
 const DOC_LABEL       = { dni:'DNI', ce:'CE', pasaporte:'Pasaporte', ruc:'RUC' };
 const PROJECT_TYPE_LABEL = { web:'Web', mobile:'Aplicativo Móvil', desktop:'Aplicativo de Escritorio' };
@@ -347,53 +294,26 @@ const FIELD_LABEL = {
   family:'Familia de Proyecto',
 };
 
-/* Archivado automático perezoso: en vez de un cron aparte, cada vez
-   que alguien pide la lista se archivan solas las observaciones que
-   ya vencieron sus 15 días — sin dependencias nuevas, y ADG entra a
-   revisar seguido, así que el retraso real es mínimo. */
-async function archiveExpiredObservations() {
-  await pool.query(`
-    UPDATE ti.projects SET status = 'archived', archived_at = NOW(), archived_reason = 'observation_deadline_expired'
-    WHERE status = 'observed' AND observation_deadline < NOW()`);
-}
-
 router.get('/projects', async (req, res) => {
   try {
-    await archiveExpiredObservations();
-    const { status, search, family, origin_area } = req.query;
+    const { status, search, family } = req.query;
     const params = [];
-    let where = "WHERE 1=1";
+    let where = 'WHERE 1=1';
     if (status) { params.push(status); where += ` AND p.status = $${params.length}`; }
-    else { where += ` AND p.status != 'archived'`; }
     if (family) { params.push(family); where += ` AND p.family = $${params.length}`; }
-    if (origin_area) { params.push(origin_area); where += ` AND p.origin_area = $${params.length}`; }
     if (search) {
       params.push(`%${search}%`);
       const n = params.length;
       where += ` AND (p.name ILIKE $${n} OR p.client ILIKE $${n} OR p.code ILIKE $${n})`;
     }
-    /* TI y ADG siguen viendo el listado completo (lo necesitan para su
-       trabajo normal: TI reclama cualquier "pending", ADG aprueba
-       cualquier solicitud). RRHH/SOPORTE/DST solo ven sus propias
-       solicitudes (origin_area) más lo que ya verían por ser
-       responsables o parte del equipo Scrum — mismo criterio que
-       canAccessProject/getAccessibleProjectIds, aplicado acá al
-       listado para no exponer proyectos de otras áreas por esta vía. */
-    const myArea = await getEmployeeArea(req.user.username);
-    if (req.user.nivel_acceso < 100 && myArea !== 'ADG' && myArea !== 'TI') {
-      const accessibleIds = await getAccessibleProjectIds(req.user.id);
-      params.push(myArea || '__none__', accessibleIds);
-      where += ` AND (p.origin_area = $${params.length - 1} OR p.id = ANY($${params.length}))`;
-    }
     const { rows } = await pool.query(`
-      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, cb.nombre AS created_by_name,
+      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name,
         (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
         (SELECT COUNT(*) FROM ti.documents  d WHERE d.project_id = p.id)::int AS documents_count,
         (SELECT COUNT(*) FROM ti.whatsapp_messages w WHERE w.project_id = p.id)::int AS messages_count
       FROM ti.projects p
       LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
       LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
-      LEFT JOIN public.usuarios cb ON cb.id = p.created_by
       ${where} ORDER BY p.created_at DESC`, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -431,36 +351,28 @@ router.get('/projects/stats', async (req, res) => {
 router.get('/projects/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, cb.nombre AS created_by_name
+      `SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name
        FROM ti.projects p
        LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
        LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
-       LEFT JOIN public.usuarios cb ON cb.id = p.created_by
        WHERE p.id = $1`,
       [req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
-    if (!(await canAccessProject(req, req.params.id))) {
-      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    if (!(await isPrivilegedViewer(req)) && String(rows[0].responsible_id) !== String(req.user.id)) {
+      const { rows: sc } = await pool.query(
+        'SELECT 1 FROM ti.scrum_roles WHERE project_id=$1 AND user_id=$2 LIMIT 1', [req.params.id, req.user.id]
+      );
+      if (!sc.length) return res.status(403).json({ error: 'No tienes acceso a este proyecto — solo el responsable y el equipo Scrum asignado pueden verlo' });
     }
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/* Cualquiera de las 5 áreas puede crear un registro: ADG lo crea ya
-   aprobado ("pending", como siempre); las demás quedan como solicitud
-   ("pending_approval") a la espera de que ADG la apruebe u observe. */
 router.post('/projects', upload.single('logo_file'), async (req, res) => {
   try {
-    const myArea = await getEmployeeArea(req.user.username);
-    const privileged = req.user.nivel_acceso >= 100;
-    if (!privileged && !ORIGIN_AREAS.includes(myArea)) {
-      return res.status(403).json({ error: 'Tu área no puede crear proyectos' });
-    }
-    const originArea = privileged && !ORIGIN_AREAS.includes(myArea) ? 'ADG' : myArea;
-    const initialStatus = originArea === 'ADG' ? 'pending' : 'pending_approval';
-
-    const { name, client, description, budget, currency, start_date, end_date,
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
             project_type, github_url, website_url, family } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
@@ -479,19 +391,16 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     }
 
     await pool.query(`
-      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family,origin_area)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
-      [id, code, name, client, description || null, initialStatus, 0,
+      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+      [id, code, name, client, description || null, status || 'pending', 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
        company_name || null, company_logo, id_document_type || null, id_document_number || null,
-       project_type || null, github_url || null, website_url || null, family || null, originArea]
+       project_type || null, github_url || null, website_url || null, family || null]
     );
-    const activityMsg = initialStatus === 'pending_approval'
-      ? `Proyecto "${name}" solicitado por ${req.user.nombre || req.user.username} (${originArea}) — a la espera de aprobación de ADG`
-      : `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`;
-    await logActivity(id, req.user.id, 'created', activityMsg);
-    res.status(201).json({ id, code, name, status: initialStatus });
+    await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
+    res.status(201).json({ id, code, name });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -511,33 +420,13 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
       return res.status(403).json({ error: 'Este proyecto ya fue completado y aprobado por ADG — TI ya no puede modificarlo' });
     }
 
-    /* Mientras la solicitud no fue aprobada (o está observada), solo el
-       área que la originó puede editarla — ni siquiera TI, si el
-       proyecto no es suyo. Evita que alguien "arregle" la solicitud
-       de otra área antes de que ADG la vea. */
-    if (['pending_approval', 'observed'].includes(old.status) && myArea !== old.origin_area && !privileged) {
-      return res.status(403).json({ error: 'Este proyecto todavía es una solicitud de otra área — solo esa área o ADG pueden modificarlo' });
-    }
-
-    /* Una vez aprobada la solicitud, el proyecto pasa al flujo normal
-       de TI/ADG — el área que lo originó (si no es TI ni ADG) vuelve a
-       verlo en modo solo lectura, como se le mostró al pedirlo. */
-    if (!['pending_approval', 'observed'].includes(old.status) && !['TI', 'ADG'].includes(myArea) && !privileged) {
-      return res.status(403).json({ error: 'Esta solicitud ya fue aprobada — ahora la gestionan TI y ADG' });
-    }
-
     if (status && status !== old.status) {
-      if (['pending_approval', 'observed', 'archived'].includes(status)) {
-        return res.status(400).json({ error: 'Ese estado se maneja con las acciones de aprobar/observar/reenviar, no editando el proyecto directamente' });
-      }
       if (status === 'finished_by_ti') {
         if (myArea !== 'TI' && !privileged) return res.status(403).json({ error: 'Solo TI puede marcar un proyecto como finalizado' });
         if (!['active', 'paused'].includes(old.status)) return res.status(400).json({ error: 'Solo se puede finalizar un proyecto activo o pausado' });
       } else if (status === 'completed') {
         if (myArea !== 'ADG' && !privileged) return res.status(403).json({ error: 'Solo ADG puede aprobar y completar un proyecto' });
         if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por TI' });
-      } else if (status === 'pending') {
-        return res.status(400).json({ error: 'Ese estado se maneja con la acción de aprobar, no editando el proyecto directamente' });
       }
     }
 
@@ -607,87 +496,6 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/* ADG aprueba una solicitud de otra área — entra a la cola de TI de
-   siempre, como si ADG la hubiera creado directamente. */
-router.post('/projects/:id/approve', async (req, res) => {
-  try {
-    if (!(await requireArea(req, res, 'ADG'))) return;
-    const { rows } = await pool.query('SELECT status, name, origin_area FROM ti.projects WHERE id = $1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
-    if (rows[0].status !== 'pending_approval') return res.status(400).json({ error: 'Este proyecto no está a la espera de aprobación' });
-
-    await pool.query(`UPDATE ti.projects SET status = 'pending', updated_at = NOW() WHERE id = $1`, [req.params.id]);
-    await logActivity(req.params.id, req.user.id, 'approved',
-      `${req.user.nombre || req.user.username} (ADG) aprobó la solicitud de ${rows[0].origin_area} — "${rows[0].name}" queda disponible para que TI la reclame`);
-    res.json({ message: 'Solicitud aprobada' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* ADG observa un proyecto — con motivo obligatorio. Dos casos según
-   en qué etapa esté:
-   - pending_approval (solicitud recién llegada): pasa a "observed",
-     con 15 días para que el área de origen la corrija y reenvíe, o
-     se archiva sola (ver el chequeo perezoso en GET /projects).
-   - finished_by_ti (TI dijo que terminó, ADG no está conforme):
-     vuelve directo a "active" para que TI lo siga trabajando — sin
-     plazo ni pestaña de observación, el motivo queda en Actividad. */
-router.post('/projects/:id/observe', async (req, res) => {
-  try {
-    if (!(await requireArea(req, res, 'ADG'))) return;
-    const reason = (req.body?.reason || '').trim();
-    if (!reason) return res.status(400).json({ error: 'El motivo de la observación es obligatorio' });
-
-    const { rows } = await pool.query('SELECT status, name, origin_area FROM ti.projects WHERE id = $1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
-    const old = rows[0];
-
-    if (old.status === 'pending_approval') {
-      await pool.query(
-        `UPDATE ti.projects SET status = 'observed', observation_reason = $1, observed_at = NOW(),
-           observation_deadline = NOW() + INTERVAL '15 days', updated_at = NOW() WHERE id = $2`,
-        [reason, req.params.id]
-      );
-      await logActivity(req.params.id, req.user.id, 'observed',
-        `${req.user.nombre || req.user.username} (ADG) observó la solicitud de ${old.origin_area} — tienen 15 días para subsanar: ${reason}`);
-      res.json({ message: 'Proyecto observado' });
-    } else if (old.status === 'finished_by_ti') {
-      await pool.query(`UPDATE ti.projects SET status = 'active', updated_at = NOW() WHERE id = $1`, [req.params.id]);
-      await logActivity(req.params.id, req.user.id, 'observed_closure',
-        `${req.user.nombre || req.user.username} (ADG) observó el cierre y lo devolvió a TI: ${reason}`);
-      res.json({ message: 'Cierre observado, el proyecto vuelve a estar activo' });
-    } else {
-      return res.status(400).json({ error: 'Este proyecto no está en una etapa que se pueda observar' });
-    }
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-/* El área de origen (o un privilegiado) reenvía una solicitud
-   observada, después de corregirla — vuelve a la cola de aprobación
-   de ADG. */
-router.post('/projects/:id/resubmit', async (req, res) => {
-  try {
-    const { rows } = await pool.query('SELECT status, name, origin_area FROM ti.projects WHERE id = $1', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
-    const old = rows[0];
-    if (old.status !== 'observed') return res.status(400).json({ error: 'Este proyecto no está observado' });
-
-    const myArea = await getEmployeeArea(req.user.username);
-    const privileged = req.user.nivel_acceso >= 100;
-    if (myArea !== old.origin_area && !privileged) {
-      return res.status(403).json({ error: 'Solo el área que originó esta solicitud puede reenviarla' });
-    }
-
-    await pool.query(
-      `UPDATE ti.projects SET status = 'pending_approval', observation_reason = NULL,
-         observed_at = NULL, observation_deadline = NULL, updated_at = NOW() WHERE id = $1`,
-      [req.params.id]
-    );
-    await logActivity(req.params.id, req.user.id, 'resubmitted',
-      `${req.user.nombre || req.user.username} (${old.origin_area}) reenvió la solicitud "${old.name}" tras subsanar las observaciones`);
-    res.json({ message: 'Solicitud reenviada' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 /* TI reclama un proyecto pendiente creado por ADG */
 router.post('/projects/:id/claim', async (req, res) => {
   try {
@@ -719,16 +527,8 @@ router.delete('/projects/:id', async (req, res) => {
 router.get('/contracts', async (req, res) => {
   try {
     const { project_id, type, status } = req.query;
-    if (project_id && !(await canAccessProject(req, project_id))) {
-      return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
-    }
     const params = []; let where = 'WHERE 1=1';
     if (project_id) { params.push(project_id); where += ` AND c.project_id=$${params.length}`; }
-    else if (!(await isPrivilegedViewer(req))) {
-      const ids = await getAccessibleProjectIds(req.user.id);
-      if (!ids.length) return res.json([]);
-      params.push(ids); where += ` AND c.project_id = ANY($${params.length})`;
-    }
     if (type)       { params.push(type);       where += ` AND c.type=$${params.length}`; }
     if (status)     { params.push(status);     where += ` AND c.status=$${params.length}`; }
     const { rows } = await pool.query(`
@@ -1131,11 +931,9 @@ router.get('/requirements', async (req, res) => {
 
 router.post('/requirements', async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { project_id, type, description } = req.body;
     if (!project_id || !description) return res.status(400).json({ error: 'Proyecto y descripción son requeridos' });
-    if (!(await canManageRequirements(req, project_id))) {
-      return res.status(403).json({ error: 'No tienes permiso para definir requisitos de este proyecto' });
-    }
     const id = uid();
     const finalType = type === 'non_functional' ? 'non_functional' : 'functional';
     await pool.query(
@@ -1157,9 +955,7 @@ router.put('/requirements/:id', async (req, res) => {
     const old = oldRows[0];
 
     if (description !== undefined || type !== undefined) {
-      if (!(await canManageRequirements(req, old.project_id))) {
-        return res.status(403).json({ error: 'No tienes permiso para definir requisitos de este proyecto' });
-      }
+      if (!(await requireArea(req, res, 'ADG'))) return;
     }
     if (progress !== undefined && !(await isProjectResponsible(req, old.project_id))) {
       return res.status(403).json({ error: 'Solo el responsable del proyecto puede actualizar el avance' });
@@ -1195,12 +991,10 @@ router.put('/requirements/:id', async (req, res) => {
 
 router.delete('/requirements/:id', async (req, res) => {
   try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
     const old = oldRows[0];
-    if (!(await canManageRequirements(req, old.project_id))) {
-      return res.status(403).json({ error: 'No tienes permiso para definir requisitos de este proyecto' });
-    }
     await pool.query('DELETE FROM ti.requirements WHERE id=$1', [req.params.id]);
     const label = old.type === 'non_functional' ? 'No Funcional' : 'Funcional';
     await logActivity(old.project_id, req.user.id, 'requirement_change',
