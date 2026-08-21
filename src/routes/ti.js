@@ -1090,6 +1090,74 @@ router.get('/technology-catalog', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Administración del catálogo desde Configuración (ADG) — a diferencia de
+   POST /technologies (que agrega una tecnología a UN proyecto y de paso
+   crea la entrada de catálogo si no existía), esto administra el catálogo
+   en sí: la lista reutilizable que alimenta el buscador al agregar
+   tecnologías a cualquier proyecto. Mismo criterio que /document-types:
+   solo ADG (o privilegiado) puede agregar/editar/borrar. */
+router.post('/technology-catalog', upload.single('image'), async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { category, name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nombre requerido' });
+    const finalCategory = category === 'tool' ? 'tool' : 'language';
+
+    let image_url = null;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/technologies', 'image', req.file.originalname);
+      image_url = result.secure_url;
+    } else if (req.body.image_url) {
+      image_url = req.body.image_url;
+    }
+
+    const id = uid();
+    await pool.query(
+      'INSERT INTO ti.technology_catalog (id,category,name,image_url) VALUES ($1,$2,$3,$4)',
+      [id, finalCategory, name.trim(), image_url]
+    );
+    res.status(201).json({ id, category: finalCategory, name: name.trim(), image_url });
+  } catch (e) {
+    if (e.code === '23505') return res.status(400).json({ error: 'Ya existe una tecnología con ese nombre en esa categoría' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.put('/technology-catalog/:id', upload.single('image'), async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nombre requerido' });
+    const { rows } = await pool.query('SELECT * FROM ti.technology_catalog WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+
+    let image_url = rows[0].image_url;
+    if (req.file) {
+      const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/technologies', 'image', req.file.originalname);
+      image_url = result.secure_url;
+    } else if (req.body.image_url !== undefined) {
+      image_url = req.body.image_url || null;
+    }
+
+    await pool.query('UPDATE ti.technology_catalog SET name=$1, image_url=$2 WHERE id=$3', [name.trim(), image_url, req.params.id]);
+    res.json({ message: 'Actualizado' });
+  } catch (e) {
+    if (e.code === '23505') return res.status(400).json({ error: 'Ya existe una tecnología con ese nombre en esa categoría' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.delete('/technology-catalog/:id', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    await pool.query('DELETE FROM ti.technology_catalog WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
+  } catch (e) {
+    if (e.code === '23503') return res.status(400).json({ error: 'No se puede eliminar: hay proyectos que ya usan esta tecnología del catálogo' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.get('/technologies', async (req, res) => {
   try {
     const { project_id } = req.query;
