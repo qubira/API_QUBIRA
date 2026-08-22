@@ -112,7 +112,19 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
-    `);
+      ALTER TABLE ti.requirements ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
+    `).then(() => pool.query(`
+      -- Numeración RF1/RNF1... por proyecto: a los requisitos que ya
+      -- existían antes de esta columna (order_index=0, todos empatados)
+      -- se les asigna un orden inicial según cuándo se crearon.
+      -- Idempotente — una vez migrados ya no vuelven a tener order_index=0.
+      UPDATE ti.requirements r SET order_index = sub.rn
+      FROM (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY project_id, type ORDER BY created_at ASC) AS rn
+        FROM ti.requirements WHERE order_index = 0
+      ) sub
+      WHERE r.id = sub.id
+    `));
   }
   return ready;
 }
@@ -924,7 +936,7 @@ router.get('/requirements', async (req, res) => {
       if (!ids.length) return res.json([]);
       params.push(ids); where += ` AND project_id = ANY($${params.length})`;
     }
-    const { rows } = await pool.query(`SELECT * FROM ti.requirements ${where} ORDER BY created_at ASC`, params);
+    const { rows } = await pool.query(`SELECT * FROM ti.requirements ${where} ORDER BY type ASC, order_index ASC, created_at ASC`, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -936,14 +948,47 @@ router.post('/requirements', async (req, res) => {
     if (!project_id || !description) return res.status(400).json({ error: 'Proyecto y descripción son requeridos' });
     const id = uid();
     const finalType = type === 'non_functional' ? 'non_functional' : 'functional';
+    const { rows: maxRows } = await pool.query(
+      'SELECT COALESCE(MAX(order_index),0) AS max FROM ti.requirements WHERE project_id=$1 AND type=$2',
+      [project_id, finalType]
+    );
+    const orderIndex = maxRows[0].max + 1;
     await pool.query(
-      'INSERT INTO ti.requirements (id,project_id,type,description,progress) VALUES ($1,$2,$3,$4,$5)',
-      [id, project_id, finalType, description, 0]
+      'INSERT INTO ti.requirements (id,project_id,type,description,progress,order_index) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, project_id, finalType, description, 0, orderIndex]
     );
     await logActivity(project_id, req.user.id, 'requirement_change',
       `${req.user.nombre || req.user.username} agregó el requerimiento ${REQ_TYPE_LABEL[finalType]} "${description}"`);
     await recalcProjectProgress(project_id);
-    res.status(201).json({ id });
+    res.status(201).json({ id, order_index: orderIndex });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Subir/bajar un requerimiento dentro de su propia lista (Funcionales o
+   No Funcionales) — intercambia order_index con el vecino inmediato en
+   esa dirección, así el resto conserva su posición relativa. */
+router.post('/requirements/:id/move', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { direction } = req.body;
+    if (!['up', 'down'].includes(direction)) return res.status(400).json({ error: 'Dirección inválida' });
+
+    const { rows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
+    const current = rows[0];
+
+    const cmp = direction === 'up' ? '<' : '>';
+    const order = direction === 'up' ? 'DESC' : 'ASC';
+    const { rows: neighborRows } = await pool.query(
+      `SELECT * FROM ti.requirements WHERE project_id=$1 AND type=$2 AND order_index ${cmp} $3 ORDER BY order_index ${order} LIMIT 1`,
+      [current.project_id, current.type, current.order_index]
+    );
+    if (!neighborRows.length) return res.json({ message: 'Ya está en el extremo de la lista' });
+    const neighbor = neighborRows[0];
+
+    await pool.query('UPDATE ti.requirements SET order_index=$1 WHERE id=$2', [neighbor.order_index, current.id]);
+    await pool.query('UPDATE ti.requirements SET order_index=$1 WHERE id=$2', [current.order_index, neighbor.id]);
+    res.json({ message: 'Reordenado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
