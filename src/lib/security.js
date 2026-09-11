@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { pool } = require('../db');
+const { encrypt: encryptField, decrypt: decryptField } = require('./crypto');
 
 const MAX_LOGIN_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS) || 5;
 const LOCKOUT_MINUTES = parseInt(process.env.LOCKOUT_MINUTES) || 15;
@@ -73,13 +74,17 @@ function ensureSecuritySchema() {
          descriptor de 128 dimensiones que calcula face-api.js en el
          navegador, nunca una foto. Varias filas por usuario (varias
          capturas desde distintos ángulos) para que el match sea más
-         confiable — se reemplazan todas juntas en cada (re)registro. */
+         confiable — se reemplazan todas juntas en cada (re)registro.
+         "descriptor" guarda el vector cifrado (AES-256-GCM, ver lib/crypto)
+         como TEXT en vez de JSONB — nunca se filtra ni se ordena por él en
+         SQL, siempre se trae todo y se compara en memoria. */
       CREATE TABLE IF NOT EXISTS security.face_descriptors (
         id BIGSERIAL PRIMARY KEY,
         usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
-        descriptor JSONB NOT NULL,
+        descriptor TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE security.face_descriptors ALTER COLUMN descriptor TYPE TEXT USING descriptor::text;
       CREATE INDEX IF NOT EXISTS face_descriptors_usuario_idx ON security.face_descriptors(usuario_id);
     `);
   }
@@ -425,8 +430,8 @@ async function saveFaceDescriptors(usuarioId, descriptors) {
     await client.query('DELETE FROM security.face_descriptors WHERE usuario_id = $1', [usuarioId]);
     for (const d of descriptors) {
       await client.query(
-        'INSERT INTO security.face_descriptors (usuario_id, descriptor) VALUES ($1, $2::jsonb)',
-        [usuarioId, JSON.stringify(d)]
+        'INSERT INTO security.face_descriptors (usuario_id, descriptor) VALUES ($1, $2)',
+        [usuarioId, encryptField(JSON.stringify(d))]
       );
     }
     await client.query('COMMIT');
@@ -455,7 +460,11 @@ async function findFaceMatch(probeDescriptor) {
   const { rows } = await pool.query('SELECT usuario_id, descriptor FROM security.face_descriptors');
   let best = null;
   for (const row of rows) {
-    const distance = euclideanDistance(probeDescriptor, row.descriptor);
+    const decrypted = decryptField(row.descriptor);
+    if (!decrypted) continue; // fila corrupta o cifrada con otra llave — se ignora, no revienta el login
+    let storedDescriptor;
+    try { storedDescriptor = JSON.parse(decrypted); } catch { continue; }
+    const distance = euclideanDistance(probeDescriptor, storedDescriptor);
     if (!best || distance < best.distance) best = { usuario_id: row.usuario_id, distance };
   }
   if (best && best.distance <= FACE_MATCH_THRESHOLD) return best;

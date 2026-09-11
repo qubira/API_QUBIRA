@@ -8,6 +8,7 @@ const { pool }   = require('../db');
 const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
+const { encrypt: encryptField, decrypt: decryptField } = require('../lib/crypto');
 
 const router = express.Router();
 router.use(requireAuth); /* toda el area de RRHH exige sesion valida */
@@ -370,6 +371,20 @@ const MAPS = {
   }},
 };
 
+/* Campos de empleados cifrados en reposo (AES-256-GCM, ver lib/crypto) —
+   datos personales de verdad (documento, contacto, dirección...), no los
+   "...Id" que apuntan a catálogos (esos siguen en texto plano porque el
+   propio valor no es sensible, es solo un puntero, y cifrarlo rompería
+   la resolución contra rrhh.catalogos). El resto de la protección de
+   estos mismos campos (mostrar "••••••" a quien no tiene permiso) sigue
+   igual que antes — esto es una capa aparte, a nivel de base de datos. */
+const EMPLOYEE_ENCRYPTED_FIELDS = new Set([
+  'segundoNombre', 'segundoApellido', 'numeroDocumento', 'telefono',
+  'direccion', 'coordenadas', 'codigoPostal',
+  'contactoReferenciaNombre', 'contactoReferenciaTel1', 'contactoReferenciaTel2',
+  'fechaNacimiento', 'hijos', 'cuentaAntecedentes', 'observacionesBaja',
+]);
+
 function toRow(mapKey, obj) {
   const { cols } = MAPS[mapKey];
   const row = {};
@@ -379,6 +394,7 @@ function toRow(mapKey, obj) {
     /* Campos "...Id" vacíos ("") deben guardarse como NULL, no como texto vacío —
        si no, violan las foreign keys (ej. jefeInmediatoId sin seleccionar). */
     if (value === '' && /Id$/.test(camel)) value = null;
+    if (mapKey === 'empleados' && EMPLOYEE_ENCRYPTED_FIELDS.has(camel)) value = encryptField(value);
     row[snake] = value;
   }
   return row;
@@ -387,7 +403,9 @@ function toCamel(mapKey, row) {
   const { cols } = MAPS[mapKey];
   const obj = {};
   for (const [camel, snake] of Object.entries(cols)) {
-    obj[camel] = row[snake] !== undefined ? row[snake] : null;
+    let value = row[snake] !== undefined ? row[snake] : null;
+    if (mapKey === 'empleados' && EMPLOYEE_ENCRYPTED_FIELDS.has(camel)) value = decryptField(value);
+    obj[camel] = value;
   }
   return obj;
 }
