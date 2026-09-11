@@ -41,6 +41,12 @@ function ensureSecuritySchema() {
         updated_at TIMESTAMPTZ DEFAULT NOW(),
         notes TEXT
       );
+      /* true cuando el bloqueo lo hizo el propio dueño de la cuenta vía
+         verificación facial (tras detectar que alguien más abrió su
+         sesión) — ese caso puntual solo lo puede levantar DST, aunque
+         Soporte pueda seguir viéndolo y desbloqueando cualquier otro IP
+         normalmente. */
+      ALTER TABLE security.ip_status ADD COLUMN IF NOT EXISTS locked_to_dst BOOLEAN NOT NULL DEFAULT false;
 
       CREATE TABLE IF NOT EXISTS security.handoff_codes (
         id BIGSERIAL PRIMARY KEY,
@@ -68,6 +74,14 @@ function ensureSecuritySchema() {
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_motivo TEXT;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_por INTEGER;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_en TIMESTAMPTZ;
+
+      /* Una sola sesión activa por cuenta: al iniciar sesión de nuevo se
+         revocan las anteriores en vez de dejarlas convivir (ver
+         issueSession en routes/auth.js). revoked_reason distingue "te
+         desplazó un login nuevo" de una expiración natural, para poder
+         avisarle a la sesión vieja con el IP que la reemplazó. */
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS revoked_reason TEXT;
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS revoked_by_ip TEXT;
 
       /* Reconocimiento facial — RRHH captura el rostro del colaborador al
          darlo de alta (o después, editándolo); el servidor solo guarda el
@@ -114,15 +128,25 @@ async function isIpBlocked(ip) {
   return isIpBlockedRow(await getIpStatus(ip));
 }
 
-async function upsertIpStatus(ip, { category, reason, blockedUntil, isPermanent, adminId, notes }) {
+/* lockedToDst solo se toca cuando el llamador lo pasa explícitamente
+   (true/false) — el resto de los llamadores (el PUT /ips/:ip normal de
+   Soporte/DST) no lo mencionan, así que se preserva lo que ya había en
+   vez de resetearlo a false cada vez que alguien edita otra cosa del
+   mismo IP. */
+async function upsertIpStatus(ip, { category, reason, blockedUntil, isPermanent, adminId, notes, lockedToDst }) {
+  let resolvedLockedToDst = lockedToDst;
+  if (resolvedLockedToDst === undefined) {
+    const { rows } = await pool.query('SELECT locked_to_dst FROM security.ip_status WHERE ip = $1', [ip]);
+    resolvedLockedToDst = rows.length ? rows[0].locked_to_dst : false;
+  }
   await pool.query(
-    `INSERT INTO security.ip_status (ip, category, reason, blocked_until, is_permanent, created_by, updated_by, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$6,$7)
+    `INSERT INTO security.ip_status (ip, category, reason, blocked_until, is_permanent, created_by, updated_by, notes, locked_to_dst)
+     VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8)
      ON CONFLICT (ip) DO UPDATE SET
        category = EXCLUDED.category, reason = EXCLUDED.reason, blocked_until = EXCLUDED.blocked_until,
        is_permanent = EXCLUDED.is_permanent, updated_by = EXCLUDED.updated_by, notes = EXCLUDED.notes,
-       updated_at = NOW()`,
-    [ip, category, reason || null, blockedUntil || null, !!isPermanent, adminId || null, notes || null]
+       locked_to_dst = EXCLUDED.locked_to_dst, updated_at = NOW()`,
+    [ip, category, reason || null, blockedUntil || null, !!isPermanent, adminId || null, notes || null, !!resolvedLockedToDst]
   );
 }
 
@@ -471,12 +495,31 @@ async function findFaceMatch(probeDescriptor) {
   return null;
 }
 
+/* Verificación 1:1 (no 1:N como findFaceMatch): confirma que un rostro
+   capturado en vivo es el de ESA cuenta puntual — se usa cuando ya se
+   sabe de quién dice ser (ej. "bloquear el IP que reemplazó mi sesión"),
+   no para adivinar quién es a partir de la nada. */
+async function verifyOwnFace(usuarioId, probeDescriptor) {
+  const { rows } = await pool.query('SELECT descriptor FROM security.face_descriptors WHERE usuario_id = $1', [usuarioId]);
+  if (!rows.length) return false;
+  let best = Infinity;
+  for (const row of rows) {
+    const decrypted = decryptField(row.descriptor);
+    if (!decrypted) continue;
+    let stored;
+    try { stored = JSON.parse(decrypted); } catch { continue; }
+    const distance = euclideanDistance(probeDescriptor, stored);
+    if (distance < best) best = distance;
+  }
+  return best <= FACE_MATCH_THRESHOLD;
+}
+
 module.exports = {
   ensureSecuritySchema, clientIp,
   getIpStatus, isIpBlocked, isIpBlockedRow, upsertIpStatus, touchIpObservation,
   recordLoginAttempt, countRecentFailures, distinctFailureIps,
   FACE_DESCRIPTOR_LENGTH, FACE_MATCH_THRESHOLD, isValidFaceDescriptor,
-  saveFaceDescriptors, deleteFaceDescriptors, getFaceEnrollmentCount, findFaceMatch,
+  saveFaceDescriptors, deleteFaceDescriptors, getFaceEnrollmentCount, findFaceMatch, verifyOwnFace,
   lockAccount, bumpFailedAttempts, resetFailedAttempts,
   createHandoffCode, consumeHandoffCode,
   getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,

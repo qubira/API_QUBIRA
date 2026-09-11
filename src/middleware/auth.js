@@ -16,14 +16,18 @@ async function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
 
-    /* Verificar que la sesión todavía existe y no ha expirado */
+    /* Se trae la sesión exista o no haya expirado ya — así se puede
+       distinguir "expiró sola" de "te desplazó un login nuevo en otro
+       dispositivo" (revoked_reason) y devolver un aviso específico en
+       vez del genérico "sesión inválida". */
     const { rows } = await pool.query(
-      `SELECT s.id, u.id AS usuario_id, u.username, u.nombre, u.apellidos, u.estado,
+      `SELECT s.id, s.expires_at, s.revoked_reason, s.revoked_by_ip,
+              u.id AS usuario_id, u.username, u.nombre, u.apellidos, u.estado,
               r.nombre AS rol, r.nivel_acceso, u.avatar_color
        FROM sesiones s
        JOIN usuarios u ON u.id = s.usuario_id
        JOIN roles    r ON r.id = u.rol_id
-       WHERE s.token = $1 AND s.expires_at > NOW()`,
+       WHERE s.token = $1`,
       [token]
     );
 
@@ -32,6 +36,17 @@ async function requireAuth(req, res, next) {
     }
 
     const sesion = rows[0];
+
+    if (sesion.revoked_reason === 'replaced') {
+      return res.status(401).json({
+        ok: false, code: 'SESSION_REPLACED', ip: sesion.revoked_by_ip,
+        error: 'Tu cuenta inició sesión en otro dispositivo',
+      });
+    }
+
+    if (new Date(sesion.expires_at) <= new Date()) {
+      return res.status(401).json({ ok: false, error: 'Sesión inválida o expirada' });
+    }
 
     if (sesion.estado !== 'activo') {
       return res.status(403).json({ ok: false, error: 'Cuenta desactivada' });

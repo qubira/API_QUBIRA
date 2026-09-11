@@ -64,7 +64,7 @@ router.get('/ips', requireIpAccess, async (req, res) => {
     params.push(limit); params.push(offset);
 
     const { rows } = await pool.query(`
-      SELECT s.ip, s.category, s.reason, s.blocked_until, s.is_permanent, s.notes,
+      SELECT s.ip, s.category, s.reason, s.blocked_until, s.is_permanent, s.notes, s.locked_to_dst,
              s.created_at, s.updated_at,
              cu.username AS created_by_username, uu.username AS updated_by_username,
              (SELECT count(*)::int FROM security.login_attempts la WHERE la.ip = s.ip) AS attempt_count,
@@ -85,6 +85,18 @@ router.put('/ips/:ip', requireIpAccess, async (req, res) => {
   try {
     const { category, reason, blocked_until, is_permanent, notes } = req.body;
     if (!VALID_CATEGORIES.includes(category)) return res.status(400).json({ error: 'Categoría inválida' });
+
+    /* Un IP que el propio dueño de una cuenta bloqueó vía verificación
+       facial (locked_to_dst) solo lo puede tocar DST — Soporte puede
+       seguir viéndolo, pero no levantarlo ni recategorizarlo. */
+    const current = await sec.getIpStatus(req.params.ip);
+    if (current?.locked_to_dst) {
+      const authorized = await getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id);
+      const isDstOrPrivileged = req.user.nivel_acceso >= 100 || authorized.includes('DST');
+      if (!isDstOrPrivileged) {
+        return res.status(403).json({ error: 'Este IP fue bloqueado por verificación facial del titular de la cuenta — solo DST puede modificarlo' });
+      }
+    }
 
     await sec.upsertIpStatus(req.params.ip, {
       category, reason, blockedUntil: blocked_until || null, isPermanent: !!is_permanent,

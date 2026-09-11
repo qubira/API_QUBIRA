@@ -12,6 +12,20 @@ const sec = require('../lib/security');
 const router = express.Router();
 router.use((req, res, next) => { sec.ensureSecuritySchema().then(() => next()).catch(next); });
 
+/* Una sola sesión activa por cuenta: entrar con credenciales o rostro
+   desde un dispositivo nuevo apaga las sesiones que esa cuenta tenía
+   abiertas en cualquier otro lado. Deliberadamente NO se usa en
+   /exchange (el traspaso entre paneles del MISMO dispositivo/sesión
+   central, ej. ADG → TI vía el botón "Módulos") — si no, tener dos
+   paneles abiertos a la vez en la misma compu se rompería solo. */
+async function revokeOtherSessions(userId, newIp) {
+  await pool.query(
+    `UPDATE sesiones SET expires_at = NOW(), revoked_reason = 'replaced', revoked_by_ip = $2
+     WHERE usuario_id = $1 AND expires_at > NOW() AND revoked_reason IS NULL`,
+    [userId, newIp]
+  );
+}
+
 /* Arma el token + sesión + respuesta para un usuario ya verificado —
    usado tanto por /login (credenciales) como por /exchange (código de
    traspaso desde login/modulo.html), así ambos caminos terminan en
@@ -131,6 +145,7 @@ router.post('/login', async (req, res) => {
     await sec.resetFailedAttempts(user.id);
     await sec.recordLoginAttempt({ username, ip, success: true, userAgent: req.headers['user-agent'] });
 
+    await revokeOtherSessions(user.id, ip);
     const { token, user: userOut } = await issueSession(user, req);
 
     await pool.query(
@@ -335,6 +350,7 @@ router.post('/face/login', async (req, res) => {
     }
 
     await sec.recordLoginAttempt({ username: user.username, ip, success: true, userAgent: req.headers['user-agent'] });
+    await revokeOtherSessions(user.id, ip);
     const { token, user: userOut } = await issueSession(user, req);
 
     await pool.query(
@@ -346,6 +362,58 @@ router.post('/face/login', async (req, res) => {
     return res.json({ ok: true, token, user: userOut });
   } catch (err) {
     console.error('[AUTH] Face login error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+/* ============================================================
+   POST /api/auth/security/block-replacing-ip
+   Público (a propósito): a quien lo llama recién le mataron la sesión
+   porque su cuenta inició sesión en otro dispositivo — no tiene un
+   token válido para autenticarse. En su lugar prueba que es EL DUEÑO
+   de esa cuenta puntual con su propio rostro (verificación 1:1, no
+   una búsqueda como el login facial normal) y, si coincide, bloquea
+   el IP que le reemplazó la sesión.
+   Body: { username, descriptor, ip }
+   ============================================================ */
+router.post('/security/block-replacing-ip', async (req, res) => {
+  const callerIp = sec.clientIp(req);
+  try {
+    const { username, descriptor, ip } = req.body || {};
+    if (!username || !ip || !sec.isValidFaceDescriptor(descriptor)) {
+      return res.status(400).json({ ok: false, error: 'Datos inválidos' });
+    }
+
+    await sec.touchIpObservation(callerIp);
+    if (await sec.isIpBlocked(callerIp)) {
+      return res.status(403).json({ ok: false, error: 'Acceso bloqueado por seguridad. Contacta al administrador.' });
+    }
+
+    const userId = await findUserIdByUsername(username);
+    if (!userId) return res.status(404).json({ ok: false, error: 'Cuenta no encontrada' });
+
+    const enrolled = await sec.getFaceEnrollmentCount(userId);
+    if (!enrolled) {
+      return res.status(409).json({ ok: false, error: 'Esta cuenta no tiene reconocimiento facial registrado — no se puede verificar al titular.' });
+    }
+
+    const verified = await sec.verifyOwnFace(userId, descriptor);
+    if (!verified) {
+      await sec.recordLoginAttempt({ username: 'face-block:' + username, ip: callerIp, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(401).json({ ok: false, error: 'El rostro no coincide con el titular de la cuenta' });
+    }
+
+    await sec.upsertIpStatus(ip, {
+      category: 'bloqueada',
+      reason: `Bloqueado por ${username} (verificación facial) tras detectar un inicio de sesión no reconocido`,
+      adminId: userId,
+      lockedToDst: true,
+    });
+    await logSecurityEvent({ userId, path: '/api/auth/security/block-replacing-ip', actionType: 'ip_blocked_by_owner', ip: callerIp, statusCode: 200 });
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[AUTH] block-replacing-ip error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
