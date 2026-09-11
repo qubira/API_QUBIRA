@@ -15,6 +15,7 @@ const tiRouter       = require('./src/routes/ti');
 const calendarRouter = require('./src/routes/calendar');
 const auditRouter    = require('./src/routes/audit');
 const securityRouter = require('./src/routes/security');
+const analyticsRouter = require('./src/routes/analytics');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -104,6 +105,7 @@ app.use('/api/ti',         tiRouter);
 app.use('/api/calendar',   calendarRouter);
 app.use('/api/audit',      auditRouter);
 app.use('/api/security',   securityRouter);
+app.use('/api/analytics',  analyticsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });
