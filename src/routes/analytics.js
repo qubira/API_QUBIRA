@@ -6,15 +6,19 @@
    caso de éxito, clicks en WhatsApp, uso del chatbot). El sitio
    público (carpeta QUBIRA, deploy aparte en Vercel) manda los
    eventos acá sin autenticarse — es tráfico anónimo de visitantes,
-   no una cuenta del ecosistema. Se consulta desde QUBIRA_DST
-   (sección Visitas), con el mismo criterio de acceso que el resto
-   del panel (nivel_acceso>=100 o módulo DST otorgado).
+   no una cuenta del ecosistema. Se consulta desde la sección
+   "Visitas" de QUBIRA_ADG, QUBIRA_SOPORTE y QUBIRA_DST, con el
+   mismo criterio de acceso que ya usa Auditoría en esos mismos
+   paneles: cargo Supervisor/Coordinador/Gerente, nivel_acceso>=100,
+   o el módulo DST otorgado (para quien entra solo por DST y no
+   tiene un cargo calificado en ninguna área real).
    ============================================================ */
 
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { getAuthorizedModules } = require('../lib/moduleAccess');
+const { canViewAudit } = require('../lib/audit');
 
 const router = express.Router();
 
@@ -57,16 +61,17 @@ function clip(v, max) {
   return s.slice(0, max);
 }
 
-/* Quién puede VER las estadísticas — mismo criterio que el resto de
-   QUBIRA_DST: nivel_acceso>=100, o que le hayan otorgado el módulo
-   DST explícitamente. */
+/* Quién puede VER las estadísticas — mismo criterio que ya usa
+   Auditoría en ADG/TI/RRHH/Soporte (cargo Supervisor/Coordinador/
+   Gerente, o nivel_acceso>=100), más el módulo DST otorgado para
+   quien entra solo por DST y no tiene un cargo calificado. */
 async function requirePrivileged(req, res, next) {
-  if (req.user.nivel_acceso >= 100) return next();
+  if (await canViewAudit(req)) return next();
   try {
     const authorized = await getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id);
     if (authorized.includes('DST')) return next();
   } catch (e) { return next(e); }
-  return res.status(403).json({ error: 'Esta acción requiere privilegios de administrador' });
+  return res.status(403).json({ error: 'No tienes permiso para ver las estadísticas del sitio' });
 }
 
 /* ============================================================
