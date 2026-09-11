@@ -61,6 +61,32 @@ function clip(v, max) {
   return s.slice(0, max);
 }
 
+/* Parser de User-Agent liviano, sin dependencias — alcanza para el
+   reporte de negocio (móvil/escritorio/tablet + navegador + so), no
+   pretende ser exacto al 100% como una librería dedicada. */
+function parseUserAgent(ua) {
+  if (!ua) return { device: 'Desconocido', browser: 'Desconocido', os: 'Desconocido' };
+  const isTablet = /iPad|Tablet|Nexus 7|Nexus 10|SM-T/i.test(ua);
+  const isMobile = !isTablet && /Mobi|Android|iPhone|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+  const device = isTablet ? 'Tablet' : (isMobile ? 'Móvil' : 'Escritorio');
+
+  let browser = 'Otro';
+  if (/Edg\//i.test(ua)) browser = 'Edge';
+  else if (/OPR\//i.test(ua) || /Opera/i.test(ua)) browser = 'Opera';
+  else if (/Chrome\//i.test(ua) && !/Chromium/i.test(ua)) browser = 'Chrome';
+  else if (/Firefox\//i.test(ua)) browser = 'Firefox';
+  else if (/Safari\//i.test(ua) && /Version\//i.test(ua)) browser = 'Safari';
+
+  let os = 'Otro';
+  if (/Windows/i.test(ua)) os = 'Windows';
+  else if (/Android/i.test(ua)) os = 'Android';
+  else if (/iPhone|iPad|iPod/i.test(ua)) os = 'iOS';
+  else if (/Mac OS X/i.test(ua)) os = 'macOS';
+  else if (/Linux/i.test(ua)) os = 'Linux';
+
+  return { device, browser, os };
+}
+
 /* Quién puede VER las estadísticas — mismo criterio que ya usa
    Auditoría en ADG/TI/RRHH/Soporte (cargo Supervisor/Coordinador/
    Gerente, o nivel_acceso>=100), más el módulo DST otorgado para
@@ -109,7 +135,7 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
 
-    const [totals, byDay, byCase, byType, topPages, topReferrers] = await Promise.all([
+    const [totals, byDay, byCase, byType, topPages, topReferrers, visitorAge, leads, uaRows] = await Promise.all([
       pool.query(`
         SELECT
           COUNT(*) FILTER (WHERE event_type = 'page_view')::int AS total_views,
@@ -145,16 +171,52 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
         FROM analytics.events
         WHERE event_type = 'page_view' AND referrer IS NOT NULL AND referrer <> '' AND created_at >= NOW() - ($1 || ' days')::interval
         GROUP BY referrer ORDER BY total DESC LIMIT 10`, [days]),
+      /* Nuevo vs recurrente: si la primera vez que ESE session_id
+         apareció (en toda la historia, no solo en este rango) cae
+         dentro del rango, es nuevo; si ya existía de antes, recurrente. */
+      pool.query(`
+        WITH first_seen AS (
+          SELECT session_id, MIN(created_at) AS first_ever FROM analytics.events GROUP BY session_id
+        ), in_range AS (
+          SELECT DISTINCT session_id FROM analytics.events
+          WHERE event_type = 'page_view' AND created_at >= NOW() - ($1 || ' days')::interval
+        )
+        SELECT
+          COUNT(*) FILTER (WHERE fs.first_ever >= NOW() - ($1 || ' days')::interval)::int AS new_visitors,
+          COUNT(*) FILTER (WHERE fs.first_ever <  NOW() - ($1 || ' days')::interval)::int AS returning_visitors
+        FROM in_range ir JOIN first_seen fs ON fs.session_id = ir.session_id`, [days]),
+      /* "Leads calientes": visitantes que mostraron una señal real de
+         interés en contactar (escribieron al chatbot o tocaron
+         WhatsApp), no solo pasaron a mirar. */
+      pool.query(`
+        SELECT COUNT(DISTINCT session_id)::int AS hot_leads
+        FROM analytics.events
+        WHERE event_type IN ('whatsapp_click', 'chatbot_message') AND created_at >= NOW() - ($1 || ' days')::interval`, [days]),
+      pool.query(`
+        SELECT DISTINCT ON (session_id) session_id, user_agent
+        FROM analytics.events
+        WHERE event_type = 'page_view' AND created_at >= NOW() - ($1 || ' days')::interval
+        ORDER BY session_id, created_at ASC`, [days]),
     ]);
+
+    const deviceCounts = {};
+    uaRows.rows.forEach(r => {
+      const { device } = parseUserAgent(r.user_agent);
+      deviceCounts[device] = (deviceCounts[device] || 0) + 1;
+    });
+    const device_breakdown = Object.entries(deviceCounts).map(([device, total]) => ({ device, total })).sort((a, b) => b.total - a.total);
 
     res.json({
       days,
       ...totals.rows[0],
+      ...visitorAge.rows[0],
+      hot_leads: leads.rows[0].hot_leads,
       views_by_day: byDay.rows,
       top_cases: byCase.rows,
       by_type: byType.rows,
       top_pages: topPages.rows,
       top_referrers: topReferrers.rows,
+      device_breakdown,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -190,6 +252,105 @@ router.get('/events', requireAuth, requirePrivileged, async (req, res) => {
     res.json({
       rows: rows.map(r => ({ ...r, event_label: EVENT_LABEL[r.event_type] || r.event_type })),
       total: countRows[0].total,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   GET /sessions — el "recorrido" de cada visitante (agrupa todos sus
+   eventos por session_id), en vez del log plano evento por evento.
+   Es lo que de verdad cuenta qué hizo y qué quería un visitante: qué
+   páginas vio, qué casos le interesaron, si escribió al chatbot o
+   tocó WhatsApp — todo junto, no disperso en filas sueltas.
+   ============================================================ */
+router.get('/sessions', requireAuth, requirePrivileged, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
+    const { q, only_leads } = req.query;
+
+    const params = [days];
+    let sessionFilter = '';
+    if (q) {
+      params.push(`%${q}%`);
+      const n = params.length;
+      sessionFilter += ` AND session_id IN (
+        SELECT DISTINCT session_id FROM analytics.events
+        WHERE case_name ILIKE $${n} OR label ILIKE $${n} OR page ILIKE $${n} OR referrer ILIKE $${n}
+      )`;
+    }
+
+    const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+    const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+
+    const baseWhere = `WHERE created_at >= NOW() - ($1 || ' days')::interval AND session_id IS NOT NULL${sessionFilter}`;
+    const leadsHaving = (only_leads === '1' || only_leads === 'true')
+      ? `HAVING COUNT(*) FILTER (WHERE event_type IN ('whatsapp_click', 'chatbot_message')) > 0`
+      : '';
+
+    const { rows: countRows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM (
+         SELECT session_id FROM analytics.events ${baseWhere} GROUP BY session_id ${leadsHaving}
+       ) t`, params);
+
+    const { rows } = await pool.query(`
+      SELECT session_id,
+        MIN(created_at) AS first_seen, MAX(created_at) AS last_seen,
+        COUNT(*) FILTER (WHERE event_type='page_view')::int AS page_views,
+        COUNT(*) FILTER (WHERE event_type='case_click')::int AS case_clicks,
+        COUNT(*) FILTER (WHERE event_type='whatsapp_click')::int AS whatsapp_clicks,
+        COUNT(*) FILTER (WHERE event_type='chatbot_open')::int AS chatbot_opens,
+        COUNT(*) FILTER (WHERE event_type='chatbot_message')::int AS chatbot_messages,
+        array_remove(array_agg(DISTINCT case_name), NULL) AS cases,
+        (array_agg(user_agent ORDER BY created_at ASC))[1] AS user_agent,
+        (array_agg(referrer ORDER BY created_at ASC) FILTER (WHERE referrer IS NOT NULL AND referrer <> ''))[1] AS referrer,
+        (array_agg(ip_address ORDER BY created_at ASC))[1] AS ip_address
+      FROM analytics.events
+      ${baseWhere}
+      GROUP BY session_id
+      ${leadsHaving}
+      ORDER BY last_seen DESC
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, limit, offset]
+    );
+
+    const sessions = rows.map(r => {
+      const { device, browser, os } = parseUserAgent(r.user_agent);
+      return {
+        ...r,
+        device, browser, os,
+        is_lead: r.whatsapp_clicks > 0 || r.chatbot_messages > 0,
+      };
+    });
+
+    res.json({ rows: sessions, total: countRows[0].total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   GET /sessions/:session_id/timeline — el detalle cronológico de un
+   visitante puntual, para abrir en un modal desde la lista de
+   sesiones y ver exactamente qué hizo, en orden.
+   ============================================================ */
+router.get('/sessions/:session_id/timeline', requireAuth, requirePrivileged, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT event_type, case_name, label, page, referrer, created_at
+       FROM analytics.events WHERE session_id = $1 ORDER BY created_at ASC`,
+      [req.params.session_id]
+    );
+    if (!rows.length) return res.json({ session_id: req.params.session_id, events: [], device: null, browser: null, os: null });
+
+    const first = await pool.query(
+      `SELECT user_agent, ip_address FROM analytics.events WHERE session_id = $1 ORDER BY created_at ASC LIMIT 1`,
+      [req.params.session_id]
+    );
+    const { device, browser, os } = parseUserAgent(first.rows[0]?.user_agent);
+
+    res.json({
+      session_id: req.params.session_id,
+      device, browser, os,
+      ip_address: first.rows[0]?.ip_address || null,
+      events: rows.map(r => ({ ...r, event_label: EVENT_LABEL[r.event_type] || r.event_type })),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
