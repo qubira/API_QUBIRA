@@ -67,6 +67,20 @@ function ensureSecuritySchema() {
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_motivo TEXT;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_por INTEGER;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_en TIMESTAMPTZ;
+
+      /* Reconocimiento facial — RRHH captura el rostro del colaborador al
+         darlo de alta (o después, editándolo); el servidor solo guarda el
+         descriptor de 128 dimensiones que calcula face-api.js en el
+         navegador, nunca una foto. Varias filas por usuario (varias
+         capturas desde distintos ángulos) para que el match sea más
+         confiable — se reemplazan todas juntas en cada (re)registro. */
+      CREATE TABLE IF NOT EXISTS security.face_descriptors (
+        id BIGSERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+        descriptor JSONB NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS face_descriptors_usuario_idx ON security.face_descriptors(usuario_id);
     `);
   }
   return ready;
@@ -379,10 +393,81 @@ async function getLoginHistory(username, days = 30) {
   return rows;
 }
 
+/* ============================================================
+   Reconocimiento facial — el navegador (face-api.js) calcula un
+   vector de 128 dimensiones por rostro; acá solo se guardan y
+   comparan esos vectores (nunca una imagen). El match es 1:N: se
+   compara el vector que llega contra el de TODOS los colaboradores
+   con rostro registrado y se toma la distancia euclidiana mínima —
+   con pocas decenas/cientos de empleados esto es instantáneo, no
+   hace falta una librería de búsqueda aproximada.
+   ============================================================ */
+const FACE_DESCRIPTOR_LENGTH = 128;
+const FACE_MATCH_THRESHOLD = parseFloat(process.env.FACE_MATCH_THRESHOLD) || 0.5;
+
+function isValidFaceDescriptor(d) {
+  return Array.isArray(d) && d.length === FACE_DESCRIPTOR_LENGTH && d.every(n => typeof n === 'number' && Number.isFinite(n));
+}
+
+function euclideanDistance(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) { const diff = a[i] - b[i]; sum += diff * diff; }
+  return Math.sqrt(sum);
+}
+
+/* Reemplaza TODAS las capturas de un usuario de una sola vez — cada
+   (re)registro de rostro empieza de cero, no se van acumulando
+   capturas viejas de sesiones de enrolamiento anteriores. */
+async function saveFaceDescriptors(usuarioId, descriptors) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM security.face_descriptors WHERE usuario_id = $1', [usuarioId]);
+    for (const d of descriptors) {
+      await client.query(
+        'INSERT INTO security.face_descriptors (usuario_id, descriptor) VALUES ($1, $2::jsonb)',
+        [usuarioId, JSON.stringify(d)]
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function deleteFaceDescriptors(usuarioId) {
+  const { rowCount } = await pool.query('DELETE FROM security.face_descriptors WHERE usuario_id = $1', [usuarioId]);
+  return rowCount;
+}
+
+async function getFaceEnrollmentCount(usuarioId) {
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM security.face_descriptors WHERE usuario_id = $1', [usuarioId]);
+  return rows[0].n;
+}
+
+/* Busca a qué usuario_id pertenece un rostro capturado en vivo.
+   Devuelve { usuario_id, distance } del mejor match si está por
+   debajo del umbral, o null si nadie calza (rostro desconocido). */
+async function findFaceMatch(probeDescriptor) {
+  const { rows } = await pool.query('SELECT usuario_id, descriptor FROM security.face_descriptors');
+  let best = null;
+  for (const row of rows) {
+    const distance = euclideanDistance(probeDescriptor, row.descriptor);
+    if (!best || distance < best.distance) best = { usuario_id: row.usuario_id, distance };
+  }
+  if (best && best.distance <= FACE_MATCH_THRESHOLD) return best;
+  return null;
+}
+
 module.exports = {
   ensureSecuritySchema, clientIp,
   getIpStatus, isIpBlocked, isIpBlockedRow, upsertIpStatus, touchIpObservation,
   recordLoginAttempt, countRecentFailures, distinctFailureIps,
+  FACE_DESCRIPTOR_LENGTH, FACE_MATCH_THRESHOLD, isValidFaceDescriptor,
+  saveFaceDescriptors, deleteFaceDescriptors, getFaceEnrollmentCount, findFaceMatch,
   lockAccount, bumpFailedAttempts, resetFailedAttempts,
   createHandoffCode, consumeHandoffCode,
   getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,

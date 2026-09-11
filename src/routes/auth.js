@@ -216,6 +216,141 @@ router.post('/logout', requireAuth, async (req, res) => {
 });
 
 /* ============================================================
+   Reconocimiento facial
+   - /face/enroll y /face/status son de RRHH: capturan/consultan el
+     rostro de OTRO colaborador (por username), no el propio, así que
+     exigen módulo RRHH otorgado o nivel_acceso privilegiado.
+   - /face/login es público (como /login): identifica QUIÉN es a
+     partir del rostro, así que compara contra todos los registrados.
+   ============================================================ */
+async function requireRrhhStaff(req, res, next) {
+  try {
+    if ((req.user.nivel_acceso || 0) >= 100) return next();
+    const modules = await getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id);
+    if (modules.includes('RRHH')) return next();
+    return res.status(403).json({ ok: false, error: 'Solo RR. HH. puede administrar el reconocimiento facial de colaboradores' });
+  } catch (err) { return next(err); }
+}
+
+async function findUserIdByUsername(username) {
+  const { rows } = await pool.query('SELECT id FROM usuarios WHERE lower(username) = lower($1)', [username]);
+  return rows.length ? rows[0].id : null;
+}
+
+router.get('/face/status', requireAuth, requireRrhhStaff, async (req, res) => {
+  try {
+    const username = req.query?.username;
+    if (!username) return res.status(400).json({ ok: false, error: 'Falta el usuario' });
+    const userId = await findUserIdByUsername(username);
+    if (!userId) return res.status(404).json({ ok: false, error: 'Colaborador no encontrado' });
+    const samples = await sec.getFaceEnrollmentCount(userId);
+    res.json({ ok: true, enrolled: samples > 0, samples });
+  } catch (err) {
+    console.error('[AUTH] Face status error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+router.post('/face/enroll', requireAuth, requireRrhhStaff, async (req, res) => {
+  try {
+    const { username, descriptors } = req.body || {};
+    if (!username) return res.status(400).json({ ok: false, error: 'Falta el usuario' });
+    if (!Array.isArray(descriptors) || !descriptors.length || descriptors.length > 5 || !descriptors.every(sec.isValidFaceDescriptor)) {
+      return res.status(400).json({ ok: false, error: 'Se necesitan entre 1 y 5 capturas válidas del rostro' });
+    }
+    const userId = await findUserIdByUsername(username);
+    if (!userId) return res.status(404).json({ ok: false, error: 'Colaborador no encontrado' });
+
+    await sec.saveFaceDescriptors(userId, descriptors);
+    await logSecurityEvent({ userId: req.user.id, path: '/api/auth/face/enroll', actionType: 'face_enrolled', ip: sec.clientIp(req), statusCode: 200 });
+    res.json({ ok: true, samples: descriptors.length });
+  } catch (err) {
+    console.error('[AUTH] Face enroll error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+router.delete('/face/enroll', requireAuth, requireRrhhStaff, async (req, res) => {
+  try {
+    const username = req.query?.username || req.body?.username;
+    if (!username) return res.status(400).json({ ok: false, error: 'Falta el usuario' });
+    const userId = await findUserIdByUsername(username);
+    if (!userId) return res.status(404).json({ ok: false, error: 'Colaborador no encontrado' });
+
+    await sec.deleteFaceDescriptors(userId);
+    await logSecurityEvent({ userId: req.user.id, path: '/api/auth/face/enroll', actionType: 'face_removed', ip: sec.clientIp(req), statusCode: 200 });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[AUTH] Face delete error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+router.post('/face/login', async (req, res) => {
+  const ip = sec.clientIp(req);
+  try {
+    const descriptor = req.body?.descriptor;
+    if (!sec.isValidFaceDescriptor(descriptor)) {
+      return res.status(400).json({ ok: false, error: 'Captura de rostro inválida' });
+    }
+
+    await sec.touchIpObservation(ip);
+    if (await sec.isIpBlocked(ip)) {
+      await sec.recordLoginAttempt({ username: 'face:unknown', ip, success: false, userAgent: req.headers['user-agent'] });
+      await logSecurityEvent({ userId: null, path: '/api/auth/face/login', actionType: 'ip_blocked_attempt', ip, statusCode: 403 });
+      return res.status(403).json({ ok: false, error: 'Acceso bloqueado por seguridad. Contacta al administrador.' });
+    }
+
+    const match = await sec.findFaceMatch(descriptor);
+    if (!match) {
+      await sec.recordLoginAttempt({ username: 'face:unknown', ip, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(401).json({ ok: false, error: 'Rostro no reconocido' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT u.id, u.nombre, u.apellidos, u.correo, u.username, u.estado, u.avatar_color,
+              u.bloqueada_hasta, u.suspendida_en,
+              r.nombre AS rol, r.nivel_acceso
+       FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = $1`,
+      [match.usuario_id]
+    );
+    if (!rows.length) {
+      await sec.recordLoginAttempt({ username: 'face:unknown', ip, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(401).json({ ok: false, error: 'Rostro no reconocido' });
+    }
+    const user = rows[0];
+
+    if (user.estado !== 'activo') {
+      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(403).json({ ok: false, error: 'Cuenta desactivada. Contacta al administrador.' });
+    }
+    if (user.suspendida_en) {
+      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(403).json({ ok: false, error: 'Cuenta suspendida por seguridad. Contacta al administrador.' });
+    }
+    const stillLocked = user.bloqueada_hasta && new Date(user.bloqueada_hasta) > new Date();
+    if (stillLocked) {
+      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: req.headers['user-agent'] });
+      return res.status(403).json({ ok: false, error: 'Cuenta temporalmente bloqueada por seguridad. Intenta más tarde.' });
+    }
+
+    await sec.recordLoginAttempt({ username: user.username, ip, success: true, userAgent: req.headers['user-agent'] });
+    const { token, user: userOut } = await issueSession(user, req);
+
+    await pool.query(
+      `INSERT INTO auditoria_usuarios (usuario_id, accion, realizado_por) VALUES ($1, 'LOGIN', $1)`,
+      [user.id]
+    );
+    await logLoginAudit(user.id, '/api/auth/face/login').catch(() => {});
+
+    return res.json({ ok: true, token, user: userOut });
+  } catch (err) {
+    console.error('[AUTH] Face login error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+/* ============================================================
    GET /api/auth/me
    Devuelve info del usuario autenticado, incluyendo qué módulos
    tiene autorizados (dato calculado por el servidor, nunca por el
