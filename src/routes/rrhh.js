@@ -167,6 +167,12 @@ function ensureSchema() {
         modalidad TEXT, tipo_contrato TEXT, vacantes INTEGER, descripcion TEXT, requisitos TEXT,
         fecha_publicacion TEXT, estado TEXT
       );
+      ALTER TABLE rrhh.vacantes ADD COLUMN IF NOT EXISTS nivel_experiencia TEXT;
+      ALTER TABLE rrhh.vacantes ADD COLUMN IF NOT EXISTS salario_min NUMERIC;
+      ALTER TABLE rrhh.vacantes ADD COLUMN IF NOT EXISTS salario_max NUMERIC;
+      ALTER TABLE rrhh.vacantes ADD COLUMN IF NOT EXISTS fecha_limite TEXT;
+      ALTER TABLE rrhh.vacantes ADD COLUMN IF NOT EXISTS beneficios TEXT;
+      ALTER TABLE rrhh.vacantes ADD COLUMN IF NOT EXISTS habilidades TEXT;
 
       CREATE TABLE IF NOT EXISTS rrhh.candidatos (
         id TEXT PRIMARY KEY, job_posting_id TEXT REFERENCES rrhh.vacantes(id) ON DELETE CASCADE,
@@ -376,6 +382,8 @@ const MAPS = {
     id:'id', titulo:'titulo', departmentId:'department_id', modalidad:'modalidad',
     tipoContrato:'tipo_contrato', vacantes:'vacantes', descripcion:'descripcion',
     requisitos:'requisitos', fechaPublicacion:'fecha_publicacion', estado:'estado',
+    nivelExperiencia:'nivel_experiencia', salarioMin:'salario_min', salarioMax:'salario_max',
+    fechaLimite:'fecha_limite', beneficios:'beneficios', habilidades:'habilidades',
   }},
   candidatos: { table: 'rrhh.candidatos', cols: {
     id:'id', jobPostingId:'job_posting_id', nombre:'nombre', apellido:'apellido', email:'email',

@@ -45,23 +45,31 @@ const uploadCv = multer({
 
 const JOB_SELECT = `
   SELECT v.id, v.titulo, v.modalidad, v.tipo_contrato, v.vacantes, v.descripcion,
-         v.requisitos, v.fecha_publicacion, d.nombre AS departamento
+         v.requisitos, v.fecha_publicacion, v.fecha_limite, v.nivel_experiencia,
+         v.salario_min, v.salario_max, v.beneficios, v.habilidades, d.nombre AS departamento
   FROM rrhh.vacantes v
   LEFT JOIN rrhh.departamentos d ON d.id = v.department_id
 `;
+/* Una oferta ya no debe aparecer en la bolsa pública si RRHH le puso
+   fecha límite y esa fecha ya pasó — sin necesidad de un cron que la
+   cierre, se resuelve solo al filtrar (fecha_limite es TEXT en
+   formato ISO YYYY-MM-DD, comparable como texto). */
+const OPEN_CLAUSE = `v.estado = 'Abierta' AND (v.fecha_limite IS NULL OR v.fecha_limite = '' OR v.fecha_limite >= to_char(NOW(), 'YYYY-MM-DD'))`;
 
 function jobToApi(r) {
   return {
     id: r.id, titulo: r.titulo, departamento: r.departamento, modalidad: r.modalidad,
     tipoContrato: r.tipo_contrato, vacantes: r.vacantes, descripcion: r.descripcion,
-    requisitos: r.requisitos, fechaPublicacion: r.fecha_publicacion,
+    requisitos: r.requisitos, fechaPublicacion: r.fecha_publicacion, fechaLimite: r.fecha_limite,
+    nivelExperiencia: r.nivel_experiencia, salarioMin: r.salario_min, salarioMax: r.salario_max,
+    beneficios: r.beneficios, habilidades: r.habilidades,
   };
 }
 
 router.get('/', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `${JOB_SELECT} WHERE v.estado = 'Abierta' ORDER BY v.fecha_publicacion DESC NULLS LAST, v.id DESC`
+      `${JOB_SELECT} WHERE ${OPEN_CLAUSE} ORDER BY v.fecha_publicacion DESC NULLS LAST, v.id DESC`
     );
     res.json({ ok: true, data: rows.map(jobToApi) });
   } catch (err) {
@@ -72,7 +80,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const { rows } = await pool.query(`${JOB_SELECT} WHERE v.id = $1 AND v.estado = 'Abierta'`, [req.params.id]);
+    const { rows } = await pool.query(`${JOB_SELECT} WHERE v.id = $1 AND ${OPEN_CLAUSE}`, [req.params.id]);
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Oferta no encontrada' });
     const { rows: preguntas } = await pool.query(
       'SELECT id, pregunta FROM rrhh.vacante_preguntas WHERE vacante_id = $1 ORDER BY orden ASC',
@@ -101,7 +109,7 @@ router.post('/:id/postular', (req, res) => {
         return res.status(400).json({ ok: false, error: 'Debes adjuntar tu CV' });
       }
 
-      const { rows: vacRows } = await pool.query(`SELECT id FROM rrhh.vacantes WHERE id = $1 AND estado = 'Abierta'`, [id]);
+      const { rows: vacRows } = await pool.query(`SELECT id FROM rrhh.vacantes WHERE id = $1 AND ${OPEN_CLAUSE}`, [id]);
       if (!vacRows.length) return res.status(404).json({ ok: false, error: 'Esta oferta ya no está disponible' });
 
       const { rows: preguntas } = await pool.query(
