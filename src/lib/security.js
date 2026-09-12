@@ -432,7 +432,14 @@ async function getLoginHistory(username, days = 30) {
    hace falta una librería de búsqueda aproximada.
    ============================================================ */
 const FACE_DESCRIPTOR_LENGTH = 128;
-const FACE_MATCH_THRESHOLD = parseFloat(process.env.FACE_MATCH_THRESHOLD) || 0.5;
+/* face-api.js envuelve el modelo de reconocimiento de dlib, cuyo propio
+   benchmark (LFW) recomienda ~0.6 de distancia euclidiana como "misma
+   persona". 0.5 era más estricto que eso — de sobra para bloquear a un
+   impostor, pero también rechazaba de más a la persona correcta (poca
+   luz, ángulo, o simplemente el ruido normal entre capturas). 0.55 sigue
+   siendo más conservador que el valor recomendado, solo se relaja lo
+   justo para bajar los falsos rechazos. */
+const FACE_MATCH_THRESHOLD = parseFloat(process.env.FACE_MATCH_THRESHOLD) || 0.55;
 
 function isValidFaceDescriptor(d) {
   return Array.isArray(d) && d.length === FACE_DESCRIPTOR_LENGTH && d.every(n => typeof n === 'number' && Number.isFinite(n));
