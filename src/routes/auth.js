@@ -392,6 +392,16 @@ router.post('/security/block-replacing-ip', async (req, res) => {
     const userId = await findUserIdByUsername(username);
     if (!userId) return res.status(404).json({ ok: false, error: 'Cuenta no encontrada' });
 
+    /* El ip viaja en el body porque el que llama no tiene token válido
+       para que el servidor lo saque de una sesión propia — pero no por
+       eso se confía a ciegas: tiene que coincidir con un reemplazo de
+       sesión real y reciente de ESTA cuenta, si no cualquiera podría
+       mandar a bloquear cualquier IP con solo cambiarlo en la URL. */
+    const validReplacement = await sec.wasSessionReplacedByIp(userId, ip);
+    if (!validReplacement) {
+      return res.status(400).json({ ok: false, error: 'No se encontró un inicio de sesión reciente desde ese IP para esta cuenta' });
+    }
+
     const enrolled = await sec.getFaceEnrollmentCount(userId);
     if (!enrolled) {
       return res.status(409).json({ ok: false, error: 'Esta cuenta no tiene reconocimiento facial registrado — no se puede verificar al titular.' });

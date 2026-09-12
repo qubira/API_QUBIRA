@@ -514,12 +514,28 @@ async function verifyOwnFace(usuarioId, probeDescriptor) {
   return best <= FACE_MATCH_THRESHOLD;
 }
 
+/* Confirma que ese IP realmente reemplazó una sesión de ESTA cuenta
+   hace poco — sin esto, cualquiera que pase la verificación facial
+   podría mandar a bloquear un IP cualquiera con solo cambiarlo en la
+   URL, no necesariamente el que de verdad le quitó la sesión. */
+async function wasSessionReplacedByIp(usuarioId, ip) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM sesiones
+     WHERE usuario_id = $1 AND revoked_reason = 'replaced' AND revoked_by_ip = $2
+       AND expires_at >= NOW() - INTERVAL '15 minutes'
+     LIMIT 1`,
+    [usuarioId, ip]
+  );
+  return rows.length > 0;
+}
+
 module.exports = {
   ensureSecuritySchema, clientIp,
   getIpStatus, isIpBlocked, isIpBlockedRow, upsertIpStatus, touchIpObservation,
   recordLoginAttempt, countRecentFailures, distinctFailureIps,
   FACE_DESCRIPTOR_LENGTH, FACE_MATCH_THRESHOLD, isValidFaceDescriptor,
   saveFaceDescriptors, deleteFaceDescriptors, getFaceEnrollmentCount, findFaceMatch, verifyOwnFace,
+  wasSessionReplacedByIp,
   lockAccount, bumpFailedAttempts, resetFailedAttempts,
   createHandoffCode, consumeHandoffCode,
   getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,
