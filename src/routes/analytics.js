@@ -58,11 +58,13 @@ router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); 
 const EVENT_TYPES = [
   'page_view', 'case_click', 'whatsapp_click', 'chatbot_open', 'chatbot_message',
   'scroll_depth', 'time_on_page', 'outbound_click', 'nav_click',
+  'job_apply_click', 'job_apply_submit',
 ];
 const EVENT_LABEL = {
   page_view: 'Vista de página', case_click: 'Click en caso de éxito',
   whatsapp_click: 'Click en WhatsApp', chatbot_open: 'Abrió el chatbot', chatbot_message: 'Mensaje al chatbot',
   scroll_depth: 'Scroll', time_on_page: 'Tiempo en página', outbound_click: 'Click a link externo', nav_click: 'Click en navegación',
+  job_apply_click: 'Click en Postular (empleo)', job_apply_submit: 'Postulación enviada',
 };
 
 /* Canal de tráfico, al estilo GA4 — se calcula a partir del referrer
@@ -163,7 +165,8 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
     const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
 
     const [totals, byDay, byCase, byType, topPages, topReferrers, visitorAge, leads, uaRows,
-      avgTimeOnPage, scrollDepth, engagement, channelRows, outboundClicks, navClicks, topCampaigns] = await Promise.all([
+      avgTimeOnPage, scrollDepth, engagement, channelRows, outboundClicks, navClicks, topCampaigns,
+      topJobApplications] = await Promise.all([
       pool.query(`
         SELECT
           COUNT(*) FILTER (WHERE event_type = 'page_view')::int AS total_views,
@@ -171,7 +174,9 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
           COUNT(*) FILTER (WHERE event_type = 'case_click')::int AS case_clicks,
           COUNT(*) FILTER (WHERE event_type = 'whatsapp_click')::int AS whatsapp_clicks,
           COUNT(*) FILTER (WHERE event_type = 'chatbot_open')::int AS chatbot_opens,
-          COUNT(*) FILTER (WHERE event_type = 'chatbot_message')::int AS chatbot_messages
+          COUNT(*) FILTER (WHERE event_type = 'chatbot_message')::int AS chatbot_messages,
+          COUNT(*) FILTER (WHERE event_type = 'job_apply_click')::int AS job_apply_clicks,
+          COUNT(*) FILTER (WHERE event_type = 'job_apply_submit')::int AS job_applications
         FROM analytics.events
         WHERE created_at >= NOW() - ($1 || ' days')::interval`, [days]),
       pool.query(`
@@ -280,6 +285,13 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
         FROM analytics.events
         WHERE event_type = 'page_view' AND utm_campaign IS NOT NULL AND created_at >= NOW() - ($1 || ' days')::interval
         GROUP BY utm_campaign, utm_source, utm_medium ORDER BY sessions DESC LIMIT 10`, [days]),
+      /* Postulaciones por oferta — label trae el título del puesto (ver
+         script.js del sitio público, bolsa-trabajo.html). */
+      pool.query(`
+        SELECT label AS puesto, COUNT(*)::int AS total
+        FROM analytics.events
+        WHERE event_type = 'job_apply_submit' AND label IS NOT NULL AND created_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY label ORDER BY total DESC LIMIT 10`, [days]),
     ]);
 
     const deviceCounts = {};
@@ -317,6 +329,7 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
       top_outbound_clicks: outboundClicks.rows,
       top_nav_clicks: navClicks.rows,
       top_campaigns: topCampaigns.rows,
+      top_job_applications: topJobApplications.rows,
       hot_leads: leads.rows[0].hot_leads,
       views_by_day: byDay.rows,
       top_cases: byCase.rows,
