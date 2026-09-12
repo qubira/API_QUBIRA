@@ -42,17 +42,41 @@ function ensureSchema() {
       CREATE INDEX IF NOT EXISTS events_type_created_idx ON analytics.events (event_type, created_at DESC);
       CREATE INDEX IF NOT EXISTS events_session_idx      ON analytics.events (session_id);
       CREATE INDEX IF NOT EXISTS events_created_idx       ON analytics.events (created_at DESC);
+
+      /* UTM — solo se llenan en el page_view de entrada (el que trae
+         los parámetros ?utm_... en la URL), para poder agrupar
+         sesiones por campaña/canal como hace GA4. */
+      ALTER TABLE analytics.events ADD COLUMN IF NOT EXISTS utm_source TEXT;
+      ALTER TABLE analytics.events ADD COLUMN IF NOT EXISTS utm_medium TEXT;
+      ALTER TABLE analytics.events ADD COLUMN IF NOT EXISTS utm_campaign TEXT;
     `);
   }
   return ready;
 }
 router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
 
-const EVENT_TYPES = ['page_view', 'case_click', 'whatsapp_click', 'chatbot_open', 'chatbot_message'];
+const EVENT_TYPES = [
+  'page_view', 'case_click', 'whatsapp_click', 'chatbot_open', 'chatbot_message',
+  'scroll_depth', 'time_on_page', 'outbound_click', 'nav_click',
+];
 const EVENT_LABEL = {
   page_view: 'Vista de página', case_click: 'Click en caso de éxito',
   whatsapp_click: 'Click en WhatsApp', chatbot_open: 'Abrió el chatbot', chatbot_message: 'Mensaje al chatbot',
+  scroll_depth: 'Scroll', time_on_page: 'Tiempo en página', outbound_click: 'Click a link externo', nav_click: 'Click en navegación',
 };
+
+/* Canal de tráfico, al estilo GA4 — se calcula a partir del referrer
+   y (si vino) el utm_source, nunca se guarda como columna fija: así
+   cambiar las reglas de clasificación no exige migrar datos viejos. */
+function classifyChannel(referrer, utmSource) {
+  if (utmSource) return `Campaña (${utmSource})`;
+  if (!referrer) return 'Directo';
+  let host = '';
+  try { host = new URL(referrer).hostname.replace(/^www\./, ''); } catch { return 'Directo'; }
+  if (/google|bing|yahoo|duckduckgo/i.test(host)) return 'Orgánico (buscadores)';
+  if (/facebook|instagram|twitter|x\.com|linkedin|tiktok|whatsapp|t\.co/i.test(host)) return 'Redes sociales';
+  return `Referido (${host})`;
+}
 
 function clip(v, max) {
   if (v == null) return null;
@@ -106,13 +130,13 @@ async function requirePrivileged(req, res, next) {
    ============================================================ */
 router.post('/event', async (req, res) => {
   try {
-    const { event_type, case_name, label, page, referrer, session_id } = req.body || {};
+    const { event_type, case_name, label, page, referrer, session_id, utm_source, utm_medium, utm_campaign } = req.body || {};
     if (!EVENT_TYPES.includes(event_type)) {
       return res.status(400).json({ error: 'event_type inválido' });
     }
     await pool.query(
-      `INSERT INTO analytics.events (event_type, case_name, label, page, referrer, session_id, ip_address, user_agent)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      `INSERT INTO analytics.events (event_type, case_name, label, page, referrer, session_id, ip_address, user_agent, utm_source, utm_medium, utm_campaign)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         event_type,
         clip(case_name, 150),
@@ -122,6 +146,9 @@ router.post('/event', async (req, res) => {
         clip(session_id, 100),
         req.ip || null,
         clip(req.headers['user-agent'], 300),
+        clip(utm_source, 100),
+        clip(utm_medium, 100),
+        clip(utm_campaign, 100),
       ]
     );
     res.status(201).json({ ok: true });
@@ -135,7 +162,8 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
 
-    const [totals, byDay, byCase, byType, topPages, topReferrers, visitorAge, leads, uaRows] = await Promise.all([
+    const [totals, byDay, byCase, byType, topPages, topReferrers, visitorAge, leads, uaRows,
+      avgTimeOnPage, scrollDepth, engagement, channelRows, outboundClicks, navClicks, topCampaigns] = await Promise.all([
       pool.query(`
         SELECT
           COUNT(*) FILTER (WHERE event_type = 'page_view')::int AS total_views,
@@ -197,6 +225,61 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
         FROM analytics.events
         WHERE event_type = 'page_view' AND created_at >= NOW() - ($1 || ' days')::interval
         ORDER BY session_id, created_at ASC`, [days]),
+      /* Tiempo promedio en página — cada "time_on_page" trae en label
+         los segundos que esa pestaña estuvo visible, medidos en el
+         navegador (ver script.js del sitio público). */
+      pool.query(`
+        SELECT AVG(label::numeric)::int AS avg_seconds
+        FROM analytics.events
+        WHERE event_type = 'time_on_page' AND label ~ '^[0-9]+(\\.[0-9]+)?$'
+          AND created_at >= NOW() - ($1 || ' days')::interval`, [days]),
+      /* Embudo de scroll — el navegador manda un evento por cada hito
+         (25/50/75/100) que cruza UNA sola vez por vista de página, así
+         que esto ya cuenta sesiones que llegaron AL MENOS a ese punto. */
+      pool.query(`
+        SELECT label AS depth, COUNT(DISTINCT session_id)::int AS sessions
+        FROM analytics.events
+        WHERE event_type = 'scroll_depth' AND created_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY label`, [days]),
+      /* "Sesión con interacción real" al estilo GA4: vio 2+ páginas, o
+         tocó algo que importa (caso, WhatsApp, chatbot), o se quedó al
+         menos 10s — no solo entró y se fue en el acto. */
+      pool.query(`
+        WITH sess AS (
+          SELECT session_id,
+            COUNT(*) FILTER (WHERE event_type = 'page_view') AS pv,
+            COUNT(*) FILTER (WHERE event_type IN ('case_click','whatsapp_click','chatbot_message')) AS interactions,
+            MAX(CASE WHEN event_type = 'time_on_page' AND label ~ '^[0-9]+(\\.[0-9]+)?$' THEN label::numeric ELSE 0 END) AS max_time
+          FROM analytics.events
+          WHERE created_at >= NOW() - ($1 || ' days')::interval AND session_id IS NOT NULL
+          GROUP BY session_id
+        )
+        SELECT COUNT(*)::int AS total_sessions,
+          COUNT(*) FILTER (WHERE pv >= 2 OR interactions > 0 OR max_time >= 10)::int AS engaged_sessions
+        FROM sess`, [days]),
+      /* Canal de tráfico — un registro por sesión (su primer page_view),
+         clasificado en JS con classifyChannel() para no fijar las reglas
+         en SQL y poder ajustarlas sin migrar nada. */
+      pool.query(`
+        SELECT DISTINCT ON (session_id) session_id, referrer, utm_source
+        FROM analytics.events
+        WHERE event_type = 'page_view' AND created_at >= NOW() - ($1 || ' days')::interval
+        ORDER BY session_id, created_at ASC`, [days]),
+      pool.query(`
+        SELECT label AS destino, COUNT(*)::int AS total
+        FROM analytics.events
+        WHERE event_type = 'outbound_click' AND label IS NOT NULL AND created_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY label ORDER BY total DESC LIMIT 10`, [days]),
+      pool.query(`
+        SELECT label AS seccion, COUNT(*)::int AS total
+        FROM analytics.events
+        WHERE event_type = 'nav_click' AND label IS NOT NULL AND created_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY label ORDER BY total DESC LIMIT 10`, [days]),
+      pool.query(`
+        SELECT utm_campaign, utm_source, utm_medium, COUNT(DISTINCT session_id)::int AS sessions
+        FROM analytics.events
+        WHERE event_type = 'page_view' AND utm_campaign IS NOT NULL AND created_at >= NOW() - ($1 || ' days')::interval
+        GROUP BY utm_campaign, utm_source, utm_medium ORDER BY sessions DESC LIMIT 10`, [days]),
     ]);
 
     const deviceCounts = {};
@@ -206,10 +289,34 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
     });
     const device_breakdown = Object.entries(deviceCounts).map(([device, total]) => ({ device, total })).sort((a, b) => b.total - a.total);
 
+    const channelCounts = {};
+    channelRows.rows.forEach(r => {
+      const ch = classifyChannel(r.referrer, r.utm_source);
+      channelCounts[ch] = (channelCounts[ch] || 0) + 1;
+    });
+    const channels = Object.entries(channelCounts).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total);
+
+    const SCROLL_MILESTONES = ['25', '50', '75', '100'];
+    const scrollBySessions = Object.fromEntries(scrollDepth.rows.map(r => [r.depth, r.sessions]));
+    const scroll_depth = SCROLL_MILESTONES.map(depth => ({ depth, sessions: scrollBySessions[depth] || 0 }));
+
+    const engagement_rate = engagement.rows[0].total_sessions > 0
+      ? Math.round((engagement.rows[0].engaged_sessions / engagement.rows[0].total_sessions) * 1000) / 10
+      : 0;
+
     res.json({
       days,
       ...totals.rows[0],
       ...visitorAge.rows[0],
+      avg_time_on_page_seconds: avgTimeOnPage.rows[0].avg_seconds || 0,
+      scroll_depth,
+      engaged_sessions: engagement.rows[0].engaged_sessions,
+      total_sessions: engagement.rows[0].total_sessions,
+      engagement_rate,
+      channels,
+      top_outbound_clicks: outboundClicks.rows,
+      top_nav_clicks: navClicks.rows,
+      top_campaigns: topCampaigns.rows,
       hot_leads: leads.rows[0].hot_leads,
       views_by_day: byDay.rows,
       top_cases: byCase.rows,
@@ -303,7 +410,12 @@ router.get('/sessions', requireAuth, requirePrivileged, async (req, res) => {
         array_remove(array_agg(DISTINCT case_name), NULL) AS cases,
         (array_agg(user_agent ORDER BY created_at ASC))[1] AS user_agent,
         (array_agg(referrer ORDER BY created_at ASC) FILTER (WHERE referrer IS NOT NULL AND referrer <> ''))[1] AS referrer,
-        (array_agg(ip_address ORDER BY created_at ASC))[1] AS ip_address
+        (array_agg(ip_address ORDER BY created_at ASC))[1] AS ip_address,
+        (array_agg(utm_source ORDER BY created_at ASC) FILTER (WHERE utm_source IS NOT NULL))[1] AS utm_source,
+        (array_agg(page ORDER BY created_at ASC) FILTER (WHERE event_type = 'page_view'))[1] AS entry_page,
+        (array_agg(page ORDER BY created_at DESC) FILTER (WHERE event_type = 'page_view'))[1] AS exit_page,
+        MAX(CASE WHEN event_type = 'time_on_page' AND label ~ '^[0-9]+(\.[0-9]+)?$' THEN label::numeric ELSE 0 END) AS time_on_page_seconds,
+        MAX(CASE WHEN event_type = 'scroll_depth' THEN label::int ELSE 0 END) AS scroll_max
       FROM analytics.events
       ${baseWhere}
       GROUP BY session_id
@@ -318,6 +430,7 @@ router.get('/sessions', requireAuth, requirePrivileged, async (req, res) => {
       return {
         ...r,
         device, browser, os,
+        channel: classifyChannel(r.referrer, r.utm_source),
         is_lead: r.whatsapp_clicks > 0 || r.chatbot_messages > 0,
       };
     });
