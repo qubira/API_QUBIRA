@@ -75,6 +75,24 @@ function signedRawFileUrl(cloudinaryUrl) {
   return cloudinary.utils.private_download_url(publicId, null, { resource_type: 'raw', type: 'upload' });
 }
 
+/* CV subido por un postulante desde la bolsa de trabajo pública — mismo
+   patrón que subirDocumentoACloudinary, carpeta separada. Exportada para
+   que jobs-public.js (router sin auth) la reutilice en vez de duplicar
+   la lógica de subida. */
+function subirCvACloudinary(buffer, originalName) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        resource_type: 'raw',
+        folder: 'qubira/rrhh/candidatos_cv',
+        public_id: `${uid()}_${(originalName || 'cv').replace(/[^a-zA-Z0-9._-]/g, '_')}`,
+      },
+      (err, result) => (err ? reject(err) : resolve(result))
+    );
+    stream.end(buffer);
+  });
+}
+
 router.post('/empleados/foto', (req, res) => {
   uploadFoto.single('foto')(req, res, async (err) => {
     if (err) {
@@ -155,6 +173,33 @@ function ensureSchema() {
         nombre TEXT, apellido TEXT, email TEXT, telefono TEXT, etapa TEXT,
         fecha_postulacion TEXT, calificacion INTEGER, notas TEXT
       );
+      ALTER TABLE rrhh.candidatos ADD COLUMN IF NOT EXISTS cv_url TEXT;
+      ALTER TABLE rrhh.candidatos ADD COLUMN IF NOT EXISTS cv_nombre_archivo TEXT;
+      ALTER TABLE rrhh.candidatos ADD COLUMN IF NOT EXISTS origen TEXT;
+
+      /* Preguntas de filtro que RRHH define por oferta, y que la bolsa de
+         trabajo pública le hace al postulante antes de dejarlo enviar su
+         CV (ver API/src/routes/jobs-public.js). "orden" es simplemente el
+         orden de aparición en el formulario. */
+      CREATE TABLE IF NOT EXISTS rrhh.vacante_preguntas (
+        id TEXT PRIMARY KEY,
+        vacante_id TEXT NOT NULL REFERENCES rrhh.vacantes(id) ON DELETE CASCADE,
+        pregunta TEXT NOT NULL,
+        orden INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS vacante_preguntas_vacante_idx ON rrhh.vacante_preguntas(vacante_id);
+
+      /* pregunta_texto guarda una copia de la pregunta al momento de
+         postular — si RRHH edita o borra la pregunta después, la
+         respuesta guardada sigue teniendo contexto. */
+      CREATE TABLE IF NOT EXISTS rrhh.candidato_respuestas (
+        id TEXT PRIMARY KEY,
+        candidato_id TEXT NOT NULL REFERENCES rrhh.candidatos(id) ON DELETE CASCADE,
+        pregunta_id TEXT REFERENCES rrhh.vacante_preguntas(id) ON DELETE SET NULL,
+        pregunta_texto TEXT NOT NULL,
+        respuesta TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS candidato_respuestas_candidato_idx ON rrhh.candidato_respuestas(candidato_id);
 
       CREATE TABLE IF NOT EXISTS rrhh.nomina (
         id TEXT PRIMARY KEY, employee_id TEXT REFERENCES rrhh.empleados(id) ON DELETE CASCADE,
@@ -336,6 +381,14 @@ const MAPS = {
     id:'id', jobPostingId:'job_posting_id', nombre:'nombre', apellido:'apellido', email:'email',
     telefono:'telefono', etapa:'etapa', fechaPostulacion:'fecha_postulacion',
     calificacion:'calificacion', notas:'notas',
+    cvUrl:'cv_url', cvNombreArchivo:'cv_nombre_archivo', origen:'origen',
+  }},
+  vacantePreguntas: { table: 'rrhh.vacante_preguntas', cols: {
+    id:'id', vacanteId:'vacante_id', pregunta:'pregunta', orden:'orden',
+  }},
+  candidatoRespuestas: { table: 'rrhh.candidato_respuestas', cols: {
+    id:'id', candidatoId:'candidato_id', preguntaId:'pregunta_id',
+    preguntaTexto:'pregunta_texto', respuesta:'respuesta',
   }},
   nomina: { table: 'rrhh.nomina', cols: {
     id:'id', employeeId:'employee_id', periodo:'periodo', salarioBase:'salario_base',
@@ -564,12 +617,14 @@ router.get('/bootstrap', async (req, res) => {
       jobPostings, candidates, payrollRecords, vacations,
       trainings, trainingEnrollments, performanceReviews,
       climateSurveys, climateSurveyResponses, conflictCases,
+      jobQuestions, candidateAnswers,
       catalogRows, auditRows, privileged,
     ] = await Promise.all([
       listAll('departamentos'), listAll('empleados'), listAll('contratos'), listAll('documentos'),
       listAll('vacantes'), listAll('candidatos'), listAll('nomina'), listAll('vacaciones'),
       listAll('capacitaciones'), listAll('inscripciones'), listAll('evaluaciones'),
       listAll('encuestasClima'), listAll('respuestasClima'), listAll('casosConflicto'),
+      listAll('vacantePreguntas'), listAll('candidatoRespuestas'),
       pool.query('SELECT * FROM rrhh.catalogos'),
       pool.query('SELECT * FROM rrhh.auditoria_empleados ORDER BY fecha DESC'),
       isPrivilegedViewer(req.user.username),
@@ -597,6 +652,7 @@ router.get('/bootstrap', async (req, res) => {
         jobPostings, candidates, payrollRecords, vacations,
         trainings, trainingEnrollments, performanceReviews,
         climateSurveys, climateSurveyResponses, conflictCases,
+        jobQuestions, candidateAnswers,
         catalogs, auditLog, privileged,
       },
     });
@@ -704,6 +760,47 @@ router.get('/documentos/:id/file', async (req, res) => {
     if (!signedUrl) return res.status(404).json({ ok: false, error: 'Archivo no encontrado' });
     res.json({ ok: true, url: signedUrl });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/* Mismo patrón que /documentos/:id/file — el CV se guarda como "raw" en
+   Cloudinary (bloqueado al público), así que se firma la URL al vuelo. */
+router.get('/candidatos/:id/cv', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT cv_url FROM rrhh.candidatos WHERE id=$1', [req.params.id]);
+    if (!rows.length || !rows[0].cv_url) return res.status(404).json({ ok: false, error: 'CV no encontrado' });
+    const signedUrl = signedRawFileUrl(rows[0].cv_url);
+    if (!signedUrl) return res.status(404).json({ ok: false, error: 'CV no encontrado' });
+    res.json({ ok: true, url: signedUrl });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/* Reemplaza TODAS las preguntas de filtro de una vacante de una sola vez
+   — mismo patrón "borrar todo e insertar de nuevo" que ya usa
+   saveFaceDescriptors() en security.js, evita tener que diferenciar
+   altas/ediciones/bajas de cada fila individualmente. */
+router.put('/vacantes/:id/preguntas', async (req, res) => {
+  const { id } = req.params;
+  const preguntas = Array.isArray(req.body?.preguntas) ? req.body.preguntas.filter(p => typeof p === 'string' && p.trim()) : null;
+  if (!preguntas) return res.status(400).json({ ok: false, error: 'Falta la lista de preguntas' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM rrhh.vacante_preguntas WHERE vacante_id = $1', [id]);
+    for (let i = 0; i < preguntas.length; i++) {
+      await client.query(
+        'INSERT INTO rrhh.vacante_preguntas (id, vacante_id, pregunta, orden) VALUES ($1,$2,$3,$4)',
+        [uid(), id, preguntas[i].trim(), i]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true, preguntas: preguntas.length });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[RRHH] PUT /vacantes/:id/preguntas error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error al guardar las preguntas' });
+  } finally {
+    client.release();
+  }
 });
 
 crud('departamentos', 'departamentos');
@@ -986,4 +1083,8 @@ router.delete('/empleados/:id', async (req, res) => {
   }
 });
 
+/* jobs-public.js (router público, sin auth) necesita crear/leer las
+   mismas tablas de rrhh.* — reexporta lo mínimo para no duplicarlo. */
 module.exports = router;
+module.exports.ensureSchema = ensureSchema;
+module.exports.subirCvACloudinary = subirCvACloudinary;
