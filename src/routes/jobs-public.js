@@ -109,7 +109,7 @@ router.post('/:id/postular', (req, res) => {
         return res.status(400).json({ ok: false, error: 'Debes adjuntar tu CV' });
       }
 
-      const { rows: vacRows } = await pool.query(`SELECT id FROM rrhh.vacantes WHERE id = $1 AND ${OPEN_CLAUSE}`, [id]);
+      const { rows: vacRows } = await pool.query(`SELECT v.id FROM rrhh.vacantes v WHERE v.id = $1 AND ${OPEN_CLAUSE}`, [id]);
       if (!vacRows.length) return res.status(404).json({ ok: false, error: 'Esta oferta ya no está disponible' });
 
       const { rows: preguntas } = await pool.query(
