@@ -100,6 +100,19 @@ function ensureSecuritySchema() {
       );
       ALTER TABLE security.face_descriptors ALTER COLUMN descriptor TYPE TEXT USING descriptor::text;
       CREATE INDEX IF NOT EXISTS face_descriptors_usuario_idx ON security.face_descriptors(usuario_id);
+
+      /* Diagnóstico temporal para calibrar FACE_MATCH_THRESHOLD con datos
+         reales — guarda solo la distancia mínima encontrada en cada login
+         facial fallido (nunca el descriptor ni ninguna imagen), para poder
+         ver qué tan lejos estuvo del umbral sin depender de los logs del
+         hosting. Se puede borrar esta tabla sin afectar nada más. */
+      CREATE TABLE IF NOT EXISTS security.face_debug_log (
+        id BIGSERIAL PRIMARY KEY,
+        closest_usuario_id INTEGER,
+        distance DOUBLE PRECISION NOT NULL,
+        ip TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
   }
   return ready;
@@ -484,10 +497,11 @@ async function getFaceEnrollmentCount(usuarioId) {
   return rows[0].n;
 }
 
-/* Busca a qué usuario_id pertenece un rostro capturado en vivo.
-   Devuelve { usuario_id, distance } del mejor match si está por
-   debajo del umbral, o null si nadie calza (rostro desconocido). */
-async function findFaceMatch(probeDescriptor) {
+/* Recorre TODOS los descriptores guardados y devuelve el más cercano al
+   que llega en vivo, sin aplicar el umbral todavía — separado de
+   findFaceMatch para poder registrar la distancia real en un intento
+   fallido (diagnóstico) sin duplicar esta búsqueda. */
+async function closestFaceCandidate(probeDescriptor) {
   const { rows } = await pool.query('SELECT usuario_id, descriptor FROM security.face_descriptors');
   let best = null;
   for (const row of rows) {
@@ -498,8 +512,29 @@ async function findFaceMatch(probeDescriptor) {
     const distance = euclideanDistance(probeDescriptor, storedDescriptor);
     if (!best || distance < best.distance) best = { usuario_id: row.usuario_id, distance };
   }
+  return best;
+}
+
+/* Busca a qué usuario_id pertenece un rostro capturado en vivo.
+   Devuelve { usuario_id, distance } del mejor match si está por
+   debajo del umbral, o null si nadie calza (rostro desconocido). */
+async function findFaceMatch(probeDescriptor) {
+  const best = await closestFaceCandidate(probeDescriptor);
   if (best && best.distance <= FACE_MATCH_THRESHOLD) return best;
   return null;
+}
+
+/* Guarda la distancia mínima de un intento de login facial fallido —
+   ver comentario de la tabla en ensureSecuritySchema(). Nunca debe
+   tumbar el login si falla (es solo diagnóstico), por eso traga
+   cualquier error. */
+async function logFaceDebug(closest, ip) {
+  try {
+    await pool.query(
+      'INSERT INTO security.face_debug_log (closest_usuario_id, distance, ip) VALUES ($1, $2, $3)',
+      [closest ? closest.usuario_id : null, closest ? closest.distance : -1, ip || null]
+    );
+  } catch (_) { /* diagnóstico best-effort */ }
 }
 
 /* Verificación 1:1 (no 1:N como findFaceMatch): confirma que un rostro
@@ -542,6 +577,7 @@ module.exports = {
   recordLoginAttempt, countRecentFailures, distinctFailureIps,
   FACE_DESCRIPTOR_LENGTH, FACE_MATCH_THRESHOLD, isValidFaceDescriptor,
   saveFaceDescriptors, deleteFaceDescriptors, getFaceEnrollmentCount, findFaceMatch, verifyOwnFace,
+  closestFaceCandidate, logFaceDebug,
   wasSessionReplacedByIp,
   lockAccount, bumpFailedAttempts, resetFailedAttempts,
   createHandoffCode, consumeHandoffCode,

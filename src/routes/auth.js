@@ -316,9 +316,11 @@ router.post('/face/login', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'Acceso bloqueado por seguridad. Contacta al administrador.' });
     }
 
-    const match = await sec.findFaceMatch(descriptor);
+    const closest = await sec.closestFaceCandidate(descriptor);
+    const match = (closest && closest.distance <= sec.FACE_MATCH_THRESHOLD) ? closest : null;
     if (!match) {
       await sec.recordLoginAttempt({ username: 'face:unknown', ip, success: false, userAgent: req.headers['user-agent'] });
+      await sec.logFaceDebug(closest, ip);
       return res.status(401).json({ ok: false, error: 'Rostro no reconocido' });
     }
 
