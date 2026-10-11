@@ -340,6 +340,40 @@ router.get('/projects/families', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Mismo criterio que /projects/families — valores ya usados en algún
+   proyecto, para que el formulario los ofrezca en un combobox propio
+   en vez de depender del autocompletado nativo del navegador (que no
+   se puede re-estilar y además solo recuerda lo que YA tipeaste vos
+   en tu propio navegador, no lo que cargó cualquier otra persona). */
+router.get('/projects/clients', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT client, COUNT(*)::int AS count FROM ti.projects WHERE client IS NOT NULL AND client <> '' GROUP BY client ORDER BY client`
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/projects/document-numbers', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id_document_number AS number, client, COUNT(*)::int AS count
+       FROM ti.projects WHERE id_document_number IS NOT NULL AND id_document_number <> ''
+       GROUP BY id_document_number, client ORDER BY id_document_number`
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/projects/company-names', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT company_name, COUNT(*)::int AS count FROM ti.projects WHERE company_name IS NOT NULL AND company_name <> '' GROUP BY company_name ORDER BY company_name`
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/projects/stats', async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
