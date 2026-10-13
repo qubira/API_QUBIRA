@@ -17,6 +17,7 @@ const auditRouter    = require('./src/routes/audit');
 const securityRouter = require('./src/routes/security');
 const analyticsRouter = require('./src/routes/analytics');
 const jobsPublicRouter = require('./src/routes/jobs-public');
+const comercialRouter = require('./src/routes/comercial');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -108,6 +109,7 @@ app.use('/api/audit',      auditRouter);
 app.use('/api/security',   securityRouter);
 app.use('/api/analytics',  analyticsRouter);
 app.use('/api/public/jobs', jobsPublicRouter);
+app.use('/api/comercial',  comercialRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });

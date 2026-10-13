@@ -110,6 +110,10 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS github_url TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS website_url TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS family TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS show_to_comercial BOOLEAN DEFAULT false;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_offer_type TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_price NUMERIC;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_notes TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
       ALTER TABLE ti.requirements ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
@@ -303,8 +307,9 @@ const FIELD_LABEL = {
   responsible_id:'Responsable', priority:'Prioridad', company_name:'Nombre de Empresa',
   id_document_type:'Tipo de Documento', id_document_number:'Número de Documento',
   project_type:'Tipo de Proyecto', github_url:'Link de GitHub', website_url:'Link de la Página',
-  family:'Familia de Proyecto',
+  family:'Familia de Proyecto', show_to_comercial:'Visible en Comercial', commercial_offer_type:'Tipo de Oferta Comercial',
 };
+const COMMERCIAL_OFFER_LABEL = { venta:'Venta', alquiler:'Alquiler', venta_alquiler:'Venta o alquiler' };
 
 router.get('/projects', async (req, res) => {
   try {
@@ -454,7 +459,8 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   try {
     const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
-            project_type, github_url, website_url, family } = req.body;
+            project_type, github_url, website_url, family,
+            show_to_comercial, commercial_offer_type, commercial_price, commercial_notes } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
@@ -482,6 +488,10 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
       company_logo = result.secure_url;
     }
 
+    const show_to_comercial_val = (show_to_comercial === undefined || show_to_comercial === '')
+      ? null : (show_to_comercial === true || show_to_comercial === 'true');
+    const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
+
     await pool.query(`
       UPDATE ti.projects SET
         name=COALESCE($1,name), client=COALESCE($2,client), description=COALESCE($3,description),
@@ -492,18 +502,23 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         id_document_type=COALESCE($13,id_document_type), id_document_number=COALESCE($14,id_document_number),
         project_type=COALESCE($15,project_type), github_url=COALESCE($16,github_url), website_url=COALESCE($17,website_url),
         family=COALESCE($18,family),
+        show_to_comercial=COALESCE($19,show_to_comercial), commercial_offer_type=COALESCE($20,commercial_offer_type),
+        commercial_price=COALESCE($21,commercial_price), commercial_notes=COALESCE($22,commercial_notes),
         updated_at=NOW()
-      WHERE id=$19`,
+      WHERE id=$23`,
       [name||null, client||null, description||null, status||null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
        id_document_type||null, id_document_number||null,
-       project_type||null, github_url||null, website_url||null, family||null, req.params.id]
+       project_type||null, github_url||null, website_url||null, family||null,
+       show_to_comercial_val, commercial_offer_type||null, commercial_price_val, commercial_notes||null,
+       req.params.id]
     );
 
     const submitted = { name, client, description, status, budget, currency, start_date, end_date,
       responsible_id, priority, company_name, id_document_type, id_document_number,
-      project_type, github_url, website_url, family, company_logo };
+      project_type, github_url, website_url, family, company_logo,
+      show_to_comercial: show_to_comercial_val, commercial_offer_type };
     const changes = [];
     for (const [field, label] of Object.entries(FIELD_LABEL)) {
       const newVal = submitted[field];
@@ -521,6 +536,10 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         oldDisplay = DOC_LABEL[oldVal] || oldDisplay; newDisplay = DOC_LABEL[newVal] || newVal;
       } else if (field === 'project_type') {
         oldDisplay = PROJECT_TYPE_LABEL[oldVal] || oldDisplay; newDisplay = PROJECT_TYPE_LABEL[newVal] || newVal;
+      } else if (field === 'commercial_offer_type') {
+        oldDisplay = COMMERCIAL_OFFER_LABEL[oldVal] || oldDisplay; newDisplay = COMMERCIAL_OFFER_LABEL[newVal] || newVal;
+      } else if (field === 'show_to_comercial') {
+        oldDisplay = oldVal ? 'Sí' : 'No'; newDisplay = newVal === true || newVal === 'true' ? 'Sí' : 'No';
       } else if (field === 'budget') {
         oldDisplay = oldVal != null ? `$${Number(oldVal).toLocaleString()}` : '—';
         newDisplay = `$${Number(newVal).toLocaleString()}`;
