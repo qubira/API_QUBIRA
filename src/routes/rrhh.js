@@ -255,6 +255,28 @@ function ensureSchema() {
         id TEXT PRIMARY KEY, employee_id TEXT REFERENCES rrhh.empleados(id) ON DELETE CASCADE,
         campo TEXT, valor_anterior TEXT, valor_nuevo TEXT, usuario TEXT, ip TEXT, fecha TEXT
       );
+
+      /* Constancias de trabajo — snapshot de los datos al momento de
+         emitir (si después se edita el empleado, la constancia ya
+         emitida no cambia). El PDF no se guarda como archivo: se
+         regenera al vuelo desde estas columnas cada vez que se pide
+         (ver API/src/lib/constanciaPdf.js). */
+      CREATE TABLE IF NOT EXISTS rrhh.constancias (
+        id TEXT PRIMARY KEY,
+        numero TEXT UNIQUE NOT NULL,
+        employee_id TEXT REFERENCES rrhh.empleados(id) ON DELETE SET NULL,
+        tratamiento TEXT, nombre_completo TEXT, tipo_documento TEXT, numero_documento TEXT,
+        area TEXT, cargo TEXT, fecha_inicio TEXT, fecha_fin TEXT, funcion_principal TEXT,
+        lugar TEXT, fecha_emision TEXT,
+        firmante_nombre TEXT, firmante_cargo TEXT,
+        issued_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      /* Fila única (id=1) con la imagen de firma/sello a incrustar en
+         el PDF — configurable desde la UI, sin tocar código. */
+      CREATE TABLE IF NOT EXISTS rrhh.constancia_config (
+        id INTEGER PRIMARY KEY DEFAULT 1, firma_url TEXT, CHECK (id = 1)
+      );
     `).catch(err => { ready = null; throw err; });
   }
   return ready;
@@ -1089,6 +1111,187 @@ router.delete('/empleados/:id', async (req, res) => {
     console.error('[RRHH] DELETE /empleados error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error al eliminar el empleado' });
   }
+});
+
+/* ============================================================
+   Constancias de trabajo — emisión, historial y configuración de la
+   imagen de firma. El PDF se genera al vuelo (ver lib/constanciaPdf.js),
+   nunca se guarda como archivo: lo que persiste es el snapshot de datos.
+   ============================================================ */
+const { buildConstanciaPdf } = require('../lib/constanciaPdf');
+
+const PUBLIC_SITE_BASE = (process.env.QUBIRA_PUBLIC_SITE_BASE) || 'https://qubira.vercel.app';
+
+function constanciaToCamel(row) {
+  return {
+    id: row.id, numero: row.numero, employeeId: row.employee_id,
+    tratamiento: row.tratamiento, nombreCompleto: row.nombre_completo,
+    tipoDocumento: row.tipo_documento, numeroDocumento: row.numero_documento,
+    area: row.area, cargo: row.cargo,
+    fechaInicio: row.fecha_inicio, fechaFin: row.fecha_fin, funcionPrincipal: row.funcion_principal,
+    lugar: row.lugar, fechaEmision: row.fecha_emision,
+    firmanteNombre: row.firmante_nombre, firmanteCargo: row.firmante_cargo,
+    issuedBy: row.issued_by, createdAt: row.created_at,
+  };
+}
+
+function generateConstanciaNumero() {
+  const year = new Date().getFullYear();
+  const suffix = crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 6);
+  return `CT-${year}-${suffix}`;
+}
+
+async function catalogoNombre(id) {
+  if (!id) return null;
+  const { rows } = await pool.query('SELECT nombre FROM rrhh.catalogos WHERE id=$1', [id]);
+  return rows[0]?.nombre || null;
+}
+
+function composeFullName(emp) {
+  if (emp.primerNombre || emp.primerApellido) {
+    return [emp.primerNombre, emp.segundoNombre, emp.primerApellido, emp.segundoApellido].filter(Boolean).join(' ');
+  }
+  return `${emp.nombre || ''} ${emp.apellido || ''}`.trim();
+}
+
+/* Cargo de quien está emitiendo la constancia (no un firmante fijo) —
+   se busca su propio registro de empleado por el username de la sesión. */
+async function resolveIssuerCargo(username) {
+  const { rows } = await pool.query(
+    'SELECT cargo_id, cargo FROM rrhh.empleados WHERE lower(usuario) = lower($1) LIMIT 1', [username]
+  );
+  if (!rows.length) return null;
+  if (rows[0].cargo_id) {
+    const nombre = await catalogoNombre(rows[0].cargo_id);
+    if (nombre) return nombre;
+  }
+  return rows[0].cargo || null;
+}
+
+async function getConstanciaConfig() {
+  const { rows } = await pool.query('SELECT firma_url FROM rrhh.constancia_config WHERE id=1');
+  return rows[0]?.firma_url || null;
+}
+
+function verifyUrlFor(numero) {
+  return `${PUBLIC_SITE_BASE}/constancia.html?numero=${encodeURIComponent(numero)}`;
+}
+
+router.get('/constancias', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM rrhh.constancias ORDER BY created_at DESC');
+    res.json({ ok: true, data: rows.map(constanciaToCamel) });
+  } catch (err) {
+    console.error('[RRHH] GET /constancias error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error al listar las constancias' });
+  }
+});
+
+router.post('/constancias', async (req, res) => {
+  try {
+    const { employeeId, tratamiento, fechaInicio, fechaFin, funcionPrincipal, lugar } = req.body;
+    if (!employeeId) return res.status(400).json({ ok: false, error: 'Selecciona un empleado' });
+    if (!funcionPrincipal) return res.status(400).json({ ok: false, error: 'Describe la función principal' });
+
+    const { rows: empRows } = await pool.query('SELECT * FROM rrhh.empleados WHERE id=$1', [employeeId]);
+    if (!empRows.length) return res.status(404).json({ ok: false, error: 'Empleado no encontrado' });
+    const emp = toCamel('empleados', empRows[0]);
+
+    const [tipoDocumentoNombre, areaNombre, cargoNombre, firmanteCargo] = await Promise.all([
+      catalogoNombre(emp.tipoDocumentoId),
+      catalogoNombre(emp.areaTrabajoId),
+      emp.cargoId ? catalogoNombre(emp.cargoId) : Promise.resolve(emp.cargo || null),
+      resolveIssuerCargo(req.user.username),
+    ]);
+
+    let numero = generateConstanciaNumero();
+    for (let attempts = 0; attempts < 5; attempts++) {
+      const { rows: dupe } = await pool.query('SELECT 1 FROM rrhh.constancias WHERE numero=$1', [numero]);
+      if (!dupe.length) break;
+      numero = generateConstanciaNumero();
+    }
+
+    const row = {
+      id: uid(), numero, employee_id: employeeId,
+      tratamiento: tratamiento || '', nombre_completo: composeFullName(emp),
+      tipo_documento: tipoDocumentoNombre || '', numero_documento: emp.numeroDocumento || '',
+      area: areaNombre || '', cargo: cargoNombre || '',
+      fecha_inicio: fechaInicio || emp.fechaIngreso || '',
+      fecha_fin: fechaFin || (emp.estado === 'activo' ? 'Actualidad' : ''),
+      funcion_principal: funcionPrincipal,
+      lugar: lugar || 'Lima, Perú',
+      fecha_emision: new Date().toISOString().slice(0, 10),
+      firmante_nombre: req.user.nombre || req.user.username,
+      firmante_cargo: firmanteCargo || req.user.rol || '',
+      issued_by: req.user.id,
+    };
+    const keys = Object.keys(row);
+    const { rows } = await pool.query(
+      `INSERT INTO rrhh.constancias (${keys.join(',')}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')}) RETURNING *`,
+      keys.map(k => row[k])
+    );
+    res.status(201).json({ ok: true, data: constanciaToCamel(rows[0]) });
+  } catch (err) {
+    console.error('[RRHH] POST /constancias error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error al emitir la constancia' });
+  }
+});
+
+router.get('/constancias/:id/pdf', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
+    const constancia = constanciaToCamel(rows[0]);
+    const firmaUrl = await getConstanciaConfig();
+    const pdf = await buildConstanciaPdf({ ...constancia, firmaUrl }, verifyUrlFor(constancia.numero));
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${constancia.numero}.pdf"` });
+    res.send(pdf);
+  } catch (err) {
+    console.error('[RRHH] GET /constancias/:id/pdf error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error al generar el PDF' });
+  }
+});
+
+router.get('/constancia-config', async (req, res) => {
+  try {
+    res.json({ ok: true, data: { firmaUrl: await getConstanciaConfig() } });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Error al leer la configuración' });
+  }
+});
+
+const uploadFirma = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (!file.mimetype.startsWith('image/')) return cb(new Error('El archivo debe ser una imagen'));
+    cb(null, true);
+  },
+});
+
+router.put('/constancia-config', (req, res) => {
+  uploadFirma.single('firma')(req, res, async (err) => {
+    if (err) return res.status(400).json({ ok: false, error: err.message || 'Error al procesar la imagen' });
+    try {
+      if (!req.file) return res.status(400).json({ ok: false, error: 'Debes adjuntar una imagen' });
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { resource_type: 'image', folder: 'qubira/rrhh/firma_constancias' },
+          (e, r) => (e ? reject(e) : resolve(r))
+        );
+        stream.end(req.file.buffer);
+      });
+      await pool.query(
+        `INSERT INTO rrhh.constancia_config (id, firma_url) VALUES (1, $1)
+         ON CONFLICT (id) DO UPDATE SET firma_url = $1`,
+        [result.secure_url]
+      );
+      res.json({ ok: true, data: { firmaUrl: result.secure_url } });
+    } catch (cloudErr) {
+      console.error('[RRHH] Error subiendo firma a Cloudinary:', cloudErr.message);
+      res.status(502).json({ ok: false, error: 'No se pudo subir la imagen a Cloudinary' });
+    }
+  });
 });
 
 /* jobs-public.js (router público, sin auth) necesita crear/leer las
