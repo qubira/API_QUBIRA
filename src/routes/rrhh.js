@@ -1137,10 +1137,20 @@ function constanciaToCamel(row) {
   };
 }
 
+/* Piso inicial por año — ya se emitieron constancias 0001-0021 de 2026
+   fuera de este sistema (en papel/manual), así que acá se arranca en
+   0022 para no duplicar números ya usados. Años sin piso explícito
+   empiezan normal desde 0001. */
+const CONSTANCIA_NUMERO_FLOOR = { 2026: 22 };
+
 async function generateConstanciaNumero() {
   const year = new Date().getFullYear();
-  const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM rrhh.constancias WHERE numero LIKE $1", [`CT-${year}-%`]);
-  return `CT-${year}-${String(rows[0].n + 1).padStart(4, '0')}`;
+  const { rows } = await pool.query(
+    "SELECT COALESCE(MAX(SUBSTRING(numero FROM 9)::int), 0) AS max_n FROM rrhh.constancias WHERE numero LIKE $1",
+    [`CT-${year}-%`]
+  );
+  const next = Math.max(rows[0].max_n + 1, CONSTANCIA_NUMERO_FLOOR[year] || 1);
+  return `CT-${year}-${String(next).padStart(4, '0')}`;
 }
 
 function generateCodigoVerificacion() {
@@ -1264,6 +1274,44 @@ router.post('/constancias', async (req, res) => {
   } catch (err) {
     console.error('[RRHH] POST /constancias error:', err.message);
     res.status(500).json({ ok: false, error: 'Error al emitir la constancia' });
+  }
+});
+
+/* Edita el contenido de una constancia ya emitida (corregir un error
+   de tipeo, un cargo mal resuelto, etc.) sin tocar su numero,
+   codigoVerificacion, empleado, emisor ni fecha de emisión — eso
+   identifica al documento y no debe cambiar. Solo actualiza los
+   campos que vienen en el body. */
+router.put('/constancias/:id', async (req, res) => {
+  try {
+    const { rows: oldRows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
+
+    const editable = {
+      tratamiento: 'tratamiento', nombreCompleto: 'nombre_completo',
+      tipoDocumento: 'tipo_documento', numeroDocumento: 'numero_documento',
+      area: 'area', cargo: 'cargo',
+      fechaInicio: 'fecha_inicio', fechaFin: 'fecha_fin', funcionPrincipal: 'funcion_principal',
+      lugar: 'lugar',
+    };
+    const sets = [];
+    const params = [];
+    for (const [camel, snake] of Object.entries(editable)) {
+      if (req.body[camel] === undefined) continue;
+      params.push(req.body[camel]);
+      sets.push(`${snake} = $${params.length}`);
+    }
+    if (!sets.length) return res.json({ ok: true, data: constanciaToCamel(oldRows[0]) });
+
+    params.push(req.params.id);
+    const { rows } = await pool.query(
+      `UPDATE rrhh.constancias SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    res.json({ ok: true, data: constanciaToCamel(rows[0]) });
+  } catch (err) {
+    console.error('[RRHH] PUT /constancias/:id error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error al actualizar la constancia' });
   }
 });
 
