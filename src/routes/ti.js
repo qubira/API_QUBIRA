@@ -469,16 +469,16 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     const privileged = req.user.nivel_acceso >= 100;
 
     if (old.status === 'completed' && myArea !== 'ADG' && !privileged) {
-      return res.status(403).json({ error: 'Este proyecto ya fue completado y aprobado por ADG — TI ya no puede modificarlo' });
+      return res.status(403).json({ error: 'Este proyecto ya fue completado y aprobado por ADG — OTI ya no puede modificarlo' });
     }
 
     if (status && status !== old.status) {
       if (status === 'finished_by_ti') {
-        if (myArea !== 'TI' && !privileged) return res.status(403).json({ error: 'Solo TI puede marcar un proyecto como finalizado' });
+        if (myArea !== 'TI' && !privileged) return res.status(403).json({ error: 'Solo OTI puede marcar un proyecto como finalizado' });
         if (!['active', 'paused'].includes(old.status)) return res.status(400).json({ error: 'Solo se puede finalizar un proyecto activo o pausado' });
       } else if (status === 'completed') {
         if (myArea !== 'ADG' && !privileged) return res.status(403).json({ error: 'Solo ADG puede aprobar y completar un proyecto' });
-        if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por TI' });
+        if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por OTI' });
       }
     }
 
@@ -573,8 +573,8 @@ router.post('/projects/:id/claim', async (req, res) => {
       `UPDATE ti.projects SET status = 'active', claimed_by = $1, claimed_at = NOW(), responsible_id = $1, updated_at = NOW() WHERE id = $2`,
       [req.user.id, req.params.id]
     );
-    await logActivity(req.params.id, req.user.id, 'claimed', `${req.user.nombre || req.user.username} (TI) anexó el proyecto "${rows[0].name}" a su área y quedó como responsable`);
-    res.json({ message: 'Proyecto anexado a TI' });
+    await logActivity(req.params.id, req.user.id, 'claimed', `${req.user.nombre || req.user.username} (OTI) anexó el proyecto "${rows[0].name}" a su área y quedó como responsable`);
+    res.json({ message: 'Proyecto anexado a OTI' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
