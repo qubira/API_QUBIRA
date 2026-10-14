@@ -17,7 +17,7 @@ router.get('/products', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT id, code, name, description, status, progress, family, project_type,
-             company_logo, commercial_offer_type, commercial_price, commercial_notes,
+             company_logo, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes,
              updated_at
       FROM ti.projects
       WHERE show_to_comercial = true

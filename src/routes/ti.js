@@ -113,6 +113,7 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS show_to_comercial BOOLEAN DEFAULT false;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_offer_type TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_price NUMERIC;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_price_currency TEXT DEFAULT 'PEN';
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_notes TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
@@ -460,7 +461,7 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
             project_type, github_url, website_url, family,
-            show_to_comercial, commercial_offer_type, commercial_price, commercial_notes } = req.body;
+            show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
@@ -504,14 +505,16 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         family=COALESCE($18,family),
         show_to_comercial=COALESCE($19,show_to_comercial), commercial_offer_type=COALESCE($20,commercial_offer_type),
         commercial_price=COALESCE($21,commercial_price), commercial_notes=COALESCE($22,commercial_notes),
+        commercial_price_currency=COALESCE($23,commercial_price_currency),
         updated_at=NOW()
-      WHERE id=$23`,
+      WHERE id=$24`,
       [name||null, client||null, description||null, status||null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
        id_document_type||null, id_document_number||null,
        project_type||null, github_url||null, website_url||null, family||null,
        show_to_comercial_val, commercial_offer_type||null, commercial_price_val, commercial_notes||null,
+       commercial_price_currency||null,
        req.params.id]
     );
 

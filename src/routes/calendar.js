@@ -82,6 +82,7 @@ function ensureSchema() {
       );
       ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS location TEXT;
       ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS image_url TEXT;
+      ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'presencial';
       CREATE INDEX IF NOT EXISTS calendar_meetings_area_date_idx ON calendar.meetings(area, meeting_date);
       CREATE INDEX IF NOT EXISTS calendar_meetings_project_idx ON calendar.meetings(project_id);
 
@@ -92,14 +93,26 @@ function ensureSchema() {
         external_name TEXT, external_kind TEXT,
         time_range TSRANGE
       );
+      ALTER TABLE calendar.meeting_participants ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'presencial';
       CREATE INDEX IF NOT EXISTS calendar_participants_user_idx ON calendar.meeting_participants(user_id);
       CREATE INDEX IF NOT EXISTS calendar_participants_meeting_idx ON calendar.meeting_participants(meeting_id);
 
+      /* El choque de horario solo se bloquea a nivel de base de datos
+         cuando AMBAS reuniones son presenciales — una persona sí puede
+         estar anotada en una presencial y una virtual (o dos virtuales)
+         que se crucen en horario, eso se permite y solo se advierte en
+         el frontend. modality se denormaliza en meeting_participants
+         (copiado de la reunión al guardar) porque un EXCLUDE no puede
+         mirar otra tabla. */
       DO $$
       BEGIN
-        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'calendar_no_double_booking') THEN
+        IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'calendar_no_double_booking') THEN
+          ALTER TABLE calendar.meeting_participants DROP CONSTRAINT calendar_no_double_booking;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'calendar_no_double_booking_presencial') THEN
           ALTER TABLE calendar.meeting_participants
-            ADD CONSTRAINT calendar_no_double_booking EXCLUDE USING gist (user_id WITH =, time_range WITH &&);
+            ADD CONSTRAINT calendar_no_double_booking_presencial
+            EXCLUDE USING gist (user_id WITH =, time_range WITH &&) WHERE (modality = 'presencial');
         END IF;
       END $$;
     `);
@@ -116,7 +129,7 @@ async function findScheduleConflicts({ userIds, date, startTime, endTime, exclud
   if (!userIds || !userIds.length) return [];
   const { rows } = await pool.query(`
     SELECT mp.user_id, u.nombre AS user_name,
-           m.id AS meeting_id, m.title AS meeting_title, m.area, m.created_by,
+           m.id AS meeting_id, m.title AS meeting_title, m.area, m.created_by, m.modality,
            to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date, m.start_time, m.end_time
     FROM calendar.meeting_participants mp
     JOIN calendar.meetings m ON m.id = mp.meeting_id
@@ -134,21 +147,30 @@ async function findScheduleConflicts({ userIds, date, startTime, endTime, exclud
 /* El detalle de la reunión con la que se choca solo se revela si el que
    está agendando puede ver esa reunión (misma área, la creó él, o es
    privilegiado) — si no, se muestra como "Reunión privada" pero se
-   conserva persona/área/horario (lo mínimo para que sirva la alerta). */
-function formatConflicts(rows, ctx) {
-  return rows.map(r => {
-    const canSeeDetail = ctx.privileged
-      || (ctx.viewerArea && r.area && ctx.viewerArea === String(r.area).toUpperCase())
-      || String(r.created_by) === String(ctx.viewerId)
-      || String(r.user_id) === String(ctx.viewerId); // el que choca es el propio visor -> ya está invitado, ve el nombre real
-    return {
-      user_id: r.user_id, user_name: r.user_name,
-      meeting_id: r.meeting_id,
-      meeting_name: canSeeDetail ? r.meeting_title : 'Reunión privada',
-      area: r.area,
-      date: r.meeting_date, start_time: r.start_time, end_time: r.end_time,
-    };
-  });
+   conserva persona/área/horario (lo mínimo para que sirva la alerta).
+
+   Modalidad: si ambas reuniones son presenciales, el cruce es "hard"
+   (bloquea guardar). Si una es presencial y la otra virtual, es un
+   cruce "soft" (se avisa pero se puede guardar igual). Si ambas son
+   virtuales, no se considera cruce — una persona sí puede estar en dos
+   reuniones virtuales al mismo tiempo — y se descarta directamente. */
+function formatConflicts(rows, ctx, requestModality) {
+  return rows
+    .filter(r => !(requestModality === 'virtual' && r.modality === 'virtual'))
+    .map(r => {
+      const canSeeDetail = ctx.privileged
+        || (ctx.viewerArea && r.area && ctx.viewerArea === String(r.area).toUpperCase())
+        || String(r.created_by) === String(ctx.viewerId)
+        || String(r.user_id) === String(ctx.viewerId); // el que choca es el propio visor -> ya está invitado, ve el nombre real
+      return {
+        user_id: r.user_id, user_name: r.user_name,
+        meeting_id: r.meeting_id,
+        meeting_name: canSeeDetail ? r.meeting_title : 'Reunión privada',
+        area: r.area, modality: r.modality,
+        hard: requestModality === 'presencial' && r.modality === 'presencial',
+        date: r.meeting_date, start_time: r.start_time, end_time: r.end_time,
+      };
+    });
 }
 
 function applyVisibility(m, canSeeDetail) {
@@ -156,7 +178,7 @@ function applyVisibility(m, canSeeDetail) {
   return {
     id: m.id, title: 'Ocupado', description: null, motivo: null, meeting_type: null, location: null, image_url: null,
     meeting_date: m.meeting_date, start_time: m.start_time, end_time: m.end_time,
-    area: m.area, status: m.status, project_id: null,
+    area: m.area, status: m.status, project_id: null, modality: m.modality,
     created_by: null, created_by_name: null, participants: [],
     visibility: 'busy_only',
   };
@@ -230,7 +252,7 @@ router.get('/meetings', async (req, res) => {
     if (status)    { params.push(status);    where += ` AND m.status=$${params.length}`; }
 
     const { rows: meetings } = await pool.query(`
-      SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
+      SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, m.modality, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m
@@ -279,7 +301,7 @@ router.get('/meetings', async (req, res) => {
 router.get('/meetings/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
+      SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, m.modality, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m LEFT JOIN public.usuarios u ON u.id = m.created_by
@@ -309,7 +331,7 @@ router.get('/meetings/:id', async (req, res) => {
 
 router.post('/check-availability', async (req, res) => {
   try {
-    const { date, start_time, end_time, participant_ids, exclude_meeting_id } = req.body;
+    const { date, start_time, end_time, participant_ids, exclude_meeting_id, modality } = req.body;
     if (!date || !start_time || !end_time || !Array.isArray(participant_ids) || !participant_ids.length || end_time <= start_time) {
       return res.json({ conflicts: [] });
     }
@@ -318,12 +340,12 @@ router.post('/check-availability', async (req, res) => {
     const rows = await findScheduleConflicts({
       userIds: participant_ids, date, startTime: start_time, endTime: end_time, excludeMeetingId: exclude_meeting_id,
     });
-    res.json({ conflicts: formatConflicts(rows, { viewerArea, viewerId: req.user.id, privileged }) });
+    res.json({ conflicts: formatConflicts(rows, { viewerArea, viewerId: req.user.id, privileged }, modality || 'presencial') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 async function validateAndBuildMeeting(req, { requireProjectAccess }) {
-  const { title, date, start_time, end_time, motivo, description, meeting_type, location, image_url,
+  const { title, date, start_time, end_time, motivo, description, meeting_type, location, image_url, modality,
           participants, external_participants, project_id, area: bodyArea } = req.body;
 
   if (!title || !date || !start_time || !end_time) {
@@ -331,6 +353,9 @@ async function validateAndBuildMeeting(req, { requireProjectAccess }) {
   }
   if (end_time <= start_time) {
     return { error: [400, 'La hora de fin debe ser posterior a la hora de inicio'] };
+  }
+  if (modality && !['presencial', 'virtual'].includes(modality)) {
+    return { error: [400, 'Modalidad inválida'] };
   }
 
   if (project_id && requireProjectAccess) {
@@ -368,7 +393,7 @@ async function validateAndBuildMeeting(req, { requireProjectAccess }) {
   return {
     fields: { title, date, start_time, end_time, motivo: motivo || null, description: description || null,
               meeting_type: meeting_type || null, location: location || null, image_url: image_url || null,
-              project_id: project_id || null, area },
+              modality: modality || 'presencial', project_id: project_id || null, area },
     internalList, externalList, myArea, privileged,
   };
 }
@@ -382,8 +407,8 @@ router.post('/meetings', async (req, res) => {
 
     if (ids.length) {
       const rows = await findScheduleConflicts({ userIds: ids, date: fields.date, startTime: fields.start_time, endTime: fields.end_time });
-      const conflicts = formatConflicts(rows, { viewerArea: myArea, viewerId: req.user.id, privileged });
-      if (conflicts.length) return res.status(409).json({ error: 'Existen conflictos de horario', conflicts });
+      const conflicts = formatConflicts(rows, { viewerArea: myArea, viewerId: req.user.id, privileged }, fields.modality);
+      if (conflicts.some(c => c.hard)) return res.status(409).json({ error: 'Existen conflictos de horario', conflicts });
     }
 
     const client = await pool.connect();
@@ -391,16 +416,16 @@ router.post('/meetings', async (req, res) => {
       await client.query('BEGIN');
       const id = uid();
       await client.query(`
-        INSERT INTO calendar.meetings (id,title,description,motivo,location,image_url,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-        [id, fields.title, fields.description, fields.motivo, fields.location, fields.image_url, fields.date, fields.start_time, fields.end_time,
+        INSERT INTO calendar.meetings (id,title,description,motivo,location,image_url,modality,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [id, fields.title, fields.description, fields.motivo, fields.location, fields.image_url, fields.modality, fields.date, fields.start_time, fields.end_time,
          fields.area, fields.meeting_type, fields.project_id, req.user.id]
       );
       for (const p of internalList) {
         await client.query(`
-          INSERT INTO calendar.meeting_participants (id, meeting_id, participant_type, user_id, role, time_range)
-          VALUES ($1,$2,'internal',$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'))`,
-          [uid(), id, p.user_id, p.role || null, fields.date, fields.start_time, fields.end_time]
+          INSERT INTO calendar.meeting_participants (id, meeting_id, participant_type, user_id, role, time_range, modality)
+          VALUES ($1,$2,'internal',$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'), $8)`,
+          [uid(), id, p.user_id, p.role || null, fields.date, fields.start_time, fields.end_time, fields.modality]
         );
       }
       for (const ext of externalList) {
@@ -445,8 +470,8 @@ router.put('/meetings/:id', async (req, res) => {
       const rows = await findScheduleConflicts({
         userIds: ids, date: fields.date, startTime: fields.start_time, endTime: fields.end_time, excludeMeetingId: req.params.id,
       });
-      const conflicts = formatConflicts(rows, { viewerArea: myArea, viewerId: req.user.id, privileged });
-      if (conflicts.length) return res.status(409).json({ error: 'Existen conflictos de horario', conflicts });
+      const conflicts = formatConflicts(rows, { viewerArea: myArea, viewerId: req.user.id, privileged }, fields.modality);
+      if (conflicts.some(c => c.hard)) return res.status(409).json({ error: 'Existen conflictos de horario', conflicts });
     }
 
     const client = await pool.connect();
@@ -454,15 +479,15 @@ router.put('/meetings/:id', async (req, res) => {
       await client.query('BEGIN');
       await client.query(`
         UPDATE calendar.meetings SET title=$1, description=$2, motivo=$3, meeting_date=$4, start_time=$5, end_time=$6,
-          meeting_type=$7, location=$8, image_url=$9, updated_at=NOW() WHERE id=$10`,
-        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, fields.image_url, req.params.id]
+          meeting_type=$7, location=$8, image_url=$9, modality=$10, updated_at=NOW() WHERE id=$11`,
+        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, fields.image_url, fields.modality, req.params.id]
       );
       await client.query('DELETE FROM calendar.meeting_participants WHERE meeting_id=$1', [req.params.id]);
       for (const p of internalList) {
         await client.query(`
-          INSERT INTO calendar.meeting_participants (id, meeting_id, participant_type, user_id, role, time_range)
-          VALUES ($1,$2,'internal',$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'))`,
-          [uid(), req.params.id, p.user_id, p.role || null, fields.date, fields.start_time, fields.end_time]
+          INSERT INTO calendar.meeting_participants (id, meeting_id, participant_type, user_id, role, time_range, modality)
+          VALUES ($1,$2,'internal',$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'), $8)`,
+          [uid(), req.params.id, p.user_id, p.role || null, fields.date, fields.start_time, fields.end_time, fields.modality]
         );
       }
       for (const ext of externalList) {
