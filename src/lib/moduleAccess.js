@@ -14,8 +14,13 @@ const { getGrantedModules } = require('./security');
    puede otorgarlo sigue estando restringido: POST
    /api/security/permissions/:userId exige nivel_acceso>=100 o, ya
    dentro de DST, tener el módulo DST otorgado (ver requirePrivileged
-   en routes/security.js). */
-const MODULES = ['TI', 'ADG', 'RRHH', 'SOPORTE', 'COMERCIAL', 'DST'];
+   en routes/security.js).
+   ACM (Comunicación y Marketing), DJ (Jurídico) y CG (Control de
+   Gestión) siguen el mismo patrón que tuvo COMERCIAL antes de tener
+   panel propio: quedan registrados como módulos válidos (y aparecen en
+   modulo.html) pero sin panel desplegado todavía, así que se muestran
+   como "Próximamente" hasta que exista su repo/deploy. */
+const MODULES = ['TI', 'ADG', 'RRHH', 'SOPORTE', 'COMERCIAL', 'DST', 'ACM', 'DJ', 'CG'];
 
 /* Módulos que un usuario tiene autorizados:
    - nivel_acceso>=100 (CEO/superadmin): todos, incluido DST.
