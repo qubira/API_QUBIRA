@@ -1,15 +1,15 @@
 'use strict';
 
-/* Genera el PDF de una constancia de trabajo reproduciendo el diseño de
-   QUBIRA_RRHH/PLANTILLAS/Plantilla_Constancia_Trabajo_QUBIRA.docx (mismo
-   texto, misma paleta de colores, misma tabla de datos) con pdfkit en
-   vez de rellenar el .docx y convertirlo a PDF — evita depender de
-   LibreOffice headless en el hosting actual (Render). El QR y, si
-   existen, el sello de la empresa y la firma personal del emisor se
-   insertan al pie. Se usa tanto para la descarga autenticada desde RRHH
-   como para la página pública de verificación — siempre se regenera al
-   vuelo desde los datos guardados, nunca se persiste el PDF como
-   archivo. */
+/* Genera el PDF de una constancia de trabajo reproduciendo el diseño del
+   ejemplo de referencia QUBIRA_RRHH/PLANTILLAS/ejemplo_constancia_CT-2026-0001.docx
+   (membrete centrado, título centrado, QR a la izquierda con el código de
+   verificación debajo, sello + firma superpuestos a la derecha con su
+   timbre, pie de página con los datos de la empresa) con pdfkit en vez de
+   rellenar el .docx y convertirlo a PDF — evita depender de LibreOffice
+   headless en el hosting actual (Render). Se usa tanto para la descarga
+   autenticada desde RRHH como para la página pública de verificación —
+   siempre se regenera al vuelo desde los datos guardados, nunca se
+   persiste el PDF como archivo. */
 
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
@@ -19,6 +19,7 @@ const COLOR_BOX_BG = '#F4F6FE';
 const COLOR_SIGNER = '#12286E';
 const COLOR_TEXT = '#1F2937';
 const COLOR_MUTED = '#6B7280';
+const COLOR_RULE = '#E5E7EB';
 
 const RUC_EMPRESA = '10764275981';
 
@@ -61,6 +62,22 @@ function dataRow(doc, x, y, w, label, value) {
   doc.restore();
 }
 
+/* Puntitos decorativos en la esquina superior derecha, como en la
+   plantilla original — un patrón simple de cuadraditos a distinta
+   opacidad, no hace falta replicar el asset exacto. */
+function decorativeDots(doc, x, y) {
+  doc.save();
+  const positions = [
+    [0, 0, 5], [14, 4, 4], [26, 0, 6], [6, 14, 4], [20, 16, 5],
+    [36, 10, 4], [2, 26, 3], [16, 28, 4], [30, 24, 3], [40, 22, 3],
+  ];
+  for (const [dx, dy, size] of positions) {
+    doc.fillColor(COLOR_LABEL).opacity(0.18 + Math.random() * 0.12)
+      .rect(x + dx, y + dy, size, size).fill();
+  }
+  doc.restore();
+}
+
 /* constancia: fila de rrhh.constancias (camelCase ya resuelto por el caller),
    más `firmaUrl` (firma personal de quien emitió, según su propia carpeta
    en Cloudinary) y `selloUrl` (sello redondo de la empresa, compartido) —
@@ -73,26 +90,35 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
 
   const pageW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const left = doc.page.margins.left;
+  const center = left + pageW / 2;
   let y = doc.page.margins.top;
 
-  // ── Membrete ──
+  // ── Membrete, todo centrado ──
+  decorativeDots(doc, left + pageW - 44, y - 6);
   const logo = await fetchLogoBuffer();
   if (logo) {
-    try { doc.image(logo, left, y, { width: 40, height: 40 }); } catch (_) { /* logo corrupto, seguimos sin él */ }
+    try { doc.image(logo, center - 18, y, { width: 36, height: 36 }); } catch (_) { /* logo corrupto, seguimos sin él */ }
   }
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(18).text('QUBIRA', left + (logo ? 50 : 0), y + 2);
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(9)
-    .text('Desarrollo de Software – Soluciones Tecnológicas', left + (logo ? 50 : 0), y + 24);
-  doc.fillColor(COLOR_MUTED).fontSize(9).text(`RUC ${RUC_EMPRESA}`, left, y, { width: pageW, align: 'right' });
-  y += 55;
-
-  doc.moveTo(left, y).lineTo(left + pageW, y).strokeColor('#E5E7EB').lineWidth(1).stroke();
+  y += logo ? 42 : 0;
+  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(17).text('QUBIRA', left, y, { width: pageW, align: 'center', characterSpacing: 1.5 });
+  y += 20;
+  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(8.5)
+    .text('Desarrollo de Software · Soluciones Tecnológicas', left, y, { width: pageW, align: 'center' });
+  y += 13;
+  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5)
+    .text(`RUC ${RUC_EMPRESA}`, left, y, { width: pageW, align: 'center' });
   y += 20;
 
-  // ── Título ──
-  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(16).text('Constancia de Trabajo', left, y);
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(11).text(`N.° ${constancia.numero}`, left, y + 20);
-  y += 50;
+  doc.moveTo(left, y).lineTo(left + pageW, y).strokeColor(COLOR_RULE).lineWidth(1).stroke();
+  y += 22;
+
+  // ── Título, centrado ──
+  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(18).text('Constancia de Trabajo', left, y, { width: pageW, align: 'center' });
+  y += 26;
+  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(10).text(`N.° ${constancia.numero}`, left, y, { width: pageW, align: 'center' });
+  y += 16;
+  doc.moveTo(center - 20, y).lineTo(center + 20, y).strokeColor(COLOR_RULE).lineWidth(1).stroke();
+  y += 20;
 
   // ── Párrafo de apertura ──
   doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(10.5).text(
@@ -110,7 +136,7 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   dataRow(doc, left, y, colW, 'Área', constancia.area);
   dataRow(doc, left + colW + 10, y, colW, 'Cargo', constancia.cargo);
   y += 48;
-  dataRow(doc, left, y, colW, 'Período laborado',
+  dataRow(doc, left, y, pageW, 'Período laborado',
     `${formatDateEsLong(constancia.fechaInicio)} – ${/^\d{4}-\d{2}-\d{2}/.test(constancia.fechaFin) ? formatDateEsLong(constancia.fechaFin) : (constancia.fechaFin || 'Actualidad')}`);
   y += 48;
   dataRow(doc, left, y, pageW, 'Función principal', constancia.funcionPrincipal);
@@ -122,9 +148,9 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
     'Se expide la presente a solicitud del interesado(a), para los fines que estime convenientes.',
     left, y, { width: pageW, align: 'justify', lineGap: 2 }
   );
-  y = doc.y + 40;
+  y = doc.y + 42;
 
-  // ── Pie izquierdo: sello de la empresa + QR, código de verificación, lugar/fecha ──
+  // ── Pie: QR + código de verificación (izq.) | sello + firma + timbre (der.) ──
   const footY = y;
   const [selloBuf, firmaBuf] = await Promise.all([
     constancia.selloUrl ? fetchBuffer(constancia.selloUrl) : Promise.resolve(null),
@@ -132,32 +158,45 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   ]);
   const qrBuf = await QRCode.toBuffer(verifyUrl, { margin: 1, width: 130 });
 
-  let stampX = left;
-  if (selloBuf) {
-    try { doc.image(selloBuf, stampX, footY, { width: 58, height: 58 }); stampX += 62; } catch (_) { /* sello corrupto */ }
-  }
-  try { doc.image(qrBuf, stampX, footY, { width: 58, height: 58 }); } catch (_) { /* no debería fallar, pero no bloqueamos el PDF por esto */ }
-
+  // Izquierda: QR, código de verificación, lugar y fecha.
+  try { doc.image(qrBuf, left, footY, { width: 56, height: 56 }); } catch (_) { /* no debería fallar */ }
   const codeY = footY + 64;
   doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('CÓDIGO DE VERIFICACIÓN', left, codeY, { width: colW });
   doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(9.5).text(constancia.codigoVerificacion || '', left, codeY + 11, { width: colW });
   doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('LUGAR Y FECHA DE EMISIÓN', left, codeY + 30, { width: colW });
   doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(9.5).text(`${constancia.lugar || ''}, ${formatDateEsLong(constancia.fechaEmision)}`, left, codeY + 41, { width: colW });
 
-  // ── Pie derecho: firma personal de quien emite + nombre/cargo ──
+  // Derecha: sello detrás, firma superpuesta encima, y debajo el timbre
+  // con nombre/cargo del firmante (mismo efecto visual que el sello +
+  // rúbrica + recuadro del ejemplo de referencia).
   const signX = left + colW + 10;
-  if (firmaBuf) {
-    try { doc.image(firmaBuf, signX + colW / 2 - 45, footY, { width: 90, height: 50, fit: [90, 50], align: 'center' }); } catch (_) { /* firma corrupta */ }
+  const signCenterX = signX + colW / 2;
+  if (selloBuf) {
+    try { doc.image(selloBuf, signCenterX - 34, footY - 4, { width: 68, height: 68 }); } catch (_) { /* sello corrupto */ }
   }
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(11)
-    .text(constancia.firmanteNombre || '', signX, footY + 56, { width: colW, align: 'center' });
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(9.5)
-    .text(constancia.firmanteCargo || '', signX, footY + 70, { width: colW, align: 'center' });
-  doc.fillColor(COLOR_MUTED).fontSize(9.5).text('QUBIRA', signX, footY + 84, { width: colW, align: 'center' });
+  if (firmaBuf) {
+    try { doc.image(firmaBuf, signCenterX - 48, footY + 8, { width: 96, height: 48, fit: [96, 48], align: 'center' }); } catch (_) { /* firma corrupta */ }
+  }
 
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(7)
-    .text('Verifica la autenticidad de este documento ingresando el código de verificación en:', left, doc.page.height - doc.page.margins.bottom - 24, { width: pageW });
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5).text(verifyUrl, left, doc.page.height - doc.page.margins.bottom - 13, { width: pageW });
+  const stampY = footY + 62;
+  const stampW = colW - 20;
+  const stampX = signX + 10;
+  doc.save();
+  doc.roundedRect(stampX, stampY, stampW, 34, 3).lineWidth(1).strokeColor(COLOR_SIGNER).stroke();
+  doc.roundedRect(stampX + 2, stampY + 2, stampW - 4, 30, 2).lineWidth(0.5).strokeColor(COLOR_SIGNER).stroke();
+  doc.restore();
+  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(9.5)
+    .text((constancia.firmanteNombre || '').toUpperCase(), stampX, stampY + 5, { width: stampW, align: 'center' });
+  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(7)
+    .text((constancia.firmanteCargo || '').toUpperCase(), stampX, stampY + 17, { width: stampW, align: 'center' });
+  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(6.5)
+    .text('QUBIRA S.A.C.', stampX, stampY + 26, { width: stampW, align: 'center' });
+
+  // ── Pie de página, centrado al fondo (dentro del área imprimible,
+  //    nunca más abajo del margen inferior — si no, pdfkit crea una
+  //    segunda página vacía solo para esta línea). ──
+  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5)
+    .text(`QUBIRA S.A.C.   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center' });
 
   doc.end();
   return done;
