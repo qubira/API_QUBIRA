@@ -71,7 +71,6 @@ function dataRow(doc, x, y, w, label, value) {
     .text(label.toUpperCase(), x + padX, y + padY, { width: w - padX * 2 });
   doc.fillColor(COLOR_TEXT).font('Inter').fontSize(11)
     .text(value || '—', x + padX, y + padY + 13, { width: w - padX * 2 });
-  doc.restore();
 }
 
 /* Puntitos decorativos en la esquina superior derecha, como en la
