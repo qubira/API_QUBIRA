@@ -1315,6 +1315,17 @@ router.put('/constancias/:id', async (req, res) => {
   }
 });
 
+router.delete('/constancias/:id', async (req, res) => {
+  try {
+    const { rowCount } = await pool.query('DELETE FROM rrhh.constancias WHERE id=$1', [req.params.id]);
+    if (!rowCount) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[RRHH] DELETE /constancias/:id error:', err.message);
+    res.status(500).json({ ok: false, error: 'Error al eliminar la constancia' });
+  }
+});
+
 router.get('/constancias/:id/pdf', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);

@@ -22,6 +22,7 @@ const COLOR_MUTED = '#6B7280';
 const COLOR_RULE = '#E5E7EB';
 
 const RUC_EMPRESA = '10764275981';
+const COMPANY_SITE_URL = process.env.QUBIRA_PUBLIC_SITE_BASE || 'https://qubira.vercel.app';
 
 const MESES_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
@@ -93,14 +94,24 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   const center = left + pageW / 2;
   let y = doc.page.margins.top;
 
-  // ── Membrete, todo centrado ──
+  // ── Franja vertical decorativa, borde izquierdo de toda la hoja ──
+  const barW = 16;
+  const barGradient = doc.linearGradient(0, 0, 0, doc.page.height);
+  barGradient.stop(0, COLOR_SIGNER).stop(1, COLOR_LABEL);
+  doc.rect(0, 0, barW, doc.page.height).fill(barGradient);
+
+  // ── Membrete, todo centrado — el logo y "QUBIRA" enlazan a la web oficial ──
   decorativeDots(doc, left + pageW - 44, y - 6);
   const logo = await fetchLogoBuffer();
   if (logo) {
-    try { doc.image(logo, center - 18, y, { width: 36, height: 36 }); } catch (_) { /* logo corrupto, seguimos sin él */ }
+    try {
+      doc.image(logo, center - 18, y, { width: 36, height: 36 });
+      doc.link(center - 18, y, 36, 36, COMPANY_SITE_URL);
+    } catch (_) { /* logo corrupto, seguimos sin él */ }
   }
   y += logo ? 42 : 0;
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(17).text('QUBIRA', left, y, { width: pageW, align: 'center', characterSpacing: 1.5 });
+  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(17)
+    .text('QUBIRA', left, y, { width: pageW, align: 'center', characterSpacing: 1.5, link: COMPANY_SITE_URL });
   y += 20;
   doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(8.5)
     .text('Desarrollo de Software · Soluciones Tecnológicas', left, y, { width: pageW, align: 'center' });
@@ -158,11 +169,16 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   ]);
   const qrBuf = await QRCode.toBuffer(verifyUrl, { margin: 1, width: 130 });
 
-  // Izquierda: QR, código de verificación, lugar y fecha.
-  try { doc.image(qrBuf, left, footY, { width: 56, height: 56 }); } catch (_) { /* no debería fallar */ }
+  // Izquierda: QR (enlaza a la página de verificación), código de
+  // verificación (también clicable), lugar y fecha.
+  try {
+    doc.image(qrBuf, left, footY, { width: 56, height: 56 });
+    doc.link(left, footY, 56, 56, verifyUrl);
+  } catch (_) { /* no debería fallar */ }
   const codeY = footY + 64;
   doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('CÓDIGO DE VERIFICACIÓN', left, codeY, { width: colW });
-  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(9.5).text(constancia.codigoVerificacion || '', left, codeY + 11, { width: colW });
+  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(9.5)
+    .text(constancia.codigoVerificacion || '', left, codeY + 11, { width: colW, link: verifyUrl });
   doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('LUGAR Y FECHA DE EMISIÓN', left, codeY + 30, { width: colW });
   doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(9.5).text(`${constancia.lugar || ''}, ${formatDateEsLong(constancia.fechaEmision)}`, left, codeY + 41, { width: colW });
 
@@ -197,7 +213,7 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   //    nunca más abajo del margen inferior — si no, pdfkit crea una
   //    segunda página vacía solo para esta línea). ──
   doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5)
-    .text(`QUBIRA S.A.C.   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center' });
+    .text(`QUBIRA S.A.C.   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center', link: COMPANY_SITE_URL });
 
   doc.end();
   return done;
