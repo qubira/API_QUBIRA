@@ -4,11 +4,12 @@
    QUBIRA_RRHH/PLANTILLAS/Plantilla_Constancia_Trabajo_QUBIRA.docx (mismo
    texto, misma paleta de colores, misma tabla de datos) con pdfkit en
    vez de rellenar el .docx y convertirlo a PDF — evita depender de
-   LibreOffice headless en el hosting actual (Render). El QR y, si existe,
-   la imagen de firma se insertan al pie. Se usa tanto para la descarga
-   autenticada desde RRHH como para la página pública de verificación —
-   siempre se regenera al vuelo desde los datos guardados, nunca se
-   persiste el PDF como archivo. */
+   LibreOffice headless en el hosting actual (Render). El QR y, si
+   existen, el sello de la empresa y la firma personal del emisor se
+   insertan al pie. Se usa tanto para la descarga autenticada desde RRHH
+   como para la página pública de verificación — siempre se regenera al
+   vuelo desde los datos guardados, nunca se persiste el PDF como
+   archivo. */
 
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
@@ -21,24 +22,31 @@ const COLOR_MUTED = '#6B7280';
 
 const RUC_EMPRESA = '10764275981';
 
-/* Las fechas se guardan en ISO (YYYY-MM-DD); se muestran en DD/MM/YYYY.
-   fecha_fin puede ser texto libre ("Actualidad") en vez de una fecha —
-   en ese caso se deja tal cual. */
-function formatDateEs(value) {
+const MESES_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+/* Las fechas se guardan en ISO (YYYY-MM-DD); se muestran escritas en
+   español ("13 de octubre de 2026"). fecha_fin puede ser texto libre
+   ("Actualidad") en vez de una fecha — en ese caso se deja tal cual. */
+function formatDateEsLong(value) {
   if (!value) return '';
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
   if (!m) return value;
-  return `${m[3]}/${m[2]}/${m[1]}`;
+  const [, y, mo, d] = m;
+  return `${d} de ${MESES_ES[parseInt(mo, 10) - 1]} de ${y}`;
 }
 
-async function fetchLogoBuffer() {
+async function fetchBuffer(url) {
   try {
-    const res = await fetch('https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png', { signal: AbortSignal.timeout(4000) });
+    const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
     if (!res.ok) return null;
     return Buffer.from(await res.arrayBuffer());
   } catch (_) {
     return null;
   }
+}
+
+function fetchLogoBuffer() {
+  return fetchBuffer('https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png');
 }
 
 function dataRow(doc, x, y, w, label, value) {
@@ -53,7 +61,10 @@ function dataRow(doc, x, y, w, label, value) {
   doc.restore();
 }
 
-/* constancia: fila de rrhh.constancias (camelCase ya resuelto por el caller) */
+/* constancia: fila de rrhh.constancias (camelCase ya resuelto por el caller),
+   más `firmaUrl` (firma personal de quien emitió, según su propia carpeta
+   en Cloudinary) y `selloUrl` (sello redondo de la empresa, compartido) —
+   ambos opcionales y resueltos por el caller antes de llamar acá. */
 async function buildConstanciaPdf(constancia, verifyUrl) {
   const doc = new PDFDocument({ size: 'A4', margin: 50 });
   const chunks = [];
@@ -99,7 +110,8 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   dataRow(doc, left, y, colW, 'Área', constancia.area);
   dataRow(doc, left + colW + 10, y, colW, 'Cargo', constancia.cargo);
   y += 48;
-  dataRow(doc, left, y, colW, 'Período laborado', `${formatDateEs(constancia.fechaInicio)} – ${constancia.fechaFin ? formatDateEs(constancia.fechaFin) : 'Actualidad'}`);
+  dataRow(doc, left, y, colW, 'Período laborado',
+    `${formatDateEsLong(constancia.fechaInicio)} – ${/^\d{4}-\d{2}-\d{2}/.test(constancia.fechaFin) ? formatDateEsLong(constancia.fechaFin) : (constancia.fechaFin || 'Actualidad')}`);
   y += 48;
   dataRow(doc, left, y, pageW, 'Función principal', constancia.funcionPrincipal);
   y += 56;
@@ -112,34 +124,40 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   );
   y = doc.y + 40;
 
-  // ── Pie: lugar/fecha | firma ──
+  // ── Pie izquierdo: sello de la empresa + QR, código de verificación, lugar/fecha ──
   const footY = y;
-  doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(8).text('LUGAR Y FECHA DE EMISIÓN', left, footY);
-  doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(10.5).text(`${constancia.lugar || ''}, ${formatDateEs(constancia.fechaEmision)}`, left, footY + 14);
+  const [selloBuf, firmaBuf] = await Promise.all([
+    constancia.selloUrl ? fetchBuffer(constancia.selloUrl) : Promise.resolve(null),
+    constancia.firmaUrl ? fetchBuffer(constancia.firmaUrl) : Promise.resolve(null),
+  ]);
+  const qrBuf = await QRCode.toBuffer(verifyUrl, { margin: 1, width: 130 });
 
+  let stampX = left;
+  if (selloBuf) {
+    try { doc.image(selloBuf, stampX, footY, { width: 58, height: 58 }); stampX += 62; } catch (_) { /* sello corrupto */ }
+  }
+  try { doc.image(qrBuf, stampX, footY, { width: 58, height: 58 }); } catch (_) { /* no debería fallar, pero no bloqueamos el PDF por esto */ }
+
+  const codeY = footY + 64;
+  doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('CÓDIGO DE VERIFICACIÓN', left, codeY, { width: colW });
+  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(9.5).text(constancia.codigoVerificacion || '', left, codeY + 11, { width: colW });
+  doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('LUGAR Y FECHA DE EMISIÓN', left, codeY + 30, { width: colW });
+  doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(9.5).text(`${constancia.lugar || ''}, ${formatDateEsLong(constancia.fechaEmision)}`, left, codeY + 41, { width: colW });
+
+  // ── Pie derecho: firma personal de quien emite + nombre/cargo ──
   const signX = left + colW + 10;
-  if (constancia.firmaUrl) {
-    try {
-      const res = await fetch(constancia.firmaUrl, { signal: AbortSignal.timeout(4000) });
-      if (res.ok) {
-        const buf = Buffer.from(await res.arrayBuffer());
-        doc.image(buf, signX + colW / 2 - 40, footY, { width: 80, height: 50, fit: [80, 50], align: 'center' });
-      }
-    } catch (_) { /* si falla la descarga, seguimos sin imagen */ }
+  if (firmaBuf) {
+    try { doc.image(firmaBuf, signX + colW / 2 - 45, footY, { width: 90, height: 50, fit: [90, 50], align: 'center' }); } catch (_) { /* firma corrupta */ }
   }
   doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(11)
-    .text(constancia.firmanteNombre || '', signX, footY + 54, { width: colW, align: 'center' });
+    .text(constancia.firmanteNombre || '', signX, footY + 56, { width: colW, align: 'center' });
   doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(9.5)
-    .text(constancia.firmanteCargo || '', signX, footY + 68, { width: colW, align: 'center' });
-  doc.fillColor(COLOR_MUTED).fontSize(9.5).text('QUBIRA', signX, footY + 82, { width: colW, align: 'center' });
+    .text(constancia.firmanteCargo || '', signX, footY + 70, { width: colW, align: 'center' });
+  doc.fillColor(COLOR_MUTED).fontSize(9.5).text('QUBIRA', signX, footY + 84, { width: colW, align: 'center' });
 
-  // ── QR de verificación, al pie de la página ──
-  const qrBuf = await QRCode.toBuffer(verifyUrl, { margin: 1, width: 110 });
-  const qrY = doc.page.height - doc.page.margins.bottom - 110;
-  doc.image(qrBuf, left, qrY, { width: 90, height: 90 });
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(7.5)
-    .text('Verifica la autenticidad de este documento escaneando el código\no ingresando el número de constancia en:', left + 100, qrY + 6, { width: pageW - 100 });
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(8).text(verifyUrl, left + 100, qrY + 32, { width: pageW - 100 });
+  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(7)
+    .text('Verifica la autenticidad de este documento ingresando el código de verificación en:', left, doc.page.height - doc.page.margins.bottom - 24, { width: pageW });
+  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5).text(verifyUrl, left, doc.page.height - doc.page.margins.bottom - 13, { width: pageW });
 
   doc.end();
   return done;

@@ -264,18 +264,13 @@ function ensureSchema() {
       CREATE TABLE IF NOT EXISTS rrhh.constancias (
         id TEXT PRIMARY KEY,
         numero TEXT UNIQUE NOT NULL,
+        codigo_verificacion TEXT UNIQUE NOT NULL,
         employee_id TEXT REFERENCES rrhh.empleados(id) ON DELETE SET NULL,
         tratamiento TEXT, nombre_completo TEXT, tipo_documento TEXT, numero_documento TEXT,
         area TEXT, cargo TEXT, fecha_inicio TEXT, fecha_fin TEXT, funcion_principal TEXT,
         lugar TEXT, fecha_emision TEXT,
         firmante_nombre TEXT, firmante_cargo TEXT,
         issued_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
-      );
-
-      /* Fila única (id=1) con la imagen de firma/sello a incrustar en
-         el PDF — configurable desde la UI, sin tocar código. */
-      CREATE TABLE IF NOT EXISTS rrhh.constancia_config (
-        id INTEGER PRIMARY KEY DEFAULT 1, firma_url TEXT, CHECK (id = 1)
       );
     `).catch(err => { ready = null; throw err; });
   }
@@ -1114,9 +1109,16 @@ router.delete('/empleados/:id', async (req, res) => {
 });
 
 /* ============================================================
-   Constancias de trabajo — emisión, historial y configuración de la
-   imagen de firma. El PDF se genera al vuelo (ver lib/constanciaPdf.js),
-   nunca se guarda como archivo: lo que persiste es el snapshot de datos.
+   Constancias de trabajo — emisión, historial y firma/sello. El PDF se
+   genera al vuelo (ver lib/constanciaPdf.js), nunca se guarda como
+   archivo: lo que persiste es el snapshot de datos.
+
+   La firma personal de quien emite NO se guarda en una tabla de
+   configuración: vive en Cloudinary, en una carpeta por persona
+   (qubira-firmas/<Nombre_Apellido>/), y se busca en vivo según quién
+   esté logueado emitiendo — así cada quien sube/reemplaza SU propia
+   firma sin afectar a nadie más. El sello redondo de la empresa es
+   compartido, en qubira-firmas/_empresa/.
    ============================================================ */
 const { buildConstanciaPdf } = require('../lib/constanciaPdf');
 
@@ -1124,7 +1126,7 @@ const PUBLIC_SITE_BASE = (process.env.QUBIRA_PUBLIC_SITE_BASE) || 'https://qubir
 
 function constanciaToCamel(row) {
   return {
-    id: row.id, numero: row.numero, employeeId: row.employee_id,
+    id: row.id, numero: row.numero, codigoVerificacion: row.codigo_verificacion, employeeId: row.employee_id,
     tratamiento: row.tratamiento, nombreCompleto: row.nombre_completo,
     tipoDocumento: row.tipo_documento, numeroDocumento: row.numero_documento,
     area: row.area, cargo: row.cargo,
@@ -1135,10 +1137,15 @@ function constanciaToCamel(row) {
   };
 }
 
-function generateConstanciaNumero() {
+async function generateConstanciaNumero() {
   const year = new Date().getFullYear();
-  const suffix = crypto.randomBytes(4).toString('hex').toUpperCase().slice(0, 6);
-  return `CT-${year}-${suffix}`;
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS n FROM rrhh.constancias WHERE numero LIKE $1", [`CT-${year}-%`]);
+  return `CT-${year}-${String(rows[0].n + 1).padStart(4, '0')}`;
+}
+
+function generateCodigoVerificacion() {
+  const grupo = () => crypto.randomBytes(2).toString('hex').toUpperCase();
+  return `${grupo()}-${grupo()}-${grupo()}`;
 }
 
 async function catalogoNombre(id) {
@@ -1168,13 +1175,32 @@ async function resolveIssuerCargo(username) {
   return rows[0].cargo || null;
 }
 
-async function getConstanciaConfig() {
-  const { rows } = await pool.query('SELECT firma_url FROM rrhh.constancia_config WHERE id=1');
-  return rows[0]?.firma_url || null;
+/* "Abraham Aranda Cerna" -> "Abraham_Aranda_Cerna" — mismo criterio que
+   la carpeta que ya existe en Cloudinary (espacios por guión bajo, sin
+   tocar mayúsculas/acentos). */
+function slugifyNombre(fullName) {
+  return String(fullName || '').trim().replace(/\s+/g, '_');
 }
 
-function verifyUrlFor(numero) {
-  return `${PUBLIC_SITE_BASE}/constancia.html?numero=${encodeURIComponent(numero)}`;
+async function findFirstImageInFolder(prefix) {
+  try {
+    const { resources } = await cloudinary.api.resources({ type: 'upload', prefix, max_results: 5 });
+    return resources[0]?.secure_url || null;
+  } catch (err) {
+    console.error(`[RRHH] Error buscando imagen en Cloudinary (${prefix}):`, err.message);
+    return null;
+  }
+}
+function getFirmaUrlForSigner(fullName) {
+  const slug = slugifyNombre(fullName);
+  return slug ? findFirstImageInFolder(`qubira-firmas/${slug}/`) : Promise.resolve(null);
+}
+function getSelloEmpresaUrl() {
+  return findFirstImageInFolder('qubira-firmas/_empresa/');
+}
+
+function verifyUrlFor(codigo) {
+  return `${PUBLIC_SITE_BASE}/constancia.html?codigo=${encodeURIComponent(codigo)}`;
 }
 
 router.get('/constancias', async (req, res) => {
@@ -1204,15 +1230,19 @@ router.post('/constancias', async (req, res) => {
       resolveIssuerCargo(req.user.username),
     ]);
 
-    let numero = generateConstanciaNumero();
-    for (let attempts = 0; attempts < 5; attempts++) {
-      const { rows: dupe } = await pool.query('SELECT 1 FROM rrhh.constancias WHERE numero=$1', [numero]);
+    let numero, codigoVerificacion, attempts = 0;
+    while (attempts < 5) {
+      numero = await generateConstanciaNumero();
+      codigoVerificacion = generateCodigoVerificacion();
+      const { rows: dupe } = await pool.query(
+        'SELECT 1 FROM rrhh.constancias WHERE numero=$1 OR codigo_verificacion=$2', [numero, codigoVerificacion]
+      );
       if (!dupe.length) break;
-      numero = generateConstanciaNumero();
+      attempts++;
     }
 
     const row = {
-      id: uid(), numero, employee_id: employeeId,
+      id: uid(), numero, codigo_verificacion: codigoVerificacion, employee_id: employeeId,
       tratamiento: tratamiento || '', nombre_completo: composeFullName(emp),
       tipo_documento: tipoDocumentoNombre || '', numero_documento: emp.numeroDocumento || '',
       area: areaNombre || '', cargo: cargoNombre || '',
@@ -1221,7 +1251,7 @@ router.post('/constancias', async (req, res) => {
       funcion_principal: funcionPrincipal,
       lugar: lugar || 'Lima, Perú',
       fecha_emision: new Date().toISOString().slice(0, 10),
-      firmante_nombre: req.user.nombre || req.user.username,
+      firmante_nombre: `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim() || req.user.username,
       firmante_cargo: firmanteCargo || req.user.rol || '',
       issued_by: req.user.id,
     };
@@ -1242,8 +1272,11 @@ router.get('/constancias/:id/pdf', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
     const constancia = constanciaToCamel(rows[0]);
-    const firmaUrl = await getConstanciaConfig();
-    const pdf = await buildConstanciaPdf({ ...constancia, firmaUrl }, verifyUrlFor(constancia.numero));
+    const [firmaUrl, selloUrl] = await Promise.all([
+      getFirmaUrlForSigner(constancia.firmanteNombre),
+      getSelloEmpresaUrl(),
+    ]);
+    const pdf = await buildConstanciaPdf({ ...constancia, firmaUrl, selloUrl }, verifyUrlFor(constancia.codigoVerificacion));
     res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${constancia.numero}.pdf"` });
     res.send(pdf);
   } catch (err) {
@@ -1252,11 +1285,14 @@ router.get('/constancias/:id/pdf', async (req, res) => {
   }
 });
 
+/* Firma personal de QUIEN ESTÁ LOGUEADO — no hay "configuración global",
+   cada usuario ve y sube únicamente la suya. */
 router.get('/constancia-config', async (req, res) => {
   try {
-    res.json({ ok: true, data: { firmaUrl: await getConstanciaConfig() } });
+    const fullName = `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim();
+    res.json({ ok: true, data: { firmaUrl: await getFirmaUrlForSigner(fullName) } });
   } catch (err) {
-    res.status(500).json({ ok: false, error: 'Error al leer la configuración' });
+    res.status(500).json({ ok: false, error: 'Error al leer la firma' });
   }
 });
 
@@ -1274,18 +1310,16 @@ router.put('/constancia-config', (req, res) => {
     if (err) return res.status(400).json({ ok: false, error: err.message || 'Error al procesar la imagen' });
     try {
       if (!req.file) return res.status(400).json({ ok: false, error: 'Debes adjuntar una imagen' });
+      const fullName = `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim();
+      const slug = slugifyNombre(fullName);
+      if (!slug) return res.status(400).json({ ok: false, error: 'Tu cuenta no tiene nombre configurado' });
       const result = await new Promise((resolve, reject) => {
         const stream = cloudinary.uploader.upload_stream(
-          { resource_type: 'image', folder: 'qubira/rrhh/firma_constancias' },
+          { resource_type: 'image', folder: `qubira-firmas/${slug}` },
           (e, r) => (e ? reject(e) : resolve(r))
         );
         stream.end(req.file.buffer);
       });
-      await pool.query(
-        `INSERT INTO rrhh.constancia_config (id, firma_url) VALUES (1, $1)
-         ON CONFLICT (id) DO UPDATE SET firma_url = $1`,
-        [result.secure_url]
-      );
       res.json({ ok: true, data: { firmaUrl: result.secure_url } });
     } catch (cloudErr) {
       console.error('[RRHH] Error subiendo firma a Cloudinary:', cloudErr.message);
@@ -1299,3 +1333,5 @@ router.put('/constancia-config', (req, res) => {
 module.exports = router;
 module.exports.ensureSchema = ensureSchema;
 module.exports.subirCvACloudinary = subirCvACloudinary;
+module.exports.getFirmaUrlForSigner = getFirmaUrlForSigner;
+module.exports.getSelloEmpresaUrl = getSelloEmpresaUrl;
