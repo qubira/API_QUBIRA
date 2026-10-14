@@ -166,11 +166,6 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('LUGAR Y FECHA DE EMISIÓN', left, codeY + 30, { width: colW });
   doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(9.5).text(`${constancia.lugar || ''}, ${formatDateEsLong(constancia.fechaEmision)}`, left, codeY + 41, { width: colW });
 
-  // Línea vertical divisoria entre el bloque de la izquierda (QR/código)
-  // y el de la derecha (sello/firma).
-  const dividerX = left + colW + 5;
-  doc.moveTo(dividerX, footY).lineTo(dividerX, footY + 110).strokeColor(COLOR_SIGNER).lineWidth(1).stroke();
-
   // Derecha: sello y firma uno al lado del otro (NO superpuestos), y
   // debajo el timbre con nombre/cargo del firmante.
   const signX = left + colW + 10;
@@ -178,7 +173,7 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
     try { doc.image(selloBuf, signX, footY, { width: 60, height: 60 }); } catch (_) { /* sello corrupto */ }
   }
   if (firmaBuf) {
-    try { doc.image(firmaBuf, signX + 66, footY + 6, { width: 96, height: 48, fit: [96, 48], align: 'center' }); } catch (_) { /* firma corrupta */ }
+    try { doc.image(firmaBuf, signX + 60, footY - 2, { width: 150, height: 64, fit: [150, 64], align: 'center' }); } catch (_) { /* firma corrupta */ }
   }
 
   // Línea de firma, debajo del sello y la rúbrica (como la línea "firme
