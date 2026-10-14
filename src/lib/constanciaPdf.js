@@ -181,9 +181,12 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
     try { doc.image(firmaBuf, signX + 66, footY + 6, { width: 96, height: 48, fit: [96, 48], align: 'center' }); } catch (_) { /* firma corrupta */ }
   }
 
+  // Línea de firma, debajo del sello y la rúbrica (como la línea "firme
+  // aquí" de la plantilla original), antes del timbre con nombre/cargo.
   const stampY = footY + 62;
   const stampW = colW - 20;
   const stampX = signX + 10;
+  doc.moveTo(signX, stampY - 4).lineTo(stampX + stampW, stampY - 4).strokeColor(COLOR_SIGNER).lineWidth(0.75).stroke();
   doc.save();
   doc.roundedRect(stampX, stampY, stampW, 34, 3).lineWidth(1).strokeColor(COLOR_SIGNER).stroke();
   doc.roundedRect(stampX + 2, stampY + 2, stampW - 4, 30, 2).lineWidth(0.5).strokeColor(COLOR_SIGNER).stroke();
