@@ -11,8 +11,19 @@
    siempre se regenera al vuelo desde los datos guardados, nunca se
    persiste el PDF como archivo. */
 
+const path = require('path');
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
+
+/* pdfkit no embebe los 14 fonts "estándar" (Helvetica, etc.) — asume
+   que el visor del PDF los tiene instalados. Eso funciona en Chrome,
+   Adobe Reader, etc., pero la vista previa de PDF de WhatsApp usa un
+   motor muy limitado que no los soporta bien y termina mostrando el
+   texto corrido/superpuesto. Embebiendo una fuente real (Inter, la
+   misma que usa el resto de QUBIRA) el PDF se ve igual en cualquier
+   visor, sin depender de qué fonts tenga instalados. */
+const FONT_REGULAR = path.join(__dirname, '../assets/fonts/Inter-Regular.woff');
+const FONT_BOLD = path.join(__dirname, '../assets/fonts/Inter-Bold.woff');
 
 const COLOR_LABEL = '#7C3AED';
 const COLOR_BOX_BG = '#F4F6FE';
@@ -56,9 +67,9 @@ function dataRow(doc, x, y, w, label, value) {
   doc.save();
   doc.roundedRect(x, y, w, 40, 4).fill(COLOR_BOX_BG);
   doc.restore();
-  doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(8)
+  doc.fillColor(COLOR_LABEL).font('Inter-Bold').fontSize(8)
     .text(label.toUpperCase(), x + padX, y + padY, { width: w - padX * 2 });
-  doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(11)
+  doc.fillColor(COLOR_TEXT).font('Inter').fontSize(11)
     .text(value || '—', x + padX, y + padY + 13, { width: w - padX * 2 });
   doc.restore();
 }
@@ -85,6 +96,8 @@ function decorativeDots(doc, x, y) {
    ambos opcionales y resueltos por el caller antes de llamar acá. */
 async function buildConstanciaPdf(constancia, verifyUrl) {
   const doc = new PDFDocument({ size: 'A4', margin: 50 });
+  doc.registerFont('Inter', FONT_REGULAR);
+  doc.registerFont('Inter-Bold', FONT_BOLD);
   const chunks = [];
   doc.on('data', c => chunks.push(c));
   const done = new Promise(resolve => doc.on('end', () => resolve(Buffer.concat(chunks))));
@@ -110,13 +123,13 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
     } catch (_) { /* logo corrupto, seguimos sin él */ }
   }
   y += logo ? 42 : 0;
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(17)
+  doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(17)
     .text('QUBIRA', left, y, { width: pageW, align: 'center', characterSpacing: 1.5, link: COMPANY_SITE_URL });
   y += 20;
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(8.5)
+  doc.fillColor(COLOR_MUTED).font('Inter').fontSize(8.5)
     .text('Desarrollo de Software · Soluciones Tecnológicas', left, y, { width: pageW, align: 'center' });
   y += 13;
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5)
+  doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(7.5)
     .text(`RUC ${RUC_EMPRESA}`, left, y, { width: pageW, align: 'center' });
   y += 20;
 
@@ -124,15 +137,15 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   y += 22;
 
   // ── Título, centrado ──
-  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(18).text('Constancia de Trabajo', left, y, { width: pageW, align: 'center' });
+  doc.fillColor(COLOR_TEXT).font('Inter-Bold').fontSize(18).text('Constancia de Trabajo', left, y, { width: pageW, align: 'center' });
   y += 26;
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(10).text(`N.° ${constancia.numero}`, left, y, { width: pageW, align: 'center' });
+  doc.fillColor(COLOR_MUTED).font('Inter').fontSize(10).text(`N.° ${constancia.numero}`, left, y, { width: pageW, align: 'center' });
   y += 16;
   doc.moveTo(center - 20, y).lineTo(center + 20, y).strokeColor(COLOR_RULE).lineWidth(1).stroke();
   y += 20;
 
   // ── Párrafo de apertura ──
-  doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(10.5).text(
+  doc.fillColor(COLOR_TEXT).font('Inter').fontSize(10.5).text(
     `QUBIRA, con RUC N.° ${RUC_EMPRESA}, hace constar que ${constancia.tratamiento || ''} ${constancia.nombreCompleto} ` +
     `ha formado parte de nuestro equipo de trabajo, desempeñándose conforme al siguiente detalle:`,
     left, y, { width: pageW, align: 'justify', lineGap: 2 }
@@ -154,7 +167,7 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   y += 56;
 
   // ── Párrafo de cierre ──
-  doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(10.5).text(
+  doc.fillColor(COLOR_TEXT).font('Inter').fontSize(10.5).text(
     'Durante su permanencia demostró responsabilidad, puntualidad y compromiso con las funciones encomendadas. ' +
     'Se expide la presente a solicitud del interesado(a), para los fines que estime convenientes.',
     left, y, { width: pageW, align: 'justify', lineGap: 2 }
@@ -176,11 +189,11 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
     doc.link(left, footY, 56, 56, verifyUrl);
   } catch (_) { /* no debería fallar */ }
   const codeY = footY + 64;
-  doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('CÓDIGO DE VERIFICACIÓN', left, codeY, { width: colW });
-  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(9.5)
+  doc.fillColor(COLOR_LABEL).font('Inter-Bold').fontSize(7.5).text('CÓDIGO DE VERIFICACIÓN', left, codeY, { width: colW });
+  doc.fillColor(COLOR_TEXT).font('Inter-Bold').fontSize(9.5)
     .text(constancia.codigoVerificacion || '', left, codeY + 11, { width: colW, link: verifyUrl });
-  doc.fillColor(COLOR_LABEL).font('Helvetica-Bold').fontSize(7.5).text('LUGAR Y FECHA DE EMISIÓN', left, codeY + 30, { width: colW });
-  doc.fillColor(COLOR_TEXT).font('Helvetica').fontSize(9.5).text(`${constancia.lugar || ''}, ${formatDateEsLong(constancia.fechaEmision)}`, left, codeY + 41, { width: colW });
+  doc.fillColor(COLOR_LABEL).font('Inter-Bold').fontSize(7.5).text('LUGAR Y FECHA DE EMISIÓN', left, codeY + 30, { width: colW });
+  doc.fillColor(COLOR_TEXT).font('Inter').fontSize(9.5).text(`${constancia.lugar || ''}, ${formatDateEsLong(constancia.fechaEmision)}`, left, codeY + 41, { width: colW });
 
   // Derecha: sello y firma uno al lado del otro (NO superpuestos), y
   // debajo el timbre con nombre/cargo del firmante.
@@ -202,17 +215,17 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   doc.roundedRect(stampX, stampY, stampW, 34, 3).lineWidth(1).strokeColor(COLOR_SIGNER).stroke();
   doc.roundedRect(stampX + 2, stampY + 2, stampW - 4, 30, 2).lineWidth(0.5).strokeColor(COLOR_SIGNER).stroke();
   doc.restore();
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(9.5)
+  doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(9.5)
     .text((constancia.firmanteNombre || '').toUpperCase(), stampX, stampY + 5, { width: stampW, align: 'center' });
-  doc.fillColor(COLOR_TEXT).font('Helvetica-Bold').fontSize(7)
+  doc.fillColor(COLOR_TEXT).font('Inter-Bold').fontSize(7)
     .text((constancia.firmanteCargo || '').toUpperCase(), stampX, stampY + 17, { width: stampW, align: 'center' });
-  doc.fillColor(COLOR_MUTED).font('Helvetica').fontSize(6.5)
+  doc.fillColor(COLOR_MUTED).font('Inter').fontSize(6.5)
     .text('QUBIRA S.A.C.', stampX, stampY + 26, { width: stampW, align: 'center' });
 
   // ── Pie de página, centrado al fondo (dentro del área imprimible,
   //    nunca más abajo del margen inferior — si no, pdfkit crea una
   //    segunda página vacía solo para esta línea). ──
-  doc.fillColor(COLOR_SIGNER).font('Helvetica-Bold').fontSize(7.5)
+  doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(7.5)
     .text(`QUBIRA S.A.C.   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center', link: COMPANY_SITE_URL });
 
   doc.end();
