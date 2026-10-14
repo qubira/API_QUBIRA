@@ -1287,7 +1287,13 @@ router.put('/constancias/:id', async (req, res) => {
     const { rows: oldRows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
 
+    if (req.body.numero !== undefined && req.body.numero !== oldRows[0].numero) {
+      const { rows: dupe } = await pool.query('SELECT 1 FROM rrhh.constancias WHERE numero=$1 AND id<>$2', [req.body.numero, req.params.id]);
+      if (dupe.length) return res.status(400).json({ ok: false, error: 'Ya existe otra constancia con ese número' });
+    }
+
     const editable = {
+      numero: 'numero',
       tratamiento: 'tratamiento', nombreCompleto: 'nombre_completo',
       tipoDocumento: 'tipo_documento', numeroDocumento: 'numero_documento',
       area: 'area', cargo: 'cargo',
