@@ -45,6 +45,7 @@ function ensureSchema() {
         created_by INTEGER NOT NULL,
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS location TEXT;
       CREATE INDEX IF NOT EXISTS calendar_meetings_area_date_idx ON calendar.meetings(area, meeting_date);
       CREATE INDEX IF NOT EXISTS calendar_meetings_project_idx ON calendar.meetings(project_id);
 
@@ -117,7 +118,7 @@ function formatConflicts(rows, ctx) {
 function applyVisibility(m, canSeeDetail) {
   if (canSeeDetail) return { ...m, visibility: 'full' };
   return {
-    id: m.id, title: 'Ocupado', description: null, motivo: null, meeting_type: null,
+    id: m.id, title: 'Ocupado', description: null, motivo: null, meeting_type: null, location: null,
     meeting_date: m.meeting_date, start_time: m.start_time, end_time: m.end_time,
     area: m.area, status: m.status, project_id: null,
     created_by: null, created_by_name: null, participants: [],
@@ -193,7 +194,7 @@ router.get('/meetings', async (req, res) => {
     if (status)    { params.push(status);    where += ` AND m.status=$${params.length}`; }
 
     const { rows: meetings } = await pool.query(`
-      SELECT m.id, m.title, m.description, m.motivo, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
+      SELECT m.id, m.title, m.description, m.motivo, m.location, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m
@@ -242,7 +243,7 @@ router.get('/meetings', async (req, res) => {
 router.get('/meetings/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT m.id, m.title, m.description, m.motivo, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
+      SELECT m.id, m.title, m.description, m.motivo, m.location, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m LEFT JOIN public.usuarios u ON u.id = m.created_by
@@ -286,7 +287,7 @@ router.post('/check-availability', async (req, res) => {
 });
 
 async function validateAndBuildMeeting(req, { requireProjectAccess }) {
-  const { title, date, start_time, end_time, motivo, description, meeting_type,
+  const { title, date, start_time, end_time, motivo, description, meeting_type, location,
           participants, external_participants, project_id, area: bodyArea } = req.body;
 
   if (!title || !date || !start_time || !end_time) {
@@ -330,7 +331,7 @@ async function validateAndBuildMeeting(req, { requireProjectAccess }) {
 
   return {
     fields: { title, date, start_time, end_time, motivo: motivo || null, description: description || null,
-              meeting_type: meeting_type || null, project_id: project_id || null, area },
+              meeting_type: meeting_type || null, location: location || null, project_id: project_id || null, area },
     internalList, externalList, myArea, privileged,
   };
 }
@@ -353,9 +354,9 @@ router.post('/meetings', async (req, res) => {
       await client.query('BEGIN');
       const id = uid();
       await client.query(`
-        INSERT INTO calendar.meetings (id,title,description,motivo,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [id, fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time,
+        INSERT INTO calendar.meetings (id,title,description,motivo,location,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [id, fields.title, fields.description, fields.motivo, fields.location, fields.date, fields.start_time, fields.end_time,
          fields.area, fields.meeting_type, fields.project_id, req.user.id]
       );
       for (const p of internalList) {
@@ -416,8 +417,8 @@ router.put('/meetings/:id', async (req, res) => {
       await client.query('BEGIN');
       await client.query(`
         UPDATE calendar.meetings SET title=$1, description=$2, motivo=$3, meeting_date=$4, start_time=$5, end_time=$6,
-          meeting_type=$7, updated_at=NOW() WHERE id=$8`,
-        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, req.params.id]
+          meeting_type=$7, location=$8, updated_at=NOW() WHERE id=$9`,
+        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, req.params.id]
       );
       await client.query('DELETE FROM calendar.meeting_participants WHERE meeting_id=$1', [req.params.id]);
       for (const p of internalList) {
