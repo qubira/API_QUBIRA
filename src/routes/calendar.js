@@ -15,13 +15,48 @@
 
 const express          = require('express');
 const crypto           = require('crypto');
+const multer           = require('multer');
 const { pool }         = require('../db');
+const cloudinary       = require('../config/cloudinary');
 const { requireAuth }  = require('../middleware/auth');
 const { getEmployeeArea } = require('../lib/employeeArea');
 const ti                = require('./ti'); // reutiliza canAccessProject (misma regla de acceso a proyectos TI/ADG)
 
 const router = express.Router();
 router.use(requireAuth);
+
+const uploadMeetingImage = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (!file.mimetype.startsWith('image/')) return cb(new Error('El archivo debe ser una imagen'));
+    cb(null, true);
+  },
+});
+
+/* Sube la imagen antes de crear/editar la reunión — el formulario
+   manda el archivo acá primero, guarda la URL que devuelve, y la
+   incluye en el POST/PUT normal de /meetings (mismo patrón que la
+   foto de perfil en RRHH). */
+router.post('/meetings/image', (req, res) => {
+  uploadMeetingImage.single('image')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message || 'Error al procesar la imagen' });
+    try {
+      if (!req.file) return res.status(400).json({ error: 'Debes adjuntar una imagen' });
+      const result = await new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+          { resource_type: 'image', folder: 'qubira/calendar/meetings' },
+          (e, r) => (e ? reject(e) : resolve(r))
+        );
+        stream.end(req.file.buffer);
+      });
+      res.json({ url: result.secure_url });
+    } catch (cloudErr) {
+      console.error('[CALENDAR] Error subiendo imagen a Cloudinary:', cloudErr.message);
+      res.status(502).json({ error: 'No se pudo subir la imagen' });
+    }
+  });
+});
 
 function uid() { return crypto.randomUUID(); }
 function isPrivileged(req) { return req.user.nivel_acceso >= 100; }
@@ -46,6 +81,7 @@ function ensureSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
       ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS location TEXT;
+      ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS image_url TEXT;
       CREATE INDEX IF NOT EXISTS calendar_meetings_area_date_idx ON calendar.meetings(area, meeting_date);
       CREATE INDEX IF NOT EXISTS calendar_meetings_project_idx ON calendar.meetings(project_id);
 
@@ -118,7 +154,7 @@ function formatConflicts(rows, ctx) {
 function applyVisibility(m, canSeeDetail) {
   if (canSeeDetail) return { ...m, visibility: 'full' };
   return {
-    id: m.id, title: 'Ocupado', description: null, motivo: null, meeting_type: null, location: null,
+    id: m.id, title: 'Ocupado', description: null, motivo: null, meeting_type: null, location: null, image_url: null,
     meeting_date: m.meeting_date, start_time: m.start_time, end_time: m.end_time,
     area: m.area, status: m.status, project_id: null,
     created_by: null, created_by_name: null, participants: [],
@@ -194,7 +230,7 @@ router.get('/meetings', async (req, res) => {
     if (status)    { params.push(status);    where += ` AND m.status=$${params.length}`; }
 
     const { rows: meetings } = await pool.query(`
-      SELECT m.id, m.title, m.description, m.motivo, m.location, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
+      SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m
@@ -243,7 +279,7 @@ router.get('/meetings', async (req, res) => {
 router.get('/meetings/:id', async (req, res) => {
   try {
     const { rows } = await pool.query(`
-      SELECT m.id, m.title, m.description, m.motivo, m.location, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
+      SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m LEFT JOIN public.usuarios u ON u.id = m.created_by
@@ -287,7 +323,7 @@ router.post('/check-availability', async (req, res) => {
 });
 
 async function validateAndBuildMeeting(req, { requireProjectAccess }) {
-  const { title, date, start_time, end_time, motivo, description, meeting_type, location,
+  const { title, date, start_time, end_time, motivo, description, meeting_type, location, image_url,
           participants, external_participants, project_id, area: bodyArea } = req.body;
 
   if (!title || !date || !start_time || !end_time) {
@@ -331,7 +367,8 @@ async function validateAndBuildMeeting(req, { requireProjectAccess }) {
 
   return {
     fields: { title, date, start_time, end_time, motivo: motivo || null, description: description || null,
-              meeting_type: meeting_type || null, location: location || null, project_id: project_id || null, area },
+              meeting_type: meeting_type || null, location: location || null, image_url: image_url || null,
+              project_id: project_id || null, area },
     internalList, externalList, myArea, privileged,
   };
 }
@@ -354,9 +391,9 @@ router.post('/meetings', async (req, res) => {
       await client.query('BEGIN');
       const id = uid();
       await client.query(`
-        INSERT INTO calendar.meetings (id,title,description,motivo,location,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [id, fields.title, fields.description, fields.motivo, fields.location, fields.date, fields.start_time, fields.end_time,
+        INSERT INTO calendar.meetings (id,title,description,motivo,location,image_url,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [id, fields.title, fields.description, fields.motivo, fields.location, fields.image_url, fields.date, fields.start_time, fields.end_time,
          fields.area, fields.meeting_type, fields.project_id, req.user.id]
       );
       for (const p of internalList) {
@@ -417,8 +454,8 @@ router.put('/meetings/:id', async (req, res) => {
       await client.query('BEGIN');
       await client.query(`
         UPDATE calendar.meetings SET title=$1, description=$2, motivo=$3, meeting_date=$4, start_time=$5, end_time=$6,
-          meeting_type=$7, location=$8, updated_at=NOW() WHERE id=$9`,
-        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, req.params.id]
+          meeting_type=$7, location=$8, image_url=$9, updated_at=NOW() WHERE id=$10`,
+        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, fields.image_url, req.params.id]
       );
       await client.query('DELETE FROM calendar.meeting_participants WHERE meeting_id=$1', [req.params.id]);
       for (const p of internalList) {
