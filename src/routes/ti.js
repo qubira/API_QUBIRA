@@ -426,8 +426,12 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     if (!(await requireArea(req, res, 'ADG'))) return;
     const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
-            project_type, github_url, website_url, family } = req.body;
+            project_type, github_url, website_url, family,
+            show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
+
+    const show_to_comercial_val = show_to_comercial === true || show_to_comercial === 'true';
+    const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
 
     const id = uid();
     const year = new Date().getFullYear();
@@ -443,13 +447,15 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     }
 
     await pool.query(`
-      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+      INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family,
+        show_to_comercial,commercial_offer_type,commercial_price,commercial_price_currency,commercial_notes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
       [id, code, name, client, description || null, status || 'pending', 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
        company_name || null, company_logo, id_document_type || null, id_document_number || null,
-       project_type || null, github_url || null, website_url || null, family || null]
+       project_type || null, github_url || null, website_url || null, family || null,
+       show_to_comercial_val, commercial_offer_type || null, commercial_price_val, commercial_price_currency || null, commercial_notes || null]
     );
     await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
     res.status(201).json({ id, code, name });
