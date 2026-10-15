@@ -43,10 +43,13 @@ router.use((req, res, next) => { ensureOppSchema().then(() => next()).catch(next
 router.get('/projects', async (req, res) => {
   try {
     const { status, filter, q } = req.query;
-    const conditions = [];
+    /* OPP solo trabaja sobre proyectos que ADG ya habilitó explícitamente
+       para Comercial (show_to_comercial) — esa es la puerta de entrada:
+       ADG decide QUÉ se puede comercializar, OPP solo decide A CUÁNTO.
+       Un proyecto que ADG no habilitó no es asunto de OPP todavía. */
+    const conditions = ['p.show_to_comercial = true'];
     const params = [];
 
-    // Por defecto OPP revisa proyectos aprobados / activos / completados por ADG
     if (status && status !== 'all') {
       params.push(status);
       conditions.push(`p.status = $${params.length}`);
@@ -56,10 +59,6 @@ router.get('/projects', async (req, res) => {
       conditions.push(`(p.commercial_price IS NULL AND p.rental_price IS NULL)`);
     } else if (filter === 'priced') {
       conditions.push(`(p.commercial_price IS NOT NULL OR p.rental_price IS NOT NULL)`);
-    } else if (filter === 'commercial') {
-      conditions.push(`p.show_to_comercial = true`);
-    } else if (filter === 'commercial_pending') {
-      conditions.push(`(p.commercial_price IS NOT NULL OR p.rental_price IS NOT NULL) AND (p.show_to_comercial = false OR p.show_to_comercial IS NULL)`);
     }
 
     if (q && q.trim()) {
@@ -98,13 +97,19 @@ router.get('/projects', async (req, res) => {
    ============================================================ */
 router.get('/stats', async (req, res) => {
   try {
+    /* Mismo criterio que GET /projects: solo proyectos que ADG habilitó
+       para Comercial entran en las cuentas de OPP. "Publicados en
+       Comercial" ya no distingue nada dentro de este conjunto (todos
+       están habilitados por definición), así que ahora refleja los que
+       ya tienen precio fijado — el estado final que realmente le
+       importa a Comercial. */
     const { rows } = await pool.query(`
       SELECT
         COUNT(*)::int AS total_projects,
         COUNT(*) FILTER (WHERE status IN ('approved','completed','active','finished_by_ti'))::int AS total_approved,
         COUNT(*) FILTER (WHERE commercial_price IS NULL AND rental_price IS NULL)::int AS pending_pricing,
         COUNT(*) FILTER (WHERE commercial_price IS NOT NULL OR rental_price IS NOT NULL)::int AS priced_count,
-        COUNT(*) FILTER (WHERE show_to_comercial = true)::int AS published_commercial,
+        COUNT(*) FILTER (WHERE commercial_price IS NOT NULL OR rental_price IS NOT NULL)::int AS published_commercial,
         COUNT(*) FILTER (WHERE commercial_offer_type = 'venta')::int AS for_sale,
         COUNT(*) FILTER (WHERE commercial_offer_type = 'alquiler')::int AS for_rent,
         COUNT(*) FILTER (WHERE commercial_offer_type = 'venta_alquiler')::int AS for_sale_and_rent,
@@ -114,6 +119,7 @@ router.get('/stats', async (req, res) => {
         COALESCE(SUM(rental_price) FILTER (WHERE commercial_price_currency = 'PEN'), 0)::numeric AS total_rent_monthly_pen,
         COALESCE(SUM(rental_price) FILTER (WHERE commercial_price_currency = 'USD'), 0)::numeric AS total_rent_monthly_usd
       FROM ti.projects
+      WHERE show_to_comercial = true
     `);
     res.json(rows[0] || {});
   } catch (err) {
@@ -174,10 +180,8 @@ router.put('/projects/:id/pricing', async (req, res) => {
       opp_margin_pct,
       opp_roi_months,
       commercial_notes,
-      show_to_comercial
     } = req.body;
 
-    const show_to_comercial_val = (show_to_comercial === true || show_to_comercial === 'true');
     const price_val = (commercial_price === undefined || commercial_price === '' || commercial_price === null)
       ? null : Number(commercial_price);
     const rent_val = (rental_price === undefined || rental_price === '' || rental_price === null)
@@ -196,8 +200,16 @@ router.put('/projects/:id/pricing', async (req, res) => {
     const currency_val = commercial_price_currency === 'USD' ? 'USD' : 'PEN';
     const offer_type_val = commercial_offer_type || 'venta';
 
-    const { rows: existing } = await pool.query('SELECT name, code FROM ti.projects WHERE id = $1', [req.params.id]);
+    const { rows: existing } = await pool.query('SELECT name, code, show_to_comercial FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!existing.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    /* La visibilidad en Comercial la decide únicamente ADG
+       (ti.projects.show_to_comercial, vía su propio formulario de
+       edición de proyecto) — OPP solo puede valorizar proyectos que
+       ADG ya habilitó. Si todavía no lo habilitó, no hay nada que
+       fijar: se corta acá antes de tocar precios. */
+    if (!existing[0].show_to_comercial) {
+      return res.status(409).json({ error: 'ADG aún no habilitó este proyecto para Comercial' });
+    }
 
     await pool.query(`
       UPDATE ti.projects SET
@@ -211,12 +223,11 @@ router.put('/projects/:id/pricing', async (req, res) => {
         opp_margin_pct = $8,
         opp_roi_months = $9,
         commercial_notes = $10,
-        show_to_comercial = $11,
         opp_pricing_status = 'priced',
         opp_updated_at = NOW(),
-        opp_updated_by = $12,
+        opp_updated_by = $11,
         updated_at = NOW()
-      WHERE id = $13
+      WHERE id = $12
     `, [
       offer_type_val,
       price_val,
@@ -228,7 +239,6 @@ router.put('/projects/:id/pricing', async (req, res) => {
       margin_val,
       roi_val,
       commercial_notes || null,
-      show_to_comercial_val,
       req.user.id,
       req.params.id
     ]);
@@ -242,8 +252,7 @@ router.put('/projects/:id/pricing', async (req, res) => {
           req.params.id,
           req.user.id,
           `OPP valorizó el proyecto: Oferta ${offer_type_val.toUpperCase()} (${currency_val}), ` +
-          `Venta: ${price_val != null ? price_val : '—'}, Alquiler: ${rent_val != null ? rent_val : '—'}, ` +
-          `Publicado en Comercial: ${show_to_comercial_val ? 'Sí' : 'No'}`
+          `Venta: ${price_val != null ? price_val : '—'}, Alquiler: ${rent_val != null ? rent_val : '—'}`
         ]
       );
     } catch (_) {}
@@ -251,7 +260,6 @@ router.put('/projects/:id/pricing', async (req, res) => {
     res.json({
       ok: true,
       message: 'Estructura financiera y precios guardados con éxito',
-      show_to_comercial: show_to_comercial_val
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
