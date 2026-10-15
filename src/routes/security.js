@@ -238,6 +238,7 @@ router.get('/sessions', requirePrivileged, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT s.id, s.usuario_id, u.nombre, u.apellidos, u.username, c.nombre AS area,
              s.ip_address, s.user_agent, s.created_at, s.expires_at,
+             s.latitude, s.longitude, s.accuracy, s.location_address, s.location_registered_at,
              (SELECT max(l.created_at) FROM audit.logs l WHERE l.user_id = s.usuario_id) AS ultima_actividad,
              (SELECT l.path FROM audit.logs l WHERE l.user_id = s.usuario_id ORDER BY l.created_at DESC LIMIT 1) AS ultima_pagina
       FROM sesiones s
@@ -262,10 +263,7 @@ router.delete('/sessions/:id', requirePrivileged, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-/* Cierra TODAS las sesiones activas de un usuario de una sola vez —
-   distinto de borrar una fila puntual: esto es "cerrar sesión en
-   todas las áreas" para esa persona, porque cada panel genera su
-   propia fila en `sesiones` y no se comparten entre sí. */
+/* Cierra TODAS las sesiones activas de un usuario de una sola vez */
 router.delete('/sessions/by-user/:userId', requirePrivileged, async (req, res) => {
   try {
     const { rows } = await pool.query('DELETE FROM sesiones WHERE usuario_id=$1 RETURNING id', [req.params.userId]);
@@ -275,6 +273,75 @@ router.delete('/sessions/by-user/:userId', requirePrivileged, async (req, res) =
     });
     res.json({ message: 'Sesiones cerradas', count: rows.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Geolocalización — Inicios de sesión con GPS en el mapa de Perú
+   ============================================================ */
+router.get('/locations', requirePrivileged, async (req, res) => {
+  try {
+    // 1. Historial de ubicaciones registradas
+    const { rows: history } = await pool.query(`
+      SELECT l.id, l.usuario_id, l.session_id, l.latitude, l.longitude, l.accuracy,
+             l.ip_address, l.user_agent, l.address, l.created_at,
+             u.nombre, u.apellidos, u.username, u.estado AS usuario_estado, u.avatar_color,
+             r.nombre AS rol, c.nombre AS area
+      FROM security.login_locations l
+      JOIN usuarios u ON u.id = l.usuario_id
+      LEFT JOIN roles r ON r.id = u.rol_id
+      LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+      LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      WHERE l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+      ORDER BY l.created_at DESC
+      LIMIT 500
+    `);
+
+    // 2. Sesiones activas con ubicación
+    const { rows: activeSessions } = await pool.query(`
+      SELECT s.id, s.usuario_id, s.latitude, s.longitude, s.accuracy,
+             s.location_address, s.location_registered_at, s.ip_address, s.user_agent,
+             s.created_at, s.expires_at,
+             u.nombre, u.apellidos, u.username, u.estado AS usuario_estado, u.avatar_color,
+             r.nombre AS rol, c.nombre AS area
+      FROM sesiones s
+      JOIN usuarios u ON u.id = s.usuario_id
+      LEFT JOIN roles r ON r.id = u.rol_id
+      LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+      LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      WHERE s.expires_at > NOW() AND s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+      ORDER BY s.created_at DESC
+    `);
+
+    res.json({
+      ok: true,
+      locations: history,
+      active: activeSessions,
+      stats: {
+        total_registered: history.length,
+        active_with_gps: activeSessions.length,
+        unique_users: new Set(history.map(h => h.usuario_id)).size,
+      }
+    });
+  } catch (e) {
+    console.error('[SECURITY] Error en /locations:', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/* Historial de ubicaciones de un usuario puntual para trazado de ruta */
+router.get('/locations/history/:userId', requirePrivileged, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT l.id, l.latitude, l.longitude, l.accuracy, l.ip_address, l.address, l.created_at
+      FROM security.login_locations l
+      WHERE l.usuario_id = $1 AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+      ORDER BY l.created_at ASC
+      LIMIT 100
+    `, [req.params.userId]);
+    res.json({ ok: true, rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
 });
 
 /* ============================================================
