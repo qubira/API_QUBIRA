@@ -75,6 +75,16 @@ function ensureSecuritySchema() {
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_por INTEGER;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS suspendida_en TIMESTAMPTZ;
 
+      /* Verificación en dos pasos (TOTP, RFC 6238) — compatible con
+         Google Authenticator, Authy, etc. totp_secret va cifrado
+         (AES-256-GCM, ver lib/crypto) igual que los campos sensibles de
+         RRHH. totp_enabled queda en false mientras se está generando/
+         escaneando el QR todavía sin confirmar con un primer código
+         válido (ver POST /auth/totp/setup y /auth/totp/confirm). */
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_enabled_at TIMESTAMPTZ;
+
       /* Una sola sesión activa por cuenta: al iniciar sesión de nuevo se
          revocan las anteriores en vez de dejarlas convivir (ver
          issueSession en routes/auth.js). revoked_reason distingue "te
@@ -82,6 +92,25 @@ function ensureSecuritySchema() {
          avisarle a la sesión vieja con el IP que la reemplazó. */
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS revoked_reason TEXT;
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS revoked_by_ip TEXT;
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS accuracy DOUBLE PRECISION;
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS location_address TEXT;
+
+      CREATE TABLE IF NOT EXISTS security.login_locations (
+        id BIGSERIAL PRIMARY KEY,
+        usuario_id INTEGER REFERENCES usuarios(id) ON DELETE CASCADE,
+        username TEXT,
+        token TEXT,
+        latitude DOUBLE PRECISION,
+        longitude DOUBLE PRECISION,
+        accuracy DOUBLE PRECISION,
+        address TEXT,
+        ip_address TEXT,
+        user_agent TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS login_locations_user_idx ON security.login_locations(usuario_id, created_at DESC);
 
       /* Reconocimiento facial — RRHH captura el rostro del colaborador al
          darlo de alta (o después, editándolo); el servidor solo guarda el
