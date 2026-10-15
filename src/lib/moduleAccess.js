@@ -20,7 +20,7 @@ const { getGrantedModules } = require('./security');
    panel propio: quedan registrados como módulos válidos (y aparecen en
    modulo.html) pero sin panel desplegado todavía, así que se muestran
    como "Próximamente" hasta que exista su repo/deploy. */
-const MODULES = ['TI', 'ADG', 'RRHH', 'SOPORTE', 'COMERCIAL', 'DST', 'ACM', 'DJ', 'OPP', 'CG'];
+const MODULES = ['TI', 'ADG', 'RRHH', 'SOPORTE', 'COMERCIAL', 'ODN', 'DST', 'ACM', 'DJ', 'OPP', 'CG'];
 
 /* Módulos que un usuario tiene autorizados:
    - nivel_acceso>=100 (CEO/superadmin): todos, incluido DST.
@@ -37,6 +37,8 @@ async function getAuthorizedModules(username, nivelAcceso, userId) {
   if (area && MODULES.includes(area)) set.add(area);
   if (set.has('CG')) set.add('OPP');
   if (set.has('OPP')) set.add('CG');
+  if (set.has('COMERCIAL')) set.add('ODN');
+  if (set.has('ODN')) set.add('COMERCIAL');
   return [...set];
 }
 

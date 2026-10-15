@@ -8,7 +8,7 @@ const { requireModuleAccess } = require('../lib/moduleAccess');
 const router = express.Router();
 
 router.use(requireAuth);
-router.use(requireModuleAccess('COMERCIAL'));
+router.use(requireModuleAccess('COMERCIAL', 'ODN'));
 
 /* Solo lectura. Columnas whitelisteadas a propósito: nunca se expone
    cliente, presupuesto, responsable interno ni nº de documento — esos
