@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { authenticator } = require('otplib');
 const { pool } = require('../db');
 const { encrypt: encryptField, decrypt: decryptField } = require('./crypto');
 
@@ -250,6 +251,39 @@ async function bumpFailedAttempts(userId) {
 
 async function resetFailedAttempts(userId) {
   await pool.query('UPDATE usuarios SET intentos_fallidos = 0, bloqueada_hasta = NULL WHERE id=$1', [userId]);
+}
+
+/* ============================================================
+   Verificación TOTP reutilizable — centraliza el mismo criterio que
+   antes se repetía en /auth/login/totp y en cada gate que pide
+   re-confirmar con el código (DST, Soporte > Trabajadores, etc.):
+   exige que la cuenta tenga 2FA activo, respeta el bloqueo temporal
+   por intentos fallidos, y reusa el mismo contador de intentos que
+   ya tenía la contraseña (una cuenta no puede fuerza-bruta el código
+   solo porque esta vez el 401 vino de un endpoint distinto).
+   ============================================================ */
+async function verifyAccountTotp({ userId, username, code, ip, userAgent }) {
+  const { rows } = await pool.query('SELECT totp_secret, totp_enabled, bloqueada_hasta FROM usuarios WHERE id=$1', [userId]);
+  if (!rows.length || !rows[0].totp_enabled) {
+    return { valid: false, error: 'Tu cuenta no tiene activada la verificación en dos pasos. Actívala desde "Seguridad" en la pantalla de selección de módulo.' };
+  }
+  if (rows[0].bloqueada_hasta && new Date(rows[0].bloqueada_hasta) > new Date()) {
+    return { valid: false, error: 'Cuenta temporalmente bloqueada por seguridad. Intenta más tarde.' };
+  }
+
+  const secret = rows[0].totp_secret ? decryptField(rows[0].totp_secret) : null;
+  const valid = !!secret && authenticator.verify({ token: String(code || '').trim(), secret });
+
+  await recordLoginAttempt({ username, ip, success: valid, userAgent });
+  if (!valid) {
+    await bumpFailedAttempts(userId);
+    const failures = await countRecentFailures(username, LOCKOUT_MINUTES);
+    if (failures >= MAX_LOGIN_ATTEMPTS) await lockAccount(userId, LOCKOUT_MINUTES);
+    return { valid: false, error: 'Código inválido' };
+  }
+
+  await resetFailedAttempts(userId);
+  return { valid: true };
 }
 
 /* ============================================================
@@ -608,7 +642,7 @@ module.exports = {
   saveFaceDescriptors, deleteFaceDescriptors, getFaceEnrollmentCount, findFaceMatch, verifyOwnFace,
   closestFaceCandidate, logFaceDebug,
   wasSessionReplacedByIp,
-  lockAccount, bumpFailedAttempts, resetFailedAttempts,
+  lockAccount, bumpFailedAttempts, resetFailedAttempts, verifyAccountTotp,
   createHandoffCode, consumeHandoffCode,
   getGrantedModules, setGrantedModules, suspendUser, unsuspendUser,
   getDbHealth, getLoginSeries, getAccessDeniedSeries, getSessionsByArea,

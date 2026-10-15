@@ -261,37 +261,19 @@ router.post('/login/totp', async (req, res) => {
 
     const { rows } = await pool.query(
       `SELECT u.id, u.nombre, u.apellidos, u.correo, u.username, u.estado, u.avatar_color,
-              u.totp_secret, u.totp_enabled, u.bloqueada_hasta,
               r.nombre AS rol, r.nivel_acceso
        FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = $1`,
       [payload.sub]
     );
-    if (!rows.length || rows[0].estado !== 'activo' || !rows[0].totp_enabled) {
+    if (!rows.length || rows[0].estado !== 'activo') {
       return res.status(403).json({ ok: false, error: 'Cuenta no disponible' });
     }
     const user = rows[0];
 
-    const stillLocked = user.bloqueada_hasta && new Date(user.bloqueada_hasta) > new Date();
-    if (stillLocked) {
-      return res.status(403).json({ ok: false, error: 'Cuenta temporalmente bloqueada por seguridad. Intenta más tarde.' });
-    }
-
-    const secret = user.totp_secret ? decryptField(user.totp_secret) : null;
-    const valid = secret && authenticator.verify({ token: String(code).trim(), secret });
-
-    if (!valid) {
-      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: req.headers['user-agent'] });
-      await sec.bumpFailedAttempts(user.id);
-      const failures = await sec.countRecentFailures(user.username, sec.LOCKOUT_MINUTES);
-      if (failures >= sec.MAX_LOGIN_ATTEMPTS) {
-        await sec.lockAccount(user.id, sec.LOCKOUT_MINUTES);
-        await logSecurityEvent({ userId: user.id, path: '/api/auth/login/totp', actionType: 'account_locked', ip, statusCode: 403 });
-      }
-      return res.status(401).json({ ok: false, error: 'Código inválido' });
-    }
-
-    await sec.resetFailedAttempts(user.id);
-    await sec.recordLoginAttempt({ username: user.username, ip, success: true, userAgent: req.headers['user-agent'] });
+    const { valid, error } = await sec.verifyAccountTotp({
+      userId: user.id, username: user.username, code, ip, userAgent: req.headers['user-agent'],
+    });
+    if (!valid) return res.status(401).json({ ok: false, error });
 
     await revokeOtherSessions(user.id, ip);
     const { token, user: userOut } = await issueSession(user, req);
@@ -320,6 +302,25 @@ router.get('/totp/status', requireAuth, async (req, res) => {
     res.json({ ok: true, enabled: rows[0]?.totp_enabled || false, enabled_at: rows[0]?.totp_enabled_at || null });
   } catch (err) {
     res.status(500).json({ ok: false, error: 'No se pudo consultar el estado' });
+  }
+});
+
+/* Re-confirmación genérica con el código de la propia cuenta — para
+   gates de "confirma que eres tú" en momentos sensibles (ej. entrar
+   al módulo DST desde modulo.html) que no necesitan un token de
+   elevación de varios minutos como Soporte > Trabajadores, solo un
+   sí/no puntual antes de seguir con el flujo normal (handoff). */
+router.post('/totp/verify', requireAuth, async (req, res) => {
+  try {
+    const { valid, error } = await sec.verifyAccountTotp({
+      userId: req.user.id, username: req.user.username, code: req.body?.code,
+      ip: sec.clientIp(req), userAgent: req.headers['user-agent'],
+    });
+    if (!valid) return res.status(401).json({ ok: false, error });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[AUTH] TOTP verify error:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo verificar el código' });
   }
 });
 
