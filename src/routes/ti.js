@@ -325,13 +325,14 @@ router.get('/projects', async (req, res) => {
       where += ` AND (p.name ILIKE $${n} OR p.client ILIKE $${n} OR p.code ILIKE $${n})`;
     }
     const { rows } = await pool.query(`
-      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name,
+      SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, opp_u.nombre AS opp_user_name,
         (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
         (SELECT COUNT(*) FROM ti.documents  d WHERE d.project_id = p.id)::int AS documents_count,
         (SELECT COUNT(*) FROM ti.whatsapp_messages w WHERE w.project_id = p.id)::int AS messages_count
       FROM ti.projects p
       LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
       LEFT JOIN public.usuarios cu ON cu.id = p.claimed_by
+      LEFT JOIN public.usuarios opp_u ON opp_u.id = p.opp_updated_by
       ${where} ORDER BY p.created_at DESC`, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -467,7 +468,8 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     const { name, client, description, status, budget, currency, start_date, end_date,
             responsible_id, priority, company_name, id_document_type, id_document_number,
             project_type, github_url, website_url, family,
-            show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes } = req.body;
+            show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes,
+            opp_cost_base, sale_price_min, rental_price, rental_price_min, opp_margin_pct, opp_roi_months } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
@@ -498,6 +500,19 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     const show_to_comercial_val = (show_to_comercial === undefined || show_to_comercial === '')
       ? null : (show_to_comercial === true || show_to_comercial === 'true');
     const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
+    /* Estructura de precios de OPP (costo base, piso mínimo de venta,
+       alquiler y su piso, margen, ROI) — ADG la ve y puede editarla
+       desde este mismo formulario si hace falta corregirla, aunque la
+       arma OPP normalmente desde su propio panel. Vacío/undefined no
+       borra el valor existente (mismo criterio COALESCE que el resto
+       del formulario). */
+    const num = v => (v === undefined || v === '' || v === null) ? null : Number(v);
+    const opp_cost_base_val = num(opp_cost_base);
+    const sale_price_min_val = num(sale_price_min);
+    const rental_price_val = num(rental_price);
+    const rental_price_min_val = num(rental_price_min);
+    const opp_margin_pct_val = num(opp_margin_pct);
+    const opp_roi_months_val = num(opp_roi_months);
 
     await pool.query(`
       UPDATE ti.projects SET
@@ -512,8 +527,11 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         show_to_comercial=COALESCE($19,show_to_comercial), commercial_offer_type=COALESCE($20,commercial_offer_type),
         commercial_price=COALESCE($21,commercial_price), commercial_notes=COALESCE($22,commercial_notes),
         commercial_price_currency=COALESCE($23,commercial_price_currency),
+        opp_cost_base=COALESCE($24,opp_cost_base), sale_price_min=COALESCE($25,sale_price_min),
+        rental_price=COALESCE($26,rental_price), rental_price_min=COALESCE($27,rental_price_min),
+        opp_margin_pct=COALESCE($28,opp_margin_pct), opp_roi_months=COALESCE($29,opp_roi_months),
         updated_at=NOW()
-      WHERE id=$24`,
+      WHERE id=$30`,
       [name||null, client||null, description||null, status||null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
@@ -521,6 +539,7 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
        project_type||null, github_url||null, website_url||null, family||null,
        show_to_comercial_val, commercial_offer_type||null, commercial_price_val, commercial_notes||null,
        commercial_price_currency||null,
+       opp_cost_base_val, sale_price_min_val, rental_price_val, rental_price_min_val, opp_margin_pct_val, opp_roi_months_val,
        req.params.id]
     );
 
