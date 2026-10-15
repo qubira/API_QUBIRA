@@ -300,7 +300,7 @@ router.get('/sessions', requirePrivileged, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT s.id, s.usuario_id, u.nombre, u.apellidos, u.username, c.nombre AS area,
              s.ip_address, s.user_agent, s.created_at, s.expires_at,
-             s.latitude, s.longitude, s.accuracy, s.location_address, s.location_registered_at,
+             s.latitude, s.longitude, s.accuracy, s.location_address, s.created_at AS location_registered_at,
              (SELECT max(l.created_at) FROM audit.logs l WHERE l.user_id = s.usuario_id) AS ultima_actividad,
              (SELECT l.path FROM audit.logs l WHERE l.user_id = s.usuario_id ORDER BY l.created_at DESC LIMIT 1) AS ultima_pagina
       FROM sesiones s
