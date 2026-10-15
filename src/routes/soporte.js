@@ -13,7 +13,7 @@ const router = express.Router();
    con sesión activa puede usarlos (estilo mesa de ayuda); el filtro
    fino adicional es la contraseña maestra, no el cargo. */
 router.use(requireAuth);
-router.use(requireModuleAccess('SOPORTE'));
+router.use(requireModuleAccess('SOPORTE', 'OCOS'));
 
 /* ============================================================
    Middleware — exige la contraseña maestra en cada petición
