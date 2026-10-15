@@ -4,9 +4,19 @@ const crypto = require('crypto');
 const { authenticator } = require('otplib');
 const { pool } = require('../db');
 const { encrypt: encryptField, decrypt: decryptField } = require('./crypto');
+const { logSecurityEvent } = require('./audit');
 
 const MAX_LOGIN_ATTEMPTS = parseInt(process.env.MAX_LOGIN_ATTEMPTS) || 5;
 const LOCKOUT_MINUTES = parseInt(process.env.LOCKOUT_MINUTES) || 15;
+/* Regla de negocio específica de 2FA (distinta del bloqueo por
+   contraseña de arriba): 3 códigos mal tolerados, el 4to ya bloquea
+   15 min; si eso pasa 3 veces, la cuenta se suspende sola y solo DST
+   la reactiva. Ver verifyAccountTotp más abajo. */
+const TOTP_MAX_ATTEMPTS = 4;
+const TOTP_LOCKOUT_MINUTES = 15;
+const TOTP_MAX_LOCKOUTS_BEFORE_SUSPEND = 3;
+const TOTP_AUTO_SUSPEND_MOTIVO = (count) =>
+  `Suspensión automática: ${count} bloqueos temporales consecutivos por códigos de verificación en dos pasos incorrectos. Requiere reactivación manual desde DST.`;
 const IP_EVASION_DISTINCT_IPS = parseInt(process.env.IP_EVASION_DISTINCT_IPS) || 2;
 const HANDOFF_TTL_SECONDS = 60;
 const BRUTE_FORCE_THRESHOLD = parseInt(process.env.BRUTE_FORCE_THRESHOLD) || 3;
@@ -85,6 +95,22 @@ function ensureSecuritySchema() {
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_secret TEXT;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_enabled_at TIMESTAMPTZ;
+
+      /* Bloqueo escalonado específico de 2FA (regla de negocio): 3
+         códigos seguidos mal (4to intento ya bloquea) = bloqueo
+         temporal de 15 min; si eso se repite 3 veces, la cuenta queda
+         suspendida (igual que una suspensión manual de DST) y solo
+         DST puede reactivarla. totp_failed_attempts y
+         totp_lockout_count son el estado de la racha actual (se
+         resetean con un código correcto); totp_lockout_total y
+         totp_auto_suspended_total NUNCA se resetean — son el
+         historial de vida de la cuenta, para que DST pueda ver si es
+         reiterado aunque la racha actual ya se haya limpiado. */
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_failed_attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_lockout_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_lockout_total INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_auto_suspended_total INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS totp_last_lockout_at TIMESTAMPTZ;
 
       /* Una sola sesión activa por cuenta: al iniciar sesión de nuevo se
          revocan las anteriores en vez de dejarlas convivir (ver
@@ -263,27 +289,74 @@ async function resetFailedAttempts(userId) {
    solo porque esta vez el 401 vino de un endpoint distinto).
    ============================================================ */
 async function verifyAccountTotp({ userId, username, code, ip, userAgent }) {
-  const { rows } = await pool.query('SELECT totp_secret, totp_enabled, bloqueada_hasta FROM usuarios WHERE id=$1', [userId]);
+  const { rows } = await pool.query(
+    `SELECT totp_secret, totp_enabled, bloqueada_hasta, suspendida_en,
+            totp_failed_attempts, totp_lockout_count
+     FROM usuarios WHERE id=$1`,
+    [userId]
+  );
   if (!rows.length || !rows[0].totp_enabled) {
     return { valid: false, error: 'Tu cuenta no tiene activada la verificación en dos pasos. Actívala desde "Seguridad" en la pantalla de selección de módulo.' };
   }
+  if (rows[0].suspendida_en) {
+    return { valid: false, error: 'Tu cuenta está suspendida por seguridad. Contacta a DST para reactivarla.' };
+  }
   if (rows[0].bloqueada_hasta && new Date(rows[0].bloqueada_hasta) > new Date()) {
-    return { valid: false, error: 'Cuenta temporalmente bloqueada por seguridad. Intenta más tarde.' };
+    return { valid: false, error: 'Demasiados códigos incorrectos. Tu cuenta está bloqueada temporalmente por seguridad. Intenta más tarde.' };
   }
 
   const secret = rows[0].totp_secret ? decryptField(rows[0].totp_secret) : null;
   const valid = !!secret && authenticator.verify({ token: String(code || '').trim(), secret });
 
   await recordLoginAttempt({ username, ip, success: valid, userAgent });
-  if (!valid) {
-    await bumpFailedAttempts(userId);
-    const failures = await countRecentFailures(username, LOCKOUT_MINUTES);
-    if (failures >= MAX_LOGIN_ATTEMPTS) await lockAccount(userId, LOCKOUT_MINUTES);
+
+  if (valid) {
+    /* Un código correcto limpia la racha actual — no el historial de
+       vida (totp_lockout_total / totp_auto_suspended_total), que
+       nunca se resetea porque es justo lo que DST necesita para ver
+       si los bloqueos de esta cuenta son reiterados. */
+    await pool.query('UPDATE usuarios SET totp_failed_attempts=0, totp_lockout_count=0 WHERE id=$1', [userId]);
+    return { valid: true };
+  }
+
+  const { rows: bump } = await pool.query(
+    `UPDATE usuarios SET totp_failed_attempts = totp_failed_attempts + 1
+     WHERE id=$1 RETURNING totp_failed_attempts, totp_lockout_count`,
+    [userId]
+  );
+  const failedCount = bump[0].totp_failed_attempts;
+  if (failedCount < TOTP_MAX_ATTEMPTS) {
     return { valid: false, error: 'Código inválido' };
   }
 
-  await resetFailedAttempts(userId);
-  return { valid: true };
+  const newLockoutCount = bump[0].totp_lockout_count + 1;
+  if (newLockoutCount >= TOTP_MAX_LOCKOUTS_BEFORE_SUSPEND) {
+    await pool.query(
+      `UPDATE usuarios SET totp_failed_attempts=0, totp_lockout_count=0, bloqueada_hasta=NULL,
+         totp_lockout_total = totp_lockout_total + 1,
+         totp_auto_suspended_total = totp_auto_suspended_total + 1,
+         totp_last_lockout_at = NOW(),
+         suspendida_en = NOW(), suspendida_motivo = $2, suspendida_por = NULL
+       WHERE id=$1`,
+      [userId, TOTP_AUTO_SUSPEND_MOTIVO(newLockoutCount)]
+    );
+    await logSecurityEvent({ userId, path: 'security.verifyAccountTotp', actionType: 'account_suspended', ip, statusCode: 403 }).catch(() => {});
+    return { valid: false, error: 'Tu cuenta fue suspendida automáticamente por seguridad tras varios bloqueos por códigos incorrectos. Contacta a DST para reactivarla.' };
+  }
+
+  await pool.query(
+    `UPDATE usuarios SET totp_failed_attempts=0, totp_lockout_count=$2,
+       bloqueada_hasta = NOW() + ($3 || ' minutes')::interval,
+       totp_lockout_total = totp_lockout_total + 1,
+       totp_last_lockout_at = NOW()
+     WHERE id=$1`,
+    [userId, newLockoutCount, TOTP_LOCKOUT_MINUTES]
+  );
+  await logSecurityEvent({ userId, path: 'security.verifyAccountTotp', actionType: 'account_locked', ip, statusCode: 403 }).catch(() => {});
+  return {
+    valid: false,
+    error: `Demasiados códigos incorrectos. Tu cuenta quedó bloqueada temporalmente por ${TOTP_LOCKOUT_MINUTES} minutos (bloqueo ${newLockoutCount} de ${TOTP_MAX_LOCKOUTS_BEFORE_SUSPEND} antes de la suspensión automática).`,
+  };
 }
 
 /* ============================================================
@@ -648,5 +721,6 @@ module.exports = {
   getDbHealth, getLoginSeries, getAccessDeniedSeries, getSessionsByArea,
   getThreatSignals, getLoginHistory, getLoginsToday,
   MAX_LOGIN_ATTEMPTS, LOCKOUT_MINUTES, IP_EVASION_DISTINCT_IPS,
+  TOTP_MAX_ATTEMPTS, TOTP_LOCKOUT_MINUTES, TOTP_MAX_LOCKOUTS_BEFORE_SUSPEND,
   BRUTE_FORCE_THRESHOLD, BRUTE_FORCE_WINDOW_MINUTES,
 };

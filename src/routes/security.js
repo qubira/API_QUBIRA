@@ -143,6 +143,68 @@ router.get('/users', requirePrivileged, async (req, res) => {
 });
 
 /* ============================================================
+   Bloqueos de 2FA — pestaña propia de DST para ver qué cuentas
+   tienen (o tuvieron) bloqueos/suspensiones por códigos de
+   verificación en dos pasos incorrectos, y detectar si es reiterado.
+   Solo entran cuentas con alguna señal: bloqueo activo, suspensión
+   activa, o historial de vida (totp_lockout_total/
+   totp_auto_suspended_total) aunque la racha actual ya esté limpia.
+   ============================================================ */
+router.get('/totp-lockouts', requirePrivileged, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT u.id, u.nombre, u.apellidos, u.username, u.correo, u.estado,
+             r.nombre AS rol,
+             u.totp_enabled, u.totp_failed_attempts, u.totp_lockout_count,
+             u.totp_lockout_total, u.totp_auto_suspended_total, u.totp_last_lockout_at,
+             u.bloqueada_hasta, u.suspendida_en, u.suspendida_motivo, u.suspendida_por,
+             sp.nombre AS suspendida_por_nombre
+      FROM usuarios u
+      JOIN roles r ON r.id = u.rol_id
+      LEFT JOIN usuarios sp ON sp.id = u.suspendida_por
+      WHERE u.totp_lockout_total > 0 OR u.totp_auto_suspended_total > 0
+         OR u.suspendida_en IS NOT NULL
+         OR (u.bloqueada_hasta IS NOT NULL AND u.bloqueada_hasta > NOW())
+      ORDER BY u.totp_last_lockout_at DESC NULLS LAST, u.totp_lockout_total DESC
+      LIMIT 200
+    `);
+    res.json({
+      rows,
+      thresholds: { maxAttempts: sec.TOTP_MAX_ATTEMPTS, lockoutMinutes: sec.TOTP_LOCKOUT_MINUTES, lockoutsBeforeSuspend: sec.TOTP_MAX_LOCKOUTS_BEFORE_SUSPEND },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Historial puntual de una cuenta: intentos de 2FA (vía
+   security.login_attempts, mismo registro que ya usa el bloqueo por
+   contraseña) + los eventos de seguridad relacionados en audit.logs
+   (bloqueos, suspensión, reactivación, activar/desactivar 2FA) —
+   junto arman la "auditoría completa" que pidió DST para esa cuenta. */
+router.get('/totp-lockouts/:userId/history', requirePrivileged, async (req, res) => {
+  try {
+    const { rows: userRows } = await pool.query('SELECT username FROM usuarios WHERE id=$1', [req.params.userId]);
+    if (!userRows.length) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const { username } = userRows[0];
+
+    const [attempts, events] = await Promise.all([
+      pool.query(
+        `SELECT ip, success, user_agent, created_at FROM security.login_attempts
+         WHERE username = $1 ORDER BY created_at DESC LIMIT 50`,
+        [username]
+      ),
+      pool.query(
+        `SELECT action_type, ip, status_code, created_at FROM audit.logs
+         WHERE user_id = $1 AND action_type IN
+           ('account_locked','account_suspended','account_unsuspended','totp_enabled','totp_disabled','login')
+         ORDER BY created_at DESC LIMIT 50`,
+        [req.params.userId]
+      ),
+    ]);
+    res.json({ attempts: attempts.rows, events: events.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
    Permisos — módulos otorgados explícitamente, además del área.
    ============================================================ */
 router.get('/permissions/:userId', requirePrivileged, async (req, res) => {
