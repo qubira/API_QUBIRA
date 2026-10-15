@@ -232,7 +232,7 @@ router.get('/meetings', async (req, res) => {
     if (project_id) { params.push(project_id); where += ` AND m.project_id=$${params.length}`; }
     if (mine === 'true') {
       params.push(req.user.id);
-      where += ` AND EXISTS (SELECT 1 FROM calendar.meeting_participants mp WHERE mp.meeting_id=m.id AND mp.user_id=$${params.length} AND mp.participant_type='internal')`;
+      where += ` AND (EXISTS (SELECT 1 FROM calendar.meeting_participants mp WHERE mp.meeting_id=m.id AND mp.user_id=$${params.length} AND mp.participant_type='internal') OR m.created_by=$${params.length})`;
     } else if (!project_id) {
       if (area === 'ALL') {
         if (!privileged) return res.status(403).json({ error: 'No tienes permiso para ver todas las áreas' });
