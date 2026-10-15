@@ -299,7 +299,7 @@ router.get('/locations', requirePrivileged, async (req, res) => {
     // 2. Sesiones activas con ubicación
     const { rows: activeSessions } = await pool.query(`
       SELECT s.id, s.usuario_id, s.latitude, s.longitude, s.accuracy,
-             s.location_address, s.location_registered_at, s.ip_address, s.user_agent,
+             s.location_address, s.created_at AS location_registered_at, s.ip_address, s.user_agent,
              s.created_at, s.expires_at,
              u.nombre, u.apellidos, u.username, u.estado AS usuario_estado, u.avatar_color,
              r.nombre AS rol, c.nombre AS area
