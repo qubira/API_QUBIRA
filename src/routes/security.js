@@ -282,7 +282,7 @@ router.get('/locations', requirePrivileged, async (req, res) => {
   try {
     // 1. Historial de ubicaciones registradas
     const { rows: history } = await pool.query(`
-      SELECT l.id, l.usuario_id, l.session_id, l.latitude, l.longitude, l.accuracy,
+      SELECT l.id, l.usuario_id, l.token, l.latitude, l.longitude, l.accuracy,
              l.ip_address, l.user_agent, l.address, l.created_at,
              u.nombre, u.apellidos, u.username, u.estado AS usuario_estado, u.avatar_color,
              r.nombre AS rol, c.nombre AS area
