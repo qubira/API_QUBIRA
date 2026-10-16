@@ -407,6 +407,52 @@ router.get('/locations/history/:userId', requirePrivileged, async (req, res) => 
 });
 
 /* ============================================================
+   Geocercas y Perímetro de Seguridad Corporativo
+   ============================================================ */
+router.get('/geofence', requirePrivileged, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, name, points, active, updated_at
+      FROM security.geofence_perimeter
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+    res.json({ ok: true, geofence: rows[0] || null });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post('/geofence', requirePrivileged, async (req, res) => {
+  try {
+    const { name, points, active = true } = req.body;
+    if (!points || !Array.isArray(points) || points.length < 3) {
+      return res.status(400).json({ ok: false, error: 'Se requieren al menos 3 vértices para el perímetro' });
+    }
+
+    await pool.query('DELETE FROM security.geofence_perimeter');
+    const { rows } = await pool.query(`
+      INSERT INTO security.geofence_perimeter (name, points, active, updated_at)
+      VALUES ($1, $2, $3, NOW())
+      RETURNING *
+    `, [name || 'Perímetro Corporativo Autorizado', JSON.stringify(points), active]);
+
+    res.json({ ok: true, geofence: rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.delete('/geofence', requirePrivileged, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM security.geofence_perimeter');
+    res.json({ ok: true, message: 'Perímetro eliminado' });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+/* ============================================================
    Dashboard — contadores reales, nada hardcodeado. Además de los
    contadores del día, trae series de los últimos 14 días (para los
    gráficos), la distribución de sesiones por área, y la salud del

@@ -139,6 +139,14 @@ function ensureSecuritySchema() {
       );
       CREATE INDEX IF NOT EXISTS login_locations_user_idx ON security.login_locations(usuario_id, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS security.geofence_perimeter (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL DEFAULT 'Perímetro Corporativo Autorizado',
+        points JSONB NOT NULL,
+        active BOOLEAN NOT NULL DEFAULT true,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       /* Reconocimiento facial — RRHH captura el rostro del colaborador al
          darlo de alta (o después, editándolo); el servidor solo guarda el
          descriptor de 128 dimensiones que calcula face-api.js en el
