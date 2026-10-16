@@ -18,7 +18,11 @@ const TOTP_MAX_LOCKOUTS_BEFORE_SUSPEND = 3;
 const TOTP_AUTO_SUSPEND_MOTIVO = (count) =>
   `Suspensión automática: ${count} bloqueos temporales consecutivos por códigos de verificación en dos pasos incorrectos. Requiere reactivación manual desde DST.`;
 const IP_EVASION_DISTINCT_IPS = parseInt(process.env.IP_EVASION_DISTINCT_IPS) || 2;
-const HANDOFF_TTL_SECONDS = 60;
+/* 120s en vez de 60: ADG/TI cargan como app completa (Tailwind CDN +
+   librerías de documentos) antes de poder canjear el código, y el
+   backend en Render puede tardar en "despertar" tras estar inactivo —
+   con 60s ese margen a veces no alcanzaba y rebotaba al login. */
+const HANDOFF_TTL_SECONDS = 120;
 const BRUTE_FORCE_THRESHOLD = parseInt(process.env.BRUTE_FORCE_THRESHOLD) || 3;
 const BRUTE_FORCE_WINDOW_MINUTES = parseInt(process.env.BRUTE_FORCE_WINDOW_MINUTES) || 60;
 
