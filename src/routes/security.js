@@ -124,6 +124,7 @@ router.get('/users', requirePrivileged, async (req, res) => {
     }
     const { rows } = await pool.query(`
       SELECT u.id, u.nombre, u.apellidos, u.username, u.correo, u.estado,
+             u.totp_enabled, u.totp_enabled_at,
              u.intentos_fallidos, u.bloqueada_hasta, u.suspendida_motivo, u.suspendida_en, u.suspendida_por,
              r.nombre AS rol, r.nivel_acceso,
              c.nombre AS area,
@@ -202,6 +203,83 @@ router.get('/totp-lockouts/:userId/history', requirePrivileged, async (req, res)
     ]);
     res.json({ attempts: attempts.rows, events: events.rows });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Reporte de Cuentas sin 2FA (Control y Auditoría de Seguridad)
+   Lista el estado de 2FA de las cuentas corporativas, métricas de
+   adopción/cumplimiento y resalta cuentas en riesgo sin 2FA.
+   ============================================================ */
+router.get('/totp-compliance', requirePrivileged, async (req, res) => {
+  try {
+    const { q, area, rol, status, only_inactive } = req.query;
+    const params = [];
+    let where = 'WHERE 1=1';
+
+    if (q) {
+      params.push(`%${q}%`);
+      where += ` AND (u.nombre ILIKE $${params.length} OR u.apellidos ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.correo ILIKE $${params.length})`;
+    }
+    if (area) {
+      params.push(area);
+      where += ` AND c.nombre = $${params.length}`;
+    }
+    if (status) {
+      params.push(status);
+      where += ` AND u.estado = $${params.length}`;
+    }
+    if (only_inactive === 'true' || only_inactive === true) {
+      where += ` AND (u.totp_enabled IS FALSE OR u.totp_enabled IS NULL)`;
+    }
+
+    const { rows } = await pool.query(`
+      SELECT u.id, u.nombre, u.apellidos, u.username, u.correo, u.telefono, u.estado,
+             u.totp_enabled, u.totp_enabled_at,
+             u.intentos_fallidos, u.bloqueada_hasta, u.suspendida_motivo, u.suspendida_en, u.suspendida_por,
+             r.nombre AS rol, r.nivel_acceso,
+             c.nombre AS area,
+             (SELECT array_agg(modulo) FROM security.usuario_modulos m WHERE m.usuario_id = u.id) AS granted_modules,
+             (SELECT max(l.created_at) FROM audit.logs l WHERE l.user_id = u.id AND l.action_type='login') AS ultimo_login,
+             (SELECT la.ip FROM security.login_attempts la WHERE la.username = u.username AND la.success = true
+                ORDER BY la.created_at DESC LIMIT 1) AS ultima_ip
+      FROM usuarios u
+      JOIN roles r ON r.id = u.rol_id
+      LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+      LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      ${where}
+      ORDER BY 
+        CASE WHEN u.totp_enabled IS TRUE THEN 1 ELSE 0 END ASC,
+        r.nivel_acceso DESC,
+        u.nombre ASC`, params);
+
+    // Métricas globales del sistema
+    const { rows: statsRows } = await pool.query(`
+      SELECT 
+        COUNT(*)::int AS total,
+        COUNT(CASE WHEN u.totp_enabled IS TRUE THEN 1 END)::int AS active_count,
+        COUNT(CASE WHEN u.totp_enabled IS NOT TRUE THEN 1 END)::int AS inactive_count,
+        COUNT(CASE WHEN u.totp_enabled IS NOT TRUE AND (r.nivel_acceso >= 50 OR r.nombre ILIKE '%admin%' OR r.nombre ILIKE '%dst%' OR r.nombre ILIKE '%ti%') THEN 1 END)::int AS critical_inactive_count,
+        COUNT(CASE WHEN u.estado = 'activo' THEN 1 END)::int AS total_active_users,
+        COUNT(CASE WHEN u.estado = 'activo' AND u.totp_enabled IS TRUE THEN 1 END)::int AS active_users_with_2fa
+      FROM usuarios u
+      JOIN roles r ON r.id = u.rol_id
+    `);
+
+    const stats = statsRows[0] || { total: 0, active_count: 0, inactive_count: 0, critical_inactive_count: 0, total_active_users: 0, active_users_with_2fa: 0 };
+    const compliance_pct = stats.total > 0 ? Math.round((stats.active_count / stats.total) * 100) : 0;
+    const active_users_compliance_pct = stats.total_active_users > 0 ? Math.round((stats.active_users_with_2fa / stats.total_active_users) * 100) : 0;
+
+    res.json({
+      rows,
+      stats: {
+        ...stats,
+        compliance_pct,
+        active_users_compliance_pct,
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 /* ============================================================
