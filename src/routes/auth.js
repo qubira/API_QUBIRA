@@ -450,6 +450,49 @@ router.post('/logout', requireAuth, async (req, res) => {
 });
 
 /* ============================================================
+   GET /api/auth/sessions
+   Sesiones activas de la cuenta autenticada (no de otras cuentas —
+   para eso ya existe GET /api/security/sessions, privilegiado y
+   de todo el ecosistema). Pensado para el panel "Mis sesiones" del
+   hub central (LOGIN/modulo.html).
+   ============================================================ */
+router.get('/sessions', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, ip_address, user_agent, created_at, expires_at
+       FROM sesiones
+       WHERE usuario_id = $1 AND expires_at > NOW()
+       ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    const sessions = rows.map(s => ({ ...s, current: s.id === req.user.sessionId }));
+    res.json({ ok: true, sessions });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Error al obtener las sesiones' });
+  }
+});
+
+/* ============================================================
+   POST /api/auth/sessions/close-others
+   Cierra todas las sesiones activas de la cuenta EXCEPTO la que
+   está haciendo la petición — ej. si el usuario sospecha que dejó
+   una sesión abierta en otro dispositivo.
+   ============================================================ */
+router.post('/sessions/close-others', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE sesiones SET expires_at = NOW(), revoked_reason = 'user_closed'
+       WHERE usuario_id = $1 AND id != $2 AND expires_at > NOW()
+       RETURNING id`,
+      [req.user.id, req.user.sessionId]
+    );
+    res.json({ ok: true, closed: rows.length });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: 'Error al cerrar las otras sesiones' });
+  }
+});
+
+/* ============================================================
    Reconocimiento facial
    - /face/enroll y /face/status son de RRHH: capturan/consultan el
      rostro de OTRO colaborador (por username), no el propio, así que

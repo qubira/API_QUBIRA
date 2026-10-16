@@ -60,6 +60,7 @@ async function requireAuth(req, res, next) {
       rol:          sesion.rol,
       nivel_acceso: sesion.nivel_acceso,
       avatar_color: sesion.avatar_color,
+      sessionId:    sesion.id,
     };
 
     /* Registro genérico de auditoría — cubre automáticamente toda ruta
