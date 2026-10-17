@@ -46,6 +46,11 @@ function ensureSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE UNIQUE INDEX IF NOT EXISTS comercial_clientes_ruc_idx ON comercial.clientes(ruc);
+      -- "ciudad" queda sin usar (reemplazado por pais/provincia/distrito,
+      -- separados) — se deja la columna para no romper filas viejas.
+      ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS pais TEXT;
+      ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS provincia TEXT;
+      ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS distrito TEXT;
 
       CREATE TABLE IF NOT EXISTS comercial.contratos (
         id TEXT PRIMARY KEY,
@@ -101,6 +106,18 @@ function ensureSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE UNIQUE INDEX IF NOT EXISTS comercial_sectores_custom_nombre_idx ON comercial.sectores_custom (lower(nombre));
+
+      -- País/Provincia/Distrito agregados a mano, mismo patrón que los
+      -- rubros: una sola tabla genérica con "tipo" para los tres, en vez
+      -- de triplicar la tabla. También texto libre en comercial.clientes.
+      CREATE TABLE IF NOT EXISTS comercial.ubicaciones_custom (
+        id SERIAL PRIMARY KEY,
+        tipo TEXT NOT NULL CHECK (tipo IN ('pais','provincia','distrito')),
+        nombre TEXT NOT NULL,
+        created_by INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS comercial_ubicaciones_custom_idx ON comercial.ubicaciones_custom (tipo, lower(nombre));
     `);
   }
   return ready;
@@ -152,11 +169,12 @@ router.post('/clients', async (req, res) => {
 
     const client = await withIdRetry(nextClientId, (id) => pool.query(`
       INSERT INTO comercial.clientes
-        (id, razon_social, ruc, sector, direccion, ciudad, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+        (id, razon_social, ruc, sector, direccion, pais, provincia, distrito, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
       RETURNING *
     `, [
-      id, b.razon_social, b.ruc, b.sector || null, b.direccion || 'Lima, Perú', b.ciudad || 'Lima, Perú',
+      id, b.razon_social, b.ruc, b.sector || null, b.direccion || null,
+      b.pais || 'Perú', b.provincia || null, b.distrito || null,
       b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email,
       b.tipo || 'pyme', b.estado || 'activo', b.origen || 'Prospección Directa', b.notas || null, req.user.id,
     ]).then(r => r.rows[0]));
@@ -176,11 +194,11 @@ router.put('/clients/:id', async (req, res) => {
 
     const { rows } = await pool.query(`
       UPDATE comercial.clientes SET
-        razon_social=$1, ruc=$2, sector=$3, direccion=$4, contacto_nombre=$5, contacto_cargo=$6,
-        telefono=$7, email=$8, tipo=$9, estado=$10, notas=$11, updated_at=NOW()
-      WHERE id=$12 RETURNING *
-    `, [b.razon_social, b.ruc, b.sector || null, b.direccion || null, b.contacto_nombre, b.contacto_cargo || null,
-        b.telefono, b.email, b.tipo, b.estado, b.notas || null, req.params.id]);
+        razon_social=$1, ruc=$2, sector=$3, direccion=$4, pais=$5, provincia=$6, distrito=$7,
+        contacto_nombre=$8, contacto_cargo=$9, telefono=$10, email=$11, tipo=$12, estado=$13, notas=$14, updated_at=NOW()
+      WHERE id=$15 RETURNING *
+    `, [b.razon_social, b.ruc, b.sector || null, b.direccion || null, b.pais || 'Perú', b.provincia || null, b.distrito || null,
+        b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email, b.tipo, b.estado, b.notas || null, req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
 
     // Las copias "foto" en contratos/proformas ya emitidos se mantienen tal cual (historial),
@@ -419,6 +437,72 @@ router.delete('/sectors/:id', async (req, res) => {
     const { rows } = await pool.query('DELETE FROM comercial.sectores_custom WHERE id=$1 RETURNING id', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Rubro no encontrado' });
     // Los clientes que ya tenían ese rubro conservan el texto — solo desaparece de la lista de sugerencias.
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   UBICACIONES PERSONALIZADAS — País/Provincia/Distrito agregados a
+   mano desde los combobox de Cliente, mismo patrón que /sectors.
+   :tipo solo acepta pais|provincia|distrito (también es, sin
+   comillas, el nombre de la columna que se actualiza en cascada al
+   renombrar — por eso la whitelist explícita antes de usarlo en SQL).
+   ============================================================ */
+const LOCATION_TYPES = ['pais', 'provincia', 'distrito'];
+function requireLocationType(req, res, next) {
+  if (!LOCATION_TYPES.includes(req.params.tipo)) return res.status(400).json({ error: 'Tipo de ubicación inválido' });
+  next();
+}
+
+router.get('/locations/:tipo', requireLocationType, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM comercial.ubicaciones_custom WHERE tipo=$1 ORDER BY nombre ASC', [req.params.tipo]);
+    res.json({ locations: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/locations/:tipo', requireLocationType, async (req, res) => {
+  try {
+    const nombre = (req.body?.nombre || '').trim();
+    if (!nombre) return res.status(400).json({ error: 'Falta el nombre.' });
+
+    const { rows: existing } = await pool.query('SELECT * FROM comercial.ubicaciones_custom WHERE tipo=$1 AND lower(nombre) = lower($2)', [req.params.tipo, nombre]);
+    if (existing.length) return res.status(200).json({ location: existing[0] });
+
+    const { rows } = await pool.query(
+      'INSERT INTO comercial.ubicaciones_custom (tipo, nombre, created_by) VALUES ($1,$2,$3) RETURNING *',
+      [req.params.tipo, nombre, req.user.id]
+    );
+    res.status(201).json({ location: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/locations/:tipo/:id', requireLocationType, async (req, res) => {
+  try {
+    const nombre = (req.body?.nombre || '').trim();
+    if (!nombre) return res.status(400).json({ error: 'Falta el nuevo nombre.' });
+
+    const { rows: dupe } = await pool.query('SELECT id FROM comercial.ubicaciones_custom WHERE tipo=$1 AND lower(nombre) = lower($2) AND id != $3', [req.params.tipo, nombre, req.params.id]);
+    if (dupe.length) return res.status(409).json({ error: `Ya existe "${nombre}" en esta lista.` });
+
+    const { rows: before } = await pool.query('SELECT nombre FROM comercial.ubicaciones_custom WHERE id=$1 AND tipo=$2', [req.params.id, req.params.tipo]);
+    if (!before.length) return res.status(404).json({ error: 'No encontrado' });
+
+    const { rows } = await pool.query('UPDATE comercial.ubicaciones_custom SET nombre=$1 WHERE id=$2 RETURNING *', [nombre, req.params.id]);
+    // req.params.tipo ya pasó por requireLocationType (whitelist), seguro de interpolar como nombre de columna.
+    await pool.query(
+      `UPDATE comercial.clientes SET ${req.params.tipo}=$1, updated_at=NOW() WHERE lower(${req.params.tipo}) = lower($2)`,
+      [nombre, before[0].nombre]
+    );
+
+    res.json({ location: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/locations/:tipo/:id', requireLocationType, async (req, res) => {
+  try {
+    const { rows } = await pool.query('DELETE FROM comercial.ubicaciones_custom WHERE id=$1 AND tipo=$2 RETURNING id', [req.params.id, req.params.tipo]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
