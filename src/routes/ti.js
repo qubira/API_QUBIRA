@@ -103,6 +103,14 @@ function ensureSchema() {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS technology_catalog_category_name_idx
         ON ti.technology_catalog (category, LOWER(name));
+      -- Costo de referencia por lenguaje/herramienta y el rango de margen
+      -- que ADG u OPP le suman para armar el precio de propuesta al
+      -- cliente. Vive en el mismo catálogo compartido (no en los proyectos)
+      -- porque el costo de una tecnología es el mismo sin importar en
+      -- cuántos proyectos se use.
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS costo NUMERIC;
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_min NUMERIC;
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_max NUMERIC;
 
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
@@ -1210,7 +1218,7 @@ router.get('/technology-catalog', async (req, res) => {
     if (category) { params.push(category === 'tool' ? 'tool' : 'language'); where += ` AND category=$${params.length}`; }
     if (q) { params.push(`%${q}%`); where += ` AND name ILIKE $${params.length}`; }
     const { rows } = await pool.query(
-      `SELECT * FROM ti.technology_catalog ${where} ORDER BY name ASC LIMIT 50`, params
+      `SELECT * FROM ti.technology_catalog ${where} ORDER BY name ASC LIMIT 500`, params
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1271,6 +1279,28 @@ router.put('/technology-catalog/:id', upload.single('image'), async (req, res) =
     if (e.code === '23505') return res.status(400).json({ error: 'Ya existe una tecnología con ese nombre en esa categoría' });
     res.status(500).json({ error: e.message });
   }
+});
+
+/* Costo + margen de propuesta por tecnología — a diferencia de nombre/
+   imagen (solo ADG), este dato también lo puede fijar OPP (quien calcula
+   precios/márgenes). El router de OPP expone su propio endpoint gemelo
+   sobre la misma tabla ti.technology_catalog (ver opp.js); acá va la
+   mitad que usa el panel de ADG. */
+router.put('/technology-catalog/:id/cost', async (req, res) => {
+  try {
+    const mine = await getEmployeeArea(req.user.username);
+    if (mine !== 'ADG' && mine !== 'OPP' && (req.user.nivel_acceso || 0) < 100) {
+      return res.status(403).json({ error: 'Esta acción es exclusiva de ADG u OPP' });
+    }
+    const toNum = v => (v === '' || v === undefined || v === null ? null : Number(v));
+    const { rows } = await pool.query('SELECT id FROM ti.technology_catalog WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+    await pool.query(
+      'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3 WHERE id=$4',
+      [toNum(req.body.costo), toNum(req.body.margen_min), toNum(req.body.margen_max), req.params.id]
+    );
+    res.json({ message: 'Costo actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.delete('/technology-catalog/:id', async (req, res) => {

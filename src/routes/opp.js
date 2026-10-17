@@ -31,6 +31,19 @@ function ensureOppSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS opp_pricing_status TEXT DEFAULT 'pending_pricing';
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS opp_updated_at TIMESTAMPTZ;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS opp_updated_by INTEGER;
+
+      -- Catálogo de lenguajes/herramientas (también administrado desde
+      -- ADG, ver ti.js) — se crea defensivamente acá también por si OPP
+      -- es el primer router en recibir tráfico tras un reinicio.
+      CREATE TABLE IF NOT EXISTS ti.technology_catalog (
+        id TEXT PRIMARY KEY, category TEXT NOT NULL, name TEXT NOT NULL,
+        image_url TEXT, created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS technology_catalog_category_name_idx
+        ON ti.technology_catalog (category, LOWER(name));
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS costo NUMERIC;
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_min NUMERIC;
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_max NUMERIC;
     `);
   }
   return schemaReady;
@@ -329,6 +342,35 @@ router.post('/simulate', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/* ============================================================
+   6. CATÁLOGO DE TECNOLOGÍAS — costo y margen de propuesta
+   El catálogo (nombre/logo) lo administra ADG en su panel (ver ti.js);
+   acá OPP solo lee esa misma lista y puede fijar costo + margen mín/máx,
+   que son los que usa para calcular el precio de propuesta de cada
+   lenguaje/herramienta.
+   ============================================================ */
+router.get('/tech-catalog', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM ti.technology_catalog ORDER BY category ASC, name ASC'
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/tech-catalog/:id/cost', async (req, res) => {
+  try {
+    const toNum = v => (v === '' || v === undefined || v === null ? null : Number(v));
+    const { rows } = await pool.query('SELECT id FROM ti.technology_catalog WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+    await pool.query(
+      'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3 WHERE id=$4',
+      [toNum(req.body.costo), toNum(req.body.margen_min), toNum(req.body.margen_max), req.params.id]
+    );
+    res.json({ message: 'Costo actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 module.exports = router;

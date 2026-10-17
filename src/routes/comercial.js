@@ -467,6 +467,18 @@ router.get('/products', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Catálogo de lenguajes/herramientas con su costo y margen de propuesta
+   (lo fijan ADG u OPP, ver ti.js/opp.js) — ODN solo lo consulta, de
+   referencia; no tiene endpoint de escritura en este router. */
+router.get('/tech-catalog', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM ti.technology_catalog ORDER BY category ASC, name ASC'
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/stats', async (req, res) => {
   try {
     const { rows } = await pool.query(`
