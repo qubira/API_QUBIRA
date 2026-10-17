@@ -89,6 +89,18 @@ function ensureSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS comercial_proformas_cliente_idx ON comercial.proformas(cliente_id);
+
+      -- Rubros/sectores agregados a mano desde el combobox de Cliente
+      -- (los 16 de base viven en el frontend, texto fijo). "sector" en
+      -- comercial.clientes sigue siendo texto libre, no una FK — así
+      -- renombrar/eliminar acá nunca puede dejar a un cliente roto.
+      CREATE TABLE IF NOT EXISTS comercial.sectores_custom (
+        id SERIAL PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        created_by INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS comercial_sectores_custom_nombre_idx ON comercial.sectores_custom (lower(nombre));
     `);
   }
   return ready;
@@ -350,6 +362,63 @@ router.delete('/proformas/:id', async (req, res) => {
   try {
     const { rows } = await pool.query('DELETE FROM comercial.proformas WHERE id=$1 RETURNING id', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Proforma no encontrada' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   SECTORES PERSONALIZADOS — rubros agregados a mano desde el
+   combobox de Cliente, administrables desde Configuración.
+   "sector" en comercial.clientes es texto libre, así que renombrar
+   o eliminar acá nunca deja a un cliente con una referencia rota.
+   ============================================================ */
+router.get('/sectors', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM comercial.sectores_custom ORDER BY nombre ASC');
+    res.json({ sectors: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/sectors', async (req, res) => {
+  try {
+    const nombre = (req.body?.nombre || '').trim();
+    if (!nombre) return res.status(400).json({ error: 'Falta el nombre del rubro.' });
+
+    const { rows: existing } = await pool.query('SELECT * FROM comercial.sectores_custom WHERE lower(nombre) = lower($1)', [nombre]);
+    if (existing.length) return res.status(200).json({ sector: existing[0] });
+
+    const { rows } = await pool.query(
+      'INSERT INTO comercial.sectores_custom (nombre, created_by) VALUES ($1,$2) RETURNING *',
+      [nombre, req.user.id]
+    );
+    res.status(201).json({ sector: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/sectors/:id', async (req, res) => {
+  try {
+    const nombre = (req.body?.nombre || '').trim();
+    if (!nombre) return res.status(400).json({ error: 'Falta el nuevo nombre.' });
+
+    const { rows: dupe } = await pool.query('SELECT id FROM comercial.sectores_custom WHERE lower(nombre) = lower($1) AND id != $2', [nombre, req.params.id]);
+    if (dupe.length) return res.status(409).json({ error: `Ya existe un rubro llamado "${nombre}".` });
+
+    const { rows: before } = await pool.query('SELECT nombre FROM comercial.sectores_custom WHERE id=$1', [req.params.id]);
+    if (!before.length) return res.status(404).json({ error: 'Rubro no encontrado' });
+
+    const { rows } = await pool.query('UPDATE comercial.sectores_custom SET nombre=$1 WHERE id=$2 RETURNING *', [nombre, req.params.id]);
+    // Los clientes que ya usaban el nombre anterior quedan con el nuevo — es texto libre, no una FK.
+    await pool.query('UPDATE comercial.clientes SET sector=$1, updated_at=NOW() WHERE lower(sector) = lower($2)', [nombre, before[0].nombre]);
+
+    res.json({ sector: rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/sectors/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('DELETE FROM comercial.sectores_custom WHERE id=$1 RETURNING id', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Rubro no encontrado' });
+    // Los clientes que ya tenían ese rubro conservan el texto — solo desaparece de la lista de sugerencias.
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
