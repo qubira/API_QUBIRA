@@ -111,6 +111,7 @@ function ensureSchema() {
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS costo NUMERIC;
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_min NUMERIC;
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_max NUMERIC;
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS plans JSONB DEFAULT '[]'::jsonb;
 
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
@@ -1295,10 +1296,32 @@ router.put('/technology-catalog/:id/cost', async (req, res) => {
     const toNum = v => (v === '' || v === undefined || v === null ? null : Number(v));
     const { rows } = await pool.query('SELECT id FROM ti.technology_catalog WHERE id=$1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
-    await pool.query(
-      'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3 WHERE id=$4',
-      [toNum(req.body.costo), toNum(req.body.margen_min), toNum(req.body.margen_max), req.params.id]
-    );
+
+    let plans = null;
+    if (Array.isArray(req.body.plans)) {
+      plans = req.body.plans.slice(0, 5).map(p => ({
+        name: (p.name || '').trim(),
+        costo: toNum(p.costo),
+        margen_min: toNum(p.margen_min),
+        margen_max: toNum(p.margen_max),
+      }));
+    }
+
+    const costo = req.body.costo !== undefined ? toNum(req.body.costo) : (plans && plans[0] ? plans[0].costo : null);
+    const margen_min = req.body.margen_min !== undefined ? toNum(req.body.margen_min) : (plans && plans[0] ? plans[0].margen_min : null);
+    const margen_max = req.body.margen_max !== undefined ? toNum(req.body.margen_max) : (plans && plans[0] ? plans[0].margen_max : null);
+
+    if (plans !== null) {
+      await pool.query(
+        'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3, plans=$4 WHERE id=$5',
+        [costo, margen_min, margen_max, JSON.stringify(plans), req.params.id]
+      );
+    } else {
+      await pool.query(
+        'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3 WHERE id=$4',
+        [costo, margen_min, margen_max, req.params.id]
+      );
+    }
     res.json({ message: 'Costo actualizado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
