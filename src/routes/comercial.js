@@ -1,9 +1,12 @@
 'use strict';
 
 const express  = require('express');
+const crypto   = require('crypto');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
+
+function uid() { return crypto.randomUUID(); }
 
 const router = express.Router();
 
@@ -491,6 +494,70 @@ router.get('/stats', async (req, res) => {
       WHERE show_to_comercial = true
     `);
     res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   TECH STACKS & COTIZACIONES (ODN / COMERCIAL)
+   ============================================================ */
+router.get('/tech-stacks', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM ti.tech_stacks ORDER BY is_quotation ASC, created_at ASC');
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/tech-stacks', async (req, res) => {
+  try {
+    const { name, project_type, description, stages, is_quotation, quotation_margin } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nombre de Tech Stack o Cotización requerido' });
+    const id = uid();
+    const pType = project_type || 'Web';
+    const stg = Array.isArray(stages) ? JSON.stringify(stages) : '[]';
+    await pool.query(
+      `INSERT INTO ti.tech_stacks (id, name, project_type, description, stages, is_quotation, quotation_margin, created_by, created_area)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'ODN')`,
+      [id, name.trim(), pType, description || '', stg, !!is_quotation, Number(quotation_margin) || 0, req.user.username || 'comercial']
+    );
+    const { rows } = await pool.query('SELECT * FROM ti.tech_stacks WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/tech-stacks/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM ti.tech_stacks WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+
+    const { name, project_type, description, stages, is_quotation, quotation_margin } = req.body;
+    await pool.query(
+      `UPDATE ti.tech_stacks SET
+         name = COALESCE($1, name),
+         project_type = COALESCE($2, project_type),
+         description = COALESCE($3, description),
+         stages = COALESCE($4, stages),
+         is_quotation = COALESCE($5, is_quotation),
+         quotation_margin = COALESCE($6, quotation_margin),
+         updated_at = NOW()
+       WHERE id = $7`,
+      [
+        name !== undefined ? name.trim() : null,
+        project_type !== undefined ? project_type : null,
+        description !== undefined ? description : null,
+        stages !== undefined ? JSON.stringify(stages) : null,
+        is_quotation !== undefined ? !!is_quotation : null,
+        quotation_margin !== undefined ? Number(quotation_margin) : null,
+        req.params.id
+      ]
+    );
+    res.json({ message: 'Actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/tech-stacks/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.tech_stacks WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

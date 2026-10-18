@@ -115,6 +115,20 @@ function ensureSchema() {
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS moneda TEXT DEFAULT 'PEN';
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS periodo TEXT DEFAULT 'mes';
 
+      CREATE TABLE IF NOT EXISTS ti.tech_stacks (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        project_type TEXT NOT NULL DEFAULT 'Web',
+        description TEXT,
+        stages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        is_quotation BOOLEAN DEFAULT false,
+        quotation_margin NUMERIC DEFAULT 0,
+        created_by TEXT,
+        created_area TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
@@ -1457,6 +1471,114 @@ router.delete('/technologies/:id', async (req, res) => {
     await pool.query('DELETE FROM ti.project_technologies WHERE id=$1', [req.params.id]);
     await logActivity(old.project_id, req.user.id, 'technology_change',
       `${req.user.nombre || req.user.username} quitó ${old.category === 'tool' ? 'la herramienta' : 'el lenguaje'} "${old.name}"`);
+    res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   TECH STACKS / RAMIFICACIONES DE TECNOLOGÍAS
+   ============================================================ */
+router.get('/tech-stacks', async (req, res) => {
+  try {
+    const mine = await getEmployeeArea(req.user.username);
+    const isTI = (mine === 'TI' && (req.user.nivel_acceso || 0) < 100);
+    const { rows } = await pool.query('SELECT * FROM ti.tech_stacks ORDER BY is_quotation ASC, created_at ASC');
+    
+    // Si el usuario es de TI (OTI), se ocultan los costos y precios
+    const result = rows.map(stack => {
+      if (!isTI) return stack;
+      const copy = JSON.parse(JSON.stringify(stack));
+      if (Array.isArray(copy.stages)) {
+        copy.stages.forEach(st => {
+          (st.items || []).forEach(it => {
+            delete it.costo;
+            delete it.moneda;
+            delete it.periodo;
+            delete it.plans;
+          });
+        });
+      }
+      return copy;
+    });
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/tech-stacks', async (req, res) => {
+  try {
+    const mine = await getEmployeeArea(req.user.username);
+    const { name, project_type, description, stages, is_quotation, quotation_margin } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: 'Nombre de Tech Stack requerido' });
+    const id = uid();
+    const pType = project_type || 'Web';
+    const stg = Array.isArray(stages) ? JSON.stringify(stages) : '[]';
+    await pool.query(
+      `INSERT INTO ti.tech_stacks (id, name, project_type, description, stages, is_quotation, quotation_margin, created_by, created_area)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [id, name.trim(), pType, description || '', stg, !!is_quotation, Number(quotation_margin) || 0, req.user.username, mine]
+    );
+    const { rows } = await pool.query('SELECT * FROM ti.tech_stacks WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/tech-stacks/:id', async (req, res) => {
+  try {
+    const mine = await getEmployeeArea(req.user.username);
+    const isTI = (mine === 'TI' && (req.user.nivel_acceso || 0) < 100);
+    const { rows } = await pool.query('SELECT * FROM ti.tech_stacks WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Tech Stack no encontrado' });
+
+    const current = rows[0];
+    const { name, project_type, description, stages, is_quotation, quotation_margin } = req.body;
+    let finalStages = stages !== undefined ? stages : current.stages;
+
+    // Si TI actualiza el diseño, preservamos los costos que ya estaban registrados en la BD
+    if (isTI && Array.isArray(finalStages)) {
+      const curItemsMap = {};
+      if (Array.isArray(current.stages)) {
+        current.stages.forEach(st => (st.items || []).forEach(it => { if (it.id) curItemsMap[it.id] = it; }));
+      }
+      finalStages.forEach(st => {
+        (st.items || []).forEach(it => {
+          const old = curItemsMap[it.id];
+          if (old) {
+            it.costo = old.costo;
+            it.moneda = old.moneda;
+            it.periodo = old.periodo;
+            it.plans = old.plans;
+          }
+        });
+      });
+    }
+
+    await pool.query(
+      `UPDATE ti.tech_stacks SET
+         name = COALESCE($1, name),
+         project_type = COALESCE($2, project_type),
+         description = COALESCE($3, description),
+         stages = $4,
+         is_quotation = COALESCE($5, is_quotation),
+         quotation_margin = COALESCE($6, quotation_margin),
+         updated_at = NOW()
+       WHERE id = $7`,
+      [
+        name !== undefined ? name.trim() : null,
+        project_type !== undefined ? project_type : null,
+        description !== undefined ? description : null,
+        JSON.stringify(finalStages),
+        is_quotation !== undefined ? !!is_quotation : null,
+        quotation_margin !== undefined ? Number(quotation_margin) : null,
+        req.params.id
+      ]
+    );
+    res.json({ message: 'Tech Stack actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/tech-stacks/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.tech_stacks WHERE id=$1', [req.params.id]);
     res.json({ message: 'Eliminado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
