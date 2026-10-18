@@ -1301,7 +1301,7 @@ router.put('/technology-catalog/:id/cost', async (req, res) => {
 
     let plans = null;
     if (Array.isArray(req.body.plans)) {
-      plans = req.body.plans.slice(0, 5).map(p => ({
+      plans = req.body.plans.slice(0, 7).map(p => ({
         name: (p.name || '').trim(),
         costo: toNum(p.costo),
         margen_min: toNum(p.margen_min),
