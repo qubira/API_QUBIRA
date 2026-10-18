@@ -112,6 +112,7 @@ function ensureSchema() {
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_min NUMERIC;
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS margen_max NUMERIC;
       ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS plans JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE ti.technology_catalog ADD COLUMN IF NOT EXISTS moneda TEXT DEFAULT 'PEN';
 
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
@@ -1304,8 +1305,13 @@ router.put('/technology-catalog/:id/cost', async (req, res) => {
         costo: toNum(p.costo),
         margen_min: toNum(p.margen_min),
         margen_max: toNum(p.margen_max),
+        moneda: ['USD', 'EUR', 'PEN'].includes(p.moneda) ? p.moneda : 'PEN',
       }));
     }
+
+    const moneda = req.body.moneda && ['USD', 'EUR', 'PEN'].includes(req.body.moneda)
+      ? req.body.moneda
+      : (plans && plans[0] && plans[0].moneda ? plans[0].moneda : 'PEN');
 
     const costo = req.body.costo !== undefined ? toNum(req.body.costo) : (plans && plans[0] ? plans[0].costo : null);
     const margen_min = req.body.margen_min !== undefined ? toNum(req.body.margen_min) : (plans && plans[0] ? plans[0].margen_min : null);
@@ -1313,13 +1319,13 @@ router.put('/technology-catalog/:id/cost', async (req, res) => {
 
     if (plans !== null) {
       await pool.query(
-        'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3, plans=$4 WHERE id=$5',
-        [costo, margen_min, margen_max, JSON.stringify(plans), req.params.id]
+        'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3, plans=$4, moneda=$5 WHERE id=$6',
+        [costo, margen_min, margen_max, JSON.stringify(plans), moneda, req.params.id]
       );
     } else {
       await pool.query(
-        'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3 WHERE id=$4',
-        [costo, margen_min, margen_max, req.params.id]
+        'UPDATE ti.technology_catalog SET costo=$1, margen_min=$2, margen_max=$3, moneda=$4 WHERE id=$5',
+        [costo, margen_min, margen_max, moneda, req.params.id]
       );
     }
     res.json({ message: 'Costo actualizado' });
