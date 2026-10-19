@@ -482,6 +482,22 @@ router.get('/tech-catalog', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* CATÁLOGO DE TECNOLOGÍAS & PLANES (Solo lectura para ODN) */
+router.get('/technology-catalog', async (req, res) => {
+  try {
+    const { category } = req.query;
+    let query = 'SELECT * FROM ti.technology_catalog';
+    const params = [];
+    if (category) {
+      params.push(category);
+      query += ' WHERE category = $1';
+    }
+    query += ' ORDER BY name ASC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 /* INFO TÉCNICO (Solo lectura para ODN)
    Permite a ODN consultar rápidamente las especificaciones técnicas,
    límites y políticas por plan de las herramientas y lenguajes del catálogo. */
