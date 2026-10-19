@@ -1619,20 +1619,52 @@ router.delete('/tech-stacks/:id', async (req, res) => {
 });
 
 /* ============================================================
-   INFO TÉCNICO (Fichas Técnicas por Producto y Plan)
-   Permite a ADG y OTI gestionar la información técnica completa:
-   planes, herramientas, límites, políticas, cuotas y campos extra.
+   INFO TÉCNICO (Fichas Técnicas de Herramientas y Lenguajes por Plan)
+   Permite a ADG y OTI gestionar la información técnica completa del
+   Catálogo de Tecnologías: planes, herramientas, límites, políticas,
+   cuotas y campos extra personalizados.
    ============================================================ */
 router.get('/tech-plan-info', async (req, res) => {
   try {
-    const { producto } = req.query;
-    let query = 'SELECT * FROM ti.tech_plan_info';
+    const { producto, category, search, tech_id } = req.query;
+    let query = `
+      SELECT 
+        tpi.*,
+        COALESCE(tc.image_url, '') AS image_url,
+        COALESCE(tpi.category, tc.category, 'tool') AS category,
+        COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre) AS tech_name,
+        COALESCE(tc.plans, '[]'::jsonb) AS catalog_plans
+      FROM ti.tech_plan_info tpi
+      LEFT JOIN ti.technology_catalog tc ON (tpi.tech_id = tc.id OR LOWER(tpi.tech_name) = LOWER(tc.name) OR LOWER(tpi.producto_nombre) = LOWER(tc.name))
+    `;
+    const conditions = [];
     const params = [];
-    if (producto && producto.trim()) {
-      params.push(`%${producto.trim().toLowerCase()}%`);
-      query += ' WHERE LOWER(producto_nombre) LIKE $1';
+
+    if (tech_id) {
+      params.push(tech_id);
+      conditions.push(`(tpi.tech_id = $${params.length} OR tc.id = $${params.length})`);
     }
-    query += ' ORDER BY orden ASC, LOWER(producto_nombre) ASC, LOWER(plan_nombre) ASC';
+
+    if (category && category !== 'all') {
+      params.push(category);
+      conditions.push(`COALESCE(tpi.category, tc.category) = $${params.length}`);
+    }
+
+    const term = search || producto;
+    if (term && term.trim()) {
+      params.push(`%${term.trim().toLowerCase()}%`);
+      conditions.push(`(
+        LOWER(COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre)) LIKE $${params.length}
+        OR LOWER(tpi.plan_nombre) LIKE $${params.length}
+        OR LOWER(tpi.descripcion) LIKE $${params.length}
+      )`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    query += ' ORDER BY tpi.orden ASC, LOWER(COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre)) ASC, LOWER(tpi.plan_nombre) ASC';
     const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1641,33 +1673,36 @@ router.get('/tech-plan-info', async (req, res) => {
 router.post('/tech-plan-info', async (req, res) => {
   try {
     const b = req.body || {};
-    if (!b.producto_nombre || !b.producto_nombre.trim() || !b.plan_nombre || !b.plan_nombre.trim()) {
-      return res.status(400).json({ error: 'Producto asignado y Nombre del Plan son requeridos.' });
+    const techName = (b.tech_name || b.name || b.producto_nombre || '').trim();
+    const planNombre = (b.plan_nombre || '').trim();
+    if (!techName || !planNombre) {
+      return res.status(400).json({ error: 'Herramienta/Lenguaje y Nombre del Plan son requeridos.' });
     }
     const id = uid();
     const area = (await getEmployeeArea(req.user.username)) || 'OTI';
     const herramientas = Array.isArray(b.herramientas) ? JSON.stringify(b.herramientas) : '[]';
     const camposExtra = Array.isArray(b.campos_extra) ? JSON.stringify(b.campos_extra) : '[]';
+    const category = b.category || b.categoria || 'tool';
 
     await pool.query(`
       INSERT INTO ti.tech_plan_info (
-        id, producto_id, producto_nombre, plan_nombre, categoria, herramientas, precio, descripcion,
+        id, tech_id, tech_name, producto_nombre, category, plan_nombre, precio, descripcion,
         limites_tecnicos, agregados, que_no_incluye, ejemplo_consumo_mensual,
         pasa_si_te_pasas_del_limite, cuando_subir, cuota_mensual, limites_archivos,
         limites_api, cuentas_usuarios, seguridad_control_acceso, entrega_dominio,
         respaldo_almacenamiento, complementos_ia, video, soporte, plan_no_resuelve,
         campos_extra, orden, created_by, created_area
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12,
-        $13, $14, $15, $16,
-        $17, $18, $19, $20,
-        $21, $22, $23, $24, $25,
-        $26, $27, $28, $29
+        $1, $2, $3, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11,
+        $12, $13, $14, $15,
+        $16, $17, $18, $19,
+        $20, $21, $22, $23, $24,
+        $25, $26, $27, $28
       )
     `, [
-      id, b.producto_id || null, b.producto_nombre.trim(), b.plan_nombre.trim(), b.categoria || 'Web',
-      herramientas, b.precio || '', b.descripcion || '',
+      id, b.tech_id || null, techName, category, planNombre,
+      b.precio || '', b.descripcion || '',
       b.limites_tecnicos || '', b.agregados || '', b.que_no_incluye || '', b.ejemplo_consumo_mensual || '',
       b.pasa_si_te_pasas_del_limite || '', b.cuando_subir || '', b.cuota_mensual || '', b.limites_archivos || '',
       b.limites_api || '', b.cuentas_usuarios || '', b.seguridad_control_acceso || '', b.entrega_dominio || '',
@@ -1675,7 +1710,15 @@ router.post('/tech-plan-info', async (req, res) => {
       camposExtra, Number(b.orden) || 0, req.user.username || 'usuario', area
     ]);
 
-    const { rows } = await pool.query('SELECT * FROM ti.tech_plan_info WHERE id=$1', [id]);
+    const { rows } = await pool.query(`
+      SELECT tpi.*, 
+             COALESCE(tc.image_url, '') AS image_url,
+             COALESCE(tpi.category, tc.category, 'tool') AS category,
+             COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre) AS tech_name
+      FROM ti.tech_plan_info tpi
+      LEFT JOIN ti.technology_catalog tc ON (tpi.tech_id = tc.id OR LOWER(tpi.tech_name) = LOWER(tc.name))
+      WHERE tpi.id = $1
+    `, [id]);
     res.status(201).json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1688,12 +1731,16 @@ router.put('/tech-plan-info/:id', async (req, res) => {
     const b = req.body || {};
     const herramientas = b.herramientas !== undefined ? JSON.stringify(b.herramientas) : undefined;
     const camposExtra = b.campos_extra !== undefined ? JSON.stringify(b.campos_extra) : undefined;
+    const techName = (b.tech_name || b.name || b.producto_nombre) ? (b.tech_name || b.name || b.producto_nombre).trim() : undefined;
+    const category = b.category || b.categoria;
 
     await pool.query(`
       UPDATE ti.tech_plan_info SET
-        producto_id = COALESCE($1, producto_id),
-        producto_nombre = COALESCE($2, producto_nombre),
+        tech_id = COALESCE($1, tech_id),
+        tech_name = COALESCE($2, tech_name, producto_nombre),
+        producto_nombre = COALESCE($2, producto_nombre, tech_name),
         plan_nombre = COALESCE($3, plan_nombre),
+        category = COALESCE($4, category),
         categoria = COALESCE($4, categoria),
         herramientas = COALESCE($5, herramientas),
         precio = COALESCE($6, precio),
@@ -1720,10 +1767,10 @@ router.put('/tech-plan-info/:id', async (req, res) => {
         updated_at = NOW()
       WHERE id = $27
     `, [
-      b.producto_id !== undefined ? b.producto_id : null,
-      b.producto_nombre !== undefined ? b.producto_nombre.trim() : null,
+      b.tech_id !== undefined ? b.tech_id : null,
+      techName !== undefined ? techName : null,
       b.plan_nombre !== undefined ? b.plan_nombre.trim() : null,
-      b.categoria !== undefined ? b.categoria : null,
+      category !== undefined ? category : null,
       herramientas !== undefined ? herramientas : null,
       b.precio !== undefined ? b.precio : null,
       b.descripcion !== undefined ? b.descripcion : null,
@@ -1749,7 +1796,15 @@ router.put('/tech-plan-info/:id', async (req, res) => {
       req.params.id
     ]);
 
-    const { rows } = await pool.query('SELECT * FROM ti.tech_plan_info WHERE id=$1', [req.params.id]);
+    const { rows } = await pool.query(`
+      SELECT tpi.*, 
+             COALESCE(tc.image_url, '') AS image_url,
+             COALESCE(tpi.category, tc.category, 'tool') AS category,
+             COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre) AS tech_name
+      FROM ti.tech_plan_info tpi
+      LEFT JOIN ti.technology_catalog tc ON (tpi.tech_id = tc.id OR LOWER(tpi.tech_name) = LOWER(tc.name))
+      WHERE tpi.id = $1
+    `, [req.params.id]);
     res.json(rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

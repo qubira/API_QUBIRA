@@ -484,17 +484,48 @@ router.get('/tech-catalog', async (req, res) => {
 
 /* INFO TÉCNICO (Solo lectura para ODN)
    Permite a ODN consultar rápidamente las especificaciones técnicas,
-   herramientas, lenguajes, límites y políticas por plan de cada producto. */
+   límites y políticas por plan de las herramientas y lenguajes del catálogo. */
 router.get('/tech-plan-info', async (req, res) => {
   try {
-    const { producto } = req.query;
-    let query = 'SELECT * FROM ti.tech_plan_info';
+    const { producto, category, search, tech_id } = req.query;
+    let query = `
+      SELECT 
+        tpi.*,
+        COALESCE(tc.image_url, '') AS image_url,
+        COALESCE(tpi.category, tc.category, 'tool') AS category,
+        COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre) AS tech_name,
+        COALESCE(tc.plans, '[]'::jsonb) AS catalog_plans
+      FROM ti.tech_plan_info tpi
+      LEFT JOIN ti.technology_catalog tc ON (tpi.tech_id = tc.id OR LOWER(tpi.tech_name) = LOWER(tc.name) OR LOWER(tpi.producto_nombre) = LOWER(tc.name))
+    `;
+    const conditions = [];
     const params = [];
-    if (producto && producto.trim()) {
-      params.push(`%${producto.trim().toLowerCase()}%`);
-      query += ' WHERE LOWER(producto_nombre) LIKE $1';
+
+    if (tech_id) {
+      params.push(tech_id);
+      conditions.push(`(tpi.tech_id = $${params.length} OR tc.id = $${params.length})`);
     }
-    query += ' ORDER BY orden ASC, LOWER(producto_nombre) ASC, LOWER(plan_nombre) ASC';
+
+    if (category && category !== 'all') {
+      params.push(category);
+      conditions.push(`COALESCE(tpi.category, tc.category) = $${params.length}`);
+    }
+
+    const term = search || producto;
+    if (term && term.trim()) {
+      params.push(`%${term.trim().toLowerCase()}%`);
+      conditions.push(`(
+        LOWER(COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre)) LIKE $${params.length}
+        OR LOWER(tpi.plan_nombre) LIKE $${params.length}
+        OR LOWER(tpi.descripcion) LIKE $${params.length}
+      )`);
+    }
+
+    if (conditions.length > 0) {
+      query += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    query += ' ORDER BY tpi.orden ASC, LOWER(COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre)) ASC, LOWER(tpi.plan_nombre) ASC';
     const { rows } = await pool.query(query, params);
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
