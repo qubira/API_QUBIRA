@@ -129,6 +129,41 @@ function ensureSchema() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS ti.tech_plan_info (
+        id TEXT PRIMARY KEY,
+        producto_id TEXT,
+        producto_nombre TEXT NOT NULL,
+        plan_nombre TEXT NOT NULL,
+        categoria TEXT DEFAULT 'Web',
+        herramientas JSONB DEFAULT '[]'::jsonb,
+        precio TEXT,
+        descripcion TEXT,
+        limites_tecnicos TEXT,
+        agregados TEXT,
+        que_no_incluye TEXT,
+        ejemplo_consumo_mensual TEXT,
+        pasa_si_te_pasas_del_limite TEXT,
+        cuando_subir TEXT,
+        cuota_mensual TEXT,
+        limites_archivos TEXT,
+        limites_api TEXT,
+        cuentas_usuarios TEXT,
+        seguridad_control_acceso TEXT,
+        entrega_dominio TEXT,
+        respaldo_almacenamiento TEXT,
+        complementos_ia TEXT,
+        video TEXT,
+        soporte TEXT,
+        plan_no_resuelve TEXT,
+        campos_extra JSONB DEFAULT '[]'::jsonb,
+        orden INTEGER DEFAULT 0,
+        created_by TEXT,
+        created_area TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS tech_plan_info_prod_idx ON ti.tech_plan_info(LOWER(producto_nombre));
+
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_by INTEGER;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS project_type TEXT;
@@ -1580,6 +1615,149 @@ router.delete('/tech-stacks/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM ti.tech_stacks WHERE id=$1', [req.params.id]);
     res.json({ message: 'Eliminado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   INFO TÉCNICO (Fichas Técnicas por Producto y Plan)
+   Permite a ADG y OTI gestionar la información técnica completa:
+   planes, herramientas, límites, políticas, cuotas y campos extra.
+   ============================================================ */
+router.get('/tech-plan-info', async (req, res) => {
+  try {
+    const { producto } = req.query;
+    let query = 'SELECT * FROM ti.tech_plan_info';
+    const params = [];
+    if (producto && producto.trim()) {
+      params.push(`%${producto.trim().toLowerCase()}%`);
+      query += ' WHERE LOWER(producto_nombre) LIKE $1';
+    }
+    query += ' ORDER BY orden ASC, LOWER(producto_nombre) ASC, LOWER(plan_nombre) ASC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/tech-plan-info', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.producto_nombre || !b.producto_nombre.trim() || !b.plan_nombre || !b.plan_nombre.trim()) {
+      return res.status(400).json({ error: 'Producto asignado y Nombre del Plan son requeridos.' });
+    }
+    const id = uid();
+    const area = (await getEmployeeArea(req.user.username)) || 'OTI';
+    const herramientas = Array.isArray(b.herramientas) ? JSON.stringify(b.herramientas) : '[]';
+    const camposExtra = Array.isArray(b.campos_extra) ? JSON.stringify(b.campos_extra) : '[]';
+
+    await pool.query(`
+      INSERT INTO ti.tech_plan_info (
+        id, producto_id, producto_nombre, plan_nombre, categoria, herramientas, precio, descripcion,
+        limites_tecnicos, agregados, que_no_incluye, ejemplo_consumo_mensual,
+        pasa_si_te_pasas_del_limite, cuando_subir, cuota_mensual, limites_archivos,
+        limites_api, cuentas_usuarios, seguridad_control_acceso, entrega_dominio,
+        respaldo_almacenamiento, complementos_ia, video, soporte, plan_no_resuelve,
+        campos_extra, orden, created_by, created_area
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8,
+        $9, $10, $11, $12,
+        $13, $14, $15, $16,
+        $17, $18, $19, $20,
+        $21, $22, $23, $24, $25,
+        $26, $27, $28, $29
+      )
+    `, [
+      id, b.producto_id || null, b.producto_nombre.trim(), b.plan_nombre.trim(), b.categoria || 'Web',
+      herramientas, b.precio || '', b.descripcion || '',
+      b.limites_tecnicos || '', b.agregados || '', b.que_no_incluye || '', b.ejemplo_consumo_mensual || '',
+      b.pasa_si_te_pasas_del_limite || '', b.cuando_subir || '', b.cuota_mensual || '', b.limites_archivos || '',
+      b.limites_api || '', b.cuentas_usuarios || '', b.seguridad_control_acceso || '', b.entrega_dominio || '',
+      b.respaldo_almacenamiento || '', b.complementos_ia || '', b.video || '', b.soporte || '', b.plan_no_resuelve || '',
+      camposExtra, Number(b.orden) || 0, req.user.username || 'usuario', area
+    ]);
+
+    const { rows } = await pool.query('SELECT * FROM ti.tech_plan_info WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/tech-plan-info/:id', async (req, res) => {
+  try {
+    const { rows: existing } = await pool.query('SELECT id FROM ti.tech_plan_info WHERE id=$1', [req.params.id]);
+    if (!existing.length) return res.status(404).json({ error: 'Ficha técnica no encontrada.' });
+
+    const b = req.body || {};
+    const herramientas = b.herramientas !== undefined ? JSON.stringify(b.herramientas) : undefined;
+    const camposExtra = b.campos_extra !== undefined ? JSON.stringify(b.campos_extra) : undefined;
+
+    await pool.query(`
+      UPDATE ti.tech_plan_info SET
+        producto_id = COALESCE($1, producto_id),
+        producto_nombre = COALESCE($2, producto_nombre),
+        plan_nombre = COALESCE($3, plan_nombre),
+        categoria = COALESCE($4, categoria),
+        herramientas = COALESCE($5, herramientas),
+        precio = COALESCE($6, precio),
+        descripcion = COALESCE($7, descripcion),
+        limites_tecnicos = COALESCE($8, limites_tecnicos),
+        agregados = COALESCE($9, agregados),
+        que_no_incluye = COALESCE($10, que_no_incluye),
+        ejemplo_consumo_mensual = COALESCE($11, ejemplo_consumo_mensual),
+        pasa_si_te_pasas_del_limite = COALESCE($12, pasa_si_te_pasas_del_limite),
+        cuando_subir = COALESCE($13, cuando_subir),
+        cuota_mensual = COALESCE($14, cuota_mensual),
+        limites_archivos = COALESCE($15, limites_archivos),
+        limites_api = COALESCE($16, limites_api),
+        cuentas_usuarios = COALESCE($17, cuentas_usuarios),
+        seguridad_control_acceso = COALESCE($18, seguridad_control_acceso),
+        entrega_dominio = COALESCE($19, entrega_dominio),
+        respaldo_almacenamiento = COALESCE($20, respaldo_almacenamiento),
+        complementos_ia = COALESCE($21, complementos_ia),
+        video = COALESCE($22, video),
+        soporte = COALESCE($23, soporte),
+        plan_no_resuelve = COALESCE($24, plan_no_resuelve),
+        campos_extra = COALESCE($25, campos_extra),
+        orden = COALESCE($26, orden),
+        updated_at = NOW()
+      WHERE id = $27
+    `, [
+      b.producto_id !== undefined ? b.producto_id : null,
+      b.producto_nombre !== undefined ? b.producto_nombre.trim() : null,
+      b.plan_nombre !== undefined ? b.plan_nombre.trim() : null,
+      b.categoria !== undefined ? b.categoria : null,
+      herramientas !== undefined ? herramientas : null,
+      b.precio !== undefined ? b.precio : null,
+      b.descripcion !== undefined ? b.descripcion : null,
+      b.limites_tecnicos !== undefined ? b.limites_tecnicos : null,
+      b.agregados !== undefined ? b.agregados : null,
+      b.que_no_incluye !== undefined ? b.que_no_incluye : null,
+      b.ejemplo_consumo_mensual !== undefined ? b.ejemplo_consumo_mensual : null,
+      b.pasa_si_te_pasas_del_limite !== undefined ? b.pasa_si_te_pasas_del_limite : null,
+      b.cuando_subir !== undefined ? b.cuando_subir : null,
+      b.cuota_mensual !== undefined ? b.cuota_mensual : null,
+      b.limites_archivos !== undefined ? b.limites_archivos : null,
+      b.limites_api !== undefined ? b.limites_api : null,
+      b.cuentas_usuarios !== undefined ? b.cuentas_usuarios : null,
+      b.seguridad_control_acceso !== undefined ? b.seguridad_control_acceso : null,
+      b.entrega_dominio !== undefined ? b.entrega_dominio : null,
+      b.respaldo_almacenamiento !== undefined ? b.respaldo_almacenamiento : null,
+      b.complementos_ia !== undefined ? b.complementos_ia : null,
+      b.video !== undefined ? b.video : null,
+      b.soporte !== undefined ? b.soporte : null,
+      b.plan_no_resuelve !== undefined ? b.plan_no_resuelve : null,
+      camposExtra !== undefined ? camposExtra : null,
+      b.orden !== undefined ? Number(b.orden) : null,
+      req.params.id
+    ]);
+
+    const { rows } = await pool.query('SELECT * FROM ti.tech_plan_info WHERE id=$1', [req.params.id]);
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/tech-plan-info/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM ti.tech_plan_info WHERE id=$1', [req.params.id]);
+    res.json({ message: 'Ficha técnica eliminada con éxito.' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

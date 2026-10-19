@@ -482,6 +482,24 @@ router.get('/tech-catalog', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* INFO TÉCNICO (Solo lectura para ODN)
+   Permite a ODN consultar rápidamente las especificaciones técnicas,
+   herramientas, lenguajes, límites y políticas por plan de cada producto. */
+router.get('/tech-plan-info', async (req, res) => {
+  try {
+    const { producto } = req.query;
+    let query = 'SELECT * FROM ti.tech_plan_info';
+    const params = [];
+    if (producto && producto.trim()) {
+      params.push(`%${producto.trim().toLowerCase()}%`);
+      query += ' WHERE LOWER(producto_nombre) LIKE $1';
+    }
+    query += ' ORDER BY orden ASC, LOWER(producto_nombre) ASC, LOWER(plan_nombre) ASC';
+    const { rows } = await pool.query(query, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/stats', async (req, res) => {
   try {
     const { rows } = await pool.query(`
