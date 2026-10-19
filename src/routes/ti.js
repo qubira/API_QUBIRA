@@ -1272,6 +1272,21 @@ router.get('/technology-catalog', async (req, res) => {
     const { rows } = await pool.query(
       `SELECT * FROM ti.technology_catalog ${where} ORDER BY name ASC LIMIT 500`, params
     );
+    const area = await getEmployeeArea(req.user.username);
+    if (area === 'TI' || area === 'OTI') {
+      rows.forEach(r => {
+        r.costo = null;
+        r.margen_min = null;
+        r.margen_max = null;
+        if (Array.isArray(r.plans)) {
+          r.plans.forEach(p => {
+            p.costo = null;
+            p.margen_min = null;
+            p.margen_max = null;
+          });
+        }
+      });
+    }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1664,8 +1679,20 @@ router.get('/tech-plan-info', async (req, res) => {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ' ORDER BY tpi.orden ASC, LOWER(COALESCE(tpi.tech_name, tc.name, tpi.producto_nombre)) ASC, LOWER(tpi.plan_nombre) ASC';
     const { rows } = await pool.query(query, params);
+    const area = await getEmployeeArea(req.user.username);
+    if (area === 'TI' || area === 'OTI') {
+      rows.forEach(r => {
+        r.precio = null;
+        if (Array.isArray(r.catalog_plans)) {
+          r.catalog_plans.forEach(p => {
+            p.costo = null;
+            p.margen_min = null;
+            p.margen_max = null;
+          });
+        }
+      });
+    }
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
