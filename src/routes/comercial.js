@@ -71,6 +71,7 @@ function ensureSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS metodo_trabajo TEXT;
       CREATE INDEX IF NOT EXISTS comercial_contratos_cliente_idx ON comercial.contratos(cliente_id);
 
       CREATE TABLE IF NOT EXISTS comercial.proformas (
@@ -269,14 +270,14 @@ router.post('/contracts', async (req, res) => {
       INSERT INTO comercial.contratos
         (id, cliente_id, cliente_nombre, cliente_ruc, cliente_contacto, cliente_cargo, cliente_direccion,
          tipo, producto_nombre, moneda, monto, modalidad_pago, fecha_inicio, fecha_fin, garantia, objeto,
-         entregables, estado, responsable, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+         entregables, metodo_trabajo, estado, responsable, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, cli.contacto_nombre, cli.contacto_cargo, cli.direccion,
       b.tipo || 'Venta de Licencia', b.producto_nombre || null, b.moneda || 'USD', b.monto,
       b.modalidad_pago || null, b.fecha_inicio || null, b.fecha_fin || null, b.garantia || null, b.objeto || null,
-      b.entregables || null, b.estado || 'borrador', b.responsable || null, req.user.id,
+      b.entregables || null, b.metodo_trabajo || 'SCRUM (Desarrollo Ágil por Sprints)', b.estado || 'borrador', b.responsable || null, req.user.id,
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ contract });
