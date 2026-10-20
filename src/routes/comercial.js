@@ -89,6 +89,7 @@ function ensureSchema() {
         igv_monto NUMERIC(12,2) NOT NULL DEFAULT 0,
         total NUMERIC(12,2) NOT NULL DEFAULT 0,
         modalidad_pago TEXT, tiempo_entrega TEXT, garantia TEXT, alcance TEXT, observaciones TEXT,
+        metodo_trabajo TEXT, metodo_sprint TEXT, metodo_reuniones TEXT, metodo_herramientas TEXT, metodo_roles TEXT, metodo_detalle TEXT,
         fecha_emision DATE, validez_dias INTEGER NOT NULL DEFAULT 30, fecha_vencimiento DATE,
         estado TEXT NOT NULL DEFAULT 'borrador',
         responsable TEXT,
@@ -96,6 +97,13 @@ function ensureSchema() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+      ALTER TABLE comercial.proformas 
+        ADD COLUMN IF NOT EXISTS metodo_trabajo TEXT,
+        ADD COLUMN IF NOT EXISTS metodo_sprint TEXT,
+        ADD COLUMN IF NOT EXISTS metodo_reuniones TEXT,
+        ADD COLUMN IF NOT EXISTS metodo_herramientas TEXT,
+        ADD COLUMN IF NOT EXISTS metodo_roles TEXT,
+        ADD COLUMN IF NOT EXISTS metodo_detalle TEXT;
       CREATE INDEX IF NOT EXISTS comercial_proformas_cliente_idx ON comercial.proformas(cliente_id);
 
       -- Catálogo genérico de valores agregados a mano desde los combobox
@@ -342,9 +350,11 @@ router.post('/proformas', async (req, res) => {
       INSERT INTO comercial.proformas
         (id, cliente_id, cliente_nombre, cliente_ruc, cliente_contacto, cliente_cargo, cliente_email, cliente_telefono, cliente_direccion,
          tipo, producto_nombre, moneda, items, subtotal, descuento_pct, descuento_monto, subtotal_neto, igv_tipo, igv_monto, total,
-         modalidad_pago, tiempo_entrega, garantia, alcance, observaciones, fecha_emision, validez_dias, fecha_vencimiento,
+         modalidad_pago, tiempo_entrega, garantia, alcance, observaciones,
+         metodo_trabajo, metodo_sprint, metodo_reuniones, metodo_herramientas, metodo_roles, metodo_detalle,
+         fecha_emision, validez_dias, fecha_vencimiento,
          estado, responsable, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, b.cliente_contacto || cli.contacto_nombre, cli.contacto_cargo,
@@ -352,6 +362,12 @@ router.post('/proformas', async (req, res) => {
       b.tipo || 'Venta de Licencia', b.producto_nombre || null, b.moneda || 'USD', JSON.stringify(items),
       subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total,
       b.modalidad_pago || null, b.tiempo_entrega || null, b.garantia || null, b.alcance || null, b.observaciones || null,
+      b.metodo_trabajo || 'Scrum — Marco Ágil por Sprints con entregables continuos y feedback iterativo',
+      b.metodo_sprint || 'Sprints de 2 semanas con entregables funcionales y demostración',
+      b.metodo_reuniones || 'Sprint Planning + Sprint Review semanal + Canal Slack/Teams prioritario',
+      b.metodo_herramientas || 'Jira Software / Trello / GitHub Projects con acceso de visualización al cliente',
+      b.metodo_roles || 'Scrum Master, Product Owner técnico, Desarrolladores Full Stack y QA Engineer',
+      b.metodo_detalle || 'Desarrollo iterativo bajo marco Scrum con validaciones continuas.',
       b.fecha_emision || null, b.validez_dias || 30, b.fecha_vencimiento || null,
       b.estado || 'enviada', b.responsable || null, req.user.id,
     ]).then(r => r.rows[0]));
