@@ -220,6 +220,78 @@ router.get('/directory', async (req, res) => {
 });
 
 /* ============================================================
+   Disponibilidad de un equipo (p. ej. OTI = área TI) en un rango de
+   fechas: integrantes activos del área + sus bloques ocupados según
+   CUALQUIER reunión del calendario corporativo (de cualquier área).
+   Lo usa Comercial al proponer el inicio de sprints para no cruzarse
+   con la agenda de OTI. El contenido de cada reunión solo se revela a
+   quien ya podría verlo (misma área, participante/creador, o
+   privilegiado); al resto se le muestra "Reunión privada".
+   ============================================================ */
+router.get('/team-availability', async (req, res) => {
+  try {
+    const area = String(req.query.area || 'TI').toUpperCase();
+    const { from, to } = req.query;
+    const fechaValida = f => /^\d{4}-\d{2}-\d{2}$/.test(String(f || ''));
+    if (!fechaValida(from) || !fechaValida(to) || to < from) {
+      return res.status(400).json({ error: 'Rango de fechas inválido (from/to en formato YYYY-MM-DD)' });
+    }
+    if ((new Date(to) - new Date(from)) / 86400000 > 62) {
+      return res.status(400).json({ error: 'El rango máximo es de 62 días' });
+    }
+
+    const { rows: members } = await pool.query(`
+      SELECT u.id AS user_id, u.nombre, u.apellidos, e.cargo
+      FROM public.usuarios u
+      JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+      JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      WHERE u.estado = 'activo' AND upper(trim(c.nombre)) = $1
+      ORDER BY u.nombre ASC
+    `, [area]);
+    if (!members.length) return res.json({ area, from, to, members: [], busy: [], generated_at: new Date().toISOString() });
+
+    const { rows } = await pool.query(`
+      SELECT mp.user_id, m.id AS meeting_id, m.title, m.area, m.modality, m.created_by,
+             to_char(m.meeting_date,'YYYY-MM-DD') AS date,
+             to_char(m.start_time,'HH24:MI') AS start_time, to_char(m.end_time,'HH24:MI') AS end_time
+      FROM calendar.meeting_participants mp
+      JOIN calendar.meetings m ON m.id = mp.meeting_id
+      WHERE mp.participant_type = 'internal'
+        AND mp.user_id = ANY($1)
+        AND m.status <> 'cancelled'
+        AND m.meeting_date BETWEEN $2 AND $3
+      ORDER BY m.meeting_date, m.start_time
+    `, [members.map(m => m.user_id), from, to]);
+
+    const viewerArea = await getEmployeeArea(req.user.username);
+    const privileged = isPrivileged(req);
+    const ids = [...new Set(rows.map(r => r.meeting_id))];
+    let misReuniones = new Set();
+    if (ids.length) {
+      const { rows: mine } = await pool.query(
+        "SELECT meeting_id FROM calendar.meeting_participants WHERE user_id=$1 AND participant_type='internal' AND meeting_id = ANY($2)",
+        [req.user.id, ids]
+      );
+      misReuniones = new Set(mine.map(r => r.meeting_id));
+    }
+
+    const busy = rows.map(r => {
+      const canSeeDetail = privileged
+        || (viewerArea && r.area && viewerArea === String(r.area).toUpperCase())
+        || String(r.created_by) === String(req.user.id)
+        || misReuniones.has(r.meeting_id);
+      return {
+        user_id: r.user_id, date: r.date, start_time: r.start_time, end_time: r.end_time,
+        area: r.area, modality: r.modality,
+        title: canSeeDetail ? r.title : 'Reunión privada',
+      };
+    });
+
+    res.json({ area, from, to, members, busy, generated_at: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
    Reuniones
    ============================================================ */
 router.get('/meetings', async (req, res) => {
