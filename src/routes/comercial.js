@@ -377,6 +377,27 @@ async function nextProformaId() {
   return `PRF-${year}-${String(rows[0].n).padStart(3, '0')}`;
 }
 
+// Ítems y totales de una proforma, calculados en el servidor. Los ítems de
+// tecnología conservan sus datos de Tech Stack para poder reeditarlos.
+const CAMPOS_TECH = ['is_tech_variable', 'tech_id', 'category', 'name', 'plan_name', 'costo_base', 'margen_min', 'margen_max', 'propuesta', 'moneda', 'periodo', 'image_url'];
+function calcularProforma(b) {
+  const items = b.items.map(it => {
+    const cantidad = Number(it.cantidad) || 1;
+    const precio = Number(it.precio) || 0;
+    const base = { descripcion: it.descripcion || 'Servicio de desarrollo / software', cantidad, precio, subtotal: cantidad * precio };
+    if (it.is_tech_variable) CAMPOS_TECH.forEach(k => { if (it[k] !== undefined) base[k] = it[k]; });
+    return base;
+  });
+  const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
+  const descuentoPct = Number(b.descuento_pct) || 0;
+  const descuentoMonto = subtotal * (descuentoPct / 100);
+  const subtotalNeto = Math.max(0, subtotal - descuentoMonto);
+  const igvTipo = b.igv_tipo || 'igv_18';
+  const igvMonto = igvTipo === 'igv_18' ? subtotalNeto * 0.18 : 0;
+  const total = subtotalNeto + igvMonto;
+  return { items, subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total };
+}
+
 router.post('/proformas', async (req, res) => {
   try {
     const b = req.body || {};
@@ -387,18 +408,7 @@ router.post('/proformas', async (req, res) => {
     if (!cliRows.length) return res.status(400).json({ error: 'El cliente seleccionado no existe.' });
     const cli = cliRows[0];
 
-    const items = b.items.map(it => {
-      const cantidad = Number(it.cantidad) || 1;
-      const precio = Number(it.precio) || 0;
-      return { descripcion: it.descripcion || 'Servicio de desarrollo / software', cantidad, precio, subtotal: cantidad * precio };
-    });
-    const subtotal = items.reduce((s, it) => s + it.subtotal, 0);
-    const descuentoPct = Number(b.descuento_pct) || 0;
-    const descuentoMonto = subtotal * (descuentoPct / 100);
-    const subtotalNeto = Math.max(0, subtotal - descuentoMonto);
-    const igvTipo = b.igv_tipo || 'igv_18';
-    const igvMonto = igvTipo === 'igv_18' ? subtotalNeto * 0.18 : 0;
-    const total = subtotalNeto + igvMonto;
+    const { items, subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total } = calcularProforma(b);
 
     const proforma = await withIdRetry(nextProformaId, (id) => pool.query(`
       INSERT INTO comercial.proformas
@@ -429,6 +439,45 @@ router.post('/proformas', async (req, res) => {
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ proforma });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/proformas/:id', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.cliente_id || !Array.isArray(b.items) || !b.items.length) {
+      return res.status(400).json({ error: 'Falta el cliente o al menos un ítem de la cotización.' });
+    }
+    const { rows: existe } = await pool.query('SELECT id FROM comercial.proformas WHERE id=$1', [req.params.id]);
+    if (!existe.length) return res.status(404).json({ error: 'Proforma no encontrada' });
+    const { rows: cliRows } = await pool.query('SELECT * FROM comercial.clientes WHERE id=$1', [b.cliente_id]);
+    if (!cliRows.length) return res.status(400).json({ error: 'El cliente seleccionado no existe.' });
+    const cli = cliRows[0];
+    const { items, subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total } = calcularProforma(b);
+
+    const { rows } = await pool.query(`
+      UPDATE comercial.proformas SET
+        cliente_id=$2, cliente_nombre=$3, cliente_ruc=$4, cliente_contacto=$5, cliente_cargo=$6, cliente_email=$7, cliente_telefono=$8, cliente_direccion=$9,
+        tipo=$10, producto_nombre=$11, moneda=$12, items=$13, subtotal=$14, descuento_pct=$15, descuento_monto=$16, subtotal_neto=$17,
+        igv_tipo=$18, igv_monto=$19, total=$20, modalidad_pago=$21, tiempo_entrega=$22, garantia=$23, alcance=$24, observaciones=$25,
+        metodo_trabajo=$26, metodo_sprint=$27, metodo_reuniones=$28, metodo_herramientas=$29, metodo_roles=$30, metodo_detalle=$31,
+        fecha_emision=$32, validez_dias=$33, fecha_vencimiento=$34, estado=$35, responsable=$36,
+        tipo_cambio=$37, tipo_cambio_info=$38, updated_at=NOW()
+      WHERE id=$1
+      RETURNING *
+    `, [
+      req.params.id, cli.id, cli.razon_social, cli.ruc, b.cliente_contacto || cli.contacto_nombre, cli.contacto_cargo,
+      b.cliente_email || cli.email, b.cliente_telefono || cli.telefono, cli.direccion,
+      b.tipo || 'Venta de Licencia', b.producto_nombre || null, b.moneda || 'USD', JSON.stringify(items),
+      subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total,
+      b.modalidad_pago || null, b.tiempo_entrega || null, b.garantia || null, b.alcance || null, b.observaciones || null,
+      b.metodo_trabajo || null, b.metodo_sprint || null, b.metodo_reuniones || null,
+      b.metodo_herramientas || null, b.metodo_roles || null, b.metodo_detalle || null,
+      b.fecha_emision || null, b.validez_dias || 30, b.fecha_vencimiento || null, b.estado || 'enviada', b.responsable || null,
+      Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
+      b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
+    ]);
+    res.json({ proforma: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
