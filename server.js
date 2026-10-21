@@ -20,6 +20,7 @@ const jobsPublicRouter = require('./src/routes/jobs-public');
 const comercialRouter = require('./src/routes/comercial');
 const constanciasPublicRouter = require('./src/routes/constancias-public');
 const oppRouter = require('./src/routes/opp');
+const divisasRouter = require('./src/routes/divisas');
 const odaclRouter = require('./src/routes/odacl');
 
 const app  = express();
@@ -114,6 +115,7 @@ app.use('/api/analytics',  analyticsRouter);
 app.use('/api/public/jobs', jobsPublicRouter);
 app.use('/api/comercial',  comercialRouter);
 app.use('/api/opp',        oppRouter);
+app.use('/api/divisas',    divisasRouter);
 app.use('/api/odacl',      odaclRouter);
 app.use('/api/public/constancias', constanciasPublicRouter);
 

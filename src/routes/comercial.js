@@ -111,6 +111,11 @@ function ensureSchema() {
         ADD COLUMN IF NOT EXISTS metodo_herramientas TEXT,
         ADD COLUMN IF NOT EXISTS metodo_roles TEXT,
         ADD COLUMN IF NOT EXISTS metodo_detalle TEXT;
+      -- Tipo de cambio de OPP usado al emitir (soles por 1 unidad de la moneda)
+      ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS tipo_cambio NUMERIC(18,6);
+      ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS tipo_cambio_info JSONB;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS tipo_cambio NUMERIC(18,6);
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS tipo_cambio_info JSONB;
       CREATE INDEX IF NOT EXISTS comercial_proformas_cliente_idx ON comercial.proformas(cliente_id);
 
       -- Catálogo genérico de valores agregados a mano desde los combobox
@@ -313,8 +318,9 @@ router.post('/contracts', async (req, res) => {
         (id, cliente_id, cliente_nombre, cliente_ruc, cliente_contacto, cliente_cargo, cliente_direccion,
          tipo, producto_nombre, moneda, monto, modalidad_pago, fecha_inicio, fecha_fin, garantia, objeto,
          entregables, metodo_trabajo, estado, responsable, created_by,
-         plantilla_clave, plantilla_titulo, plantilla_version, contenido_html, campos_rellenos)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+         plantilla_clave, plantilla_titulo, plantilla_version, contenido_html, campos_rellenos,
+         tipo_cambio, tipo_cambio_info)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, cli.contacto_nombre, cli.contacto_cargo, cli.direccion,
@@ -322,7 +328,9 @@ router.post('/contracts', async (req, res) => {
       b.modalidad_pago || null, b.fecha_inicio || null, b.fecha_fin || null, b.garantia || null, b.objeto || null,
       b.entregables || null, b.metodo_trabajo || 'SCRUM (Desarrollo Ágil por Sprints)', b.estado || 'borrador', b.responsable || null, req.user.id,
       b.plantilla_clave || null, b.plantilla_titulo || null, b.plantilla_version || 1, b.contenido_html || null,
-      b.campos_rellenos ? JSON.stringify(b.campos_rellenos) : null
+      b.campos_rellenos ? JSON.stringify(b.campos_rellenos) : null,
+      Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
+      b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ contract });
@@ -399,8 +407,8 @@ router.post('/proformas', async (req, res) => {
          modalidad_pago, tiempo_entrega, garantia, alcance, observaciones,
          metodo_trabajo, metodo_sprint, metodo_reuniones, metodo_herramientas, metodo_roles, metodo_detalle,
          fecha_emision, validez_dias, fecha_vencimiento,
-         estado, responsable, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
+         estado, responsable, created_by, tipo_cambio, tipo_cambio_info)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, b.cliente_contacto || cli.contacto_nombre, cli.contacto_cargo,
@@ -416,6 +424,8 @@ router.post('/proformas', async (req, res) => {
       b.metodo_detalle || null,
       b.fecha_emision || null, b.validez_dias || 30, b.fecha_vencimiento || null,
       b.estado || 'enviada', b.responsable || null, req.user.id,
+      Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
+      b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ proforma });
