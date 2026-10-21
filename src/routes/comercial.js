@@ -114,6 +114,8 @@ function ensureSchema() {
       -- Tipo de cambio de OPP usado al emitir (soles por 1 unidad de la moneda)
       ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS tipo_cambio NUMERIC(18,6);
       ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS tipo_cambio_info JSONB;
+      -- Requerimientos funcionales (RF) y no funcionales (RNF) definidos en la proforma
+      ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS requerimientos JSONB DEFAULT '[]'::jsonb;
       ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS tipo_cambio NUMERIC(18,6);
       ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS tipo_cambio_info JSONB;
       -- Proforma de la que se generó el contrato
@@ -388,6 +390,20 @@ async function nextProformaId() {
 // Ítems y totales de una proforma, calculados en el servidor. Los ítems de
 // tecnología conservan sus datos de Tech Stack para poder reeditarlos.
 const CAMPOS_TECH = ['is_tech_variable', 'tech_id', 'category', 'name', 'plan_name', 'costo_base', 'margen_min', 'margen_max', 'propuesta', 'moneda', 'periodo', 'image_url'];
+// Requerimientos RF/RNF: se guardan en el orden dado, con título, detalle y prioridad
+function limpiarRequerimientos(lista) {
+  if (!Array.isArray(lista)) return [];
+  return lista
+    .filter(r => r && ['RF', 'RNF'].includes(r.tipo) && String(r.titulo || '').trim())
+    .slice(0, 150)
+    .map(r => ({
+      tipo: r.tipo,
+      titulo: String(r.titulo).trim().slice(0, 300),
+      detalle: String(r.detalle || '').trim().slice(0, 3000),
+      prioridad: ['Alta', 'Media', 'Baja'].includes(r.prioridad) ? r.prioridad : 'Media',
+    }));
+}
+
 function calcularProforma(b) {
   const items = b.items.map(it => {
     const cantidad = Number(it.cantidad) || 1;
@@ -425,8 +441,8 @@ router.post('/proformas', async (req, res) => {
          modalidad_pago, tiempo_entrega, garantia, alcance, observaciones,
          metodo_trabajo, metodo_sprint, metodo_reuniones, metodo_herramientas, metodo_roles, metodo_detalle,
          fecha_emision, validez_dias, fecha_vencimiento,
-         estado, responsable, created_by, tipo_cambio, tipo_cambio_info)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39)
+         estado, responsable, created_by, tipo_cambio, tipo_cambio_info, requerimientos)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, b.cliente_contacto || cli.contacto_nombre, cli.contacto_cargo,
@@ -444,6 +460,7 @@ router.post('/proformas', async (req, res) => {
       b.estado || 'enviada', b.responsable || null, req.user.id,
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
+      JSON.stringify(limpiarRequerimientos(b.requerimientos)),
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ proforma });
@@ -470,7 +487,7 @@ router.put('/proformas/:id', async (req, res) => {
         igv_tipo=$18, igv_monto=$19, total=$20, modalidad_pago=$21, tiempo_entrega=$22, garantia=$23, alcance=$24, observaciones=$25,
         metodo_trabajo=$26, metodo_sprint=$27, metodo_reuniones=$28, metodo_herramientas=$29, metodo_roles=$30, metodo_detalle=$31,
         fecha_emision=$32, validez_dias=$33, fecha_vencimiento=$34, estado=$35, responsable=$36,
-        tipo_cambio=$37, tipo_cambio_info=$38, updated_at=NOW()
+        tipo_cambio=$37, tipo_cambio_info=$38, requerimientos=$39, updated_at=NOW()
       WHERE id=$1
       RETURNING *
     `, [
@@ -484,6 +501,7 @@ router.put('/proformas/:id', async (req, res) => {
       b.fecha_emision || null, b.validez_dias || 30, b.fecha_vencimiento || null, b.estado || 'enviada', b.responsable || null,
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
+      JSON.stringify(limpiarRequerimientos(b.requerimientos)),
     ]);
     res.json({ proforma: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
