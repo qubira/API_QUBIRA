@@ -11,9 +11,15 @@ const { requireModuleAccess } = require('../lib/moduleAccess');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-// Permite acceso con módulo ODACL, DJ o administradores (nivel >= 100)
+// Permite acceso con módulo ODACL, DJ o administradores (nivel >= 100),
+// y permite lectura (GET) de plantillas oficiales del Catálogo también a ODN / COMERCIAL.
 router.use(requireAuth);
-router.use(requireModuleAccess('ODACL', 'DJ', 'ADG'));
+router.use((req, res, next) => {
+  if (req.method === 'GET' && req.path.startsWith('/templates')) {
+    return requireModuleAccess('ODACL', 'DJ', 'ADG', 'COMERCIAL', 'ODN')(req, res, next);
+  }
+  return requireModuleAccess('ODACL', 'DJ', 'ADG')(req, res, next);
+});
 
 let schemaReady = null;
 function ensureOdaclSchema() {

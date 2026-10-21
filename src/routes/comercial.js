@@ -5,6 +5,7 @@ const crypto   = require('crypto');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
+const { getApprovedTemplates, getApprovedTemplateByKey } = require('../lib/legalTemplates');
 
 function uid() { return crypto.randomUUID(); }
 
@@ -72,6 +73,11 @@ function ensureSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
       ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS metodo_trabajo TEXT;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS plantilla_clave TEXT;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS plantilla_titulo TEXT;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS plantilla_version INT;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS contenido_html TEXT;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS campos_rellenos JSONB;
       CREATE INDEX IF NOT EXISTS comercial_contratos_cliente_idx ON comercial.contratos(cliente_id);
 
       CREATE TABLE IF NOT EXISTS comercial.proformas (
@@ -238,12 +244,48 @@ router.delete('/clients/:id', async (req, res) => {
 });
 
 /* ============================================================
+   PLANTILLAS LEGALES OFICIALES (CATÁLOGO APROBADO POR ODACL)
+   El equipo de ODN jala directamente las plantillas corporativas
+   aprobadas por ODACL con sus cláusulas oficiales completas.
+   Cualquier actualización publicada en ODACL se refleja de inmediato
+   para nuevos contratos, mientras los ya emitidos conservan su copia fiel.
+   ============================================================ */
+router.get('/contract-templates', async (req, res) => {
+  try {
+    const templates = await getApprovedTemplates(pool);
+    res.json({ ok: true, templates });
+  } catch (e) {
+    console.error('[COMERCIAL] Error obteniendo plantillas de contratos:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudieron obtener las plantillas legales aprobadas' });
+  }
+});
+
+router.get('/contract-templates/:clave', async (req, res) => {
+  try {
+    const template = await getApprovedTemplateByKey(pool, req.params.clave);
+    if (!template) return res.status(404).json({ ok: false, error: 'Plantilla legal no encontrada' });
+    res.json({ ok: true, template });
+  } catch (e) {
+    console.error('[COMERCIAL] Error obteniendo plantilla:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo obtener la plantilla' });
+  }
+});
+
+/* ============================================================
    CONTRATOS
    ============================================================ */
 router.get('/contracts', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM comercial.contratos ORDER BY created_at DESC');
     res.json({ contracts: rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/contracts/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM comercial.contratos WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato no encontrado' });
+    res.json({ contract: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -270,14 +312,17 @@ router.post('/contracts', async (req, res) => {
       INSERT INTO comercial.contratos
         (id, cliente_id, cliente_nombre, cliente_ruc, cliente_contacto, cliente_cargo, cliente_direccion,
          tipo, producto_nombre, moneda, monto, modalidad_pago, fecha_inicio, fecha_fin, garantia, objeto,
-         entregables, metodo_trabajo, estado, responsable, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+         entregables, metodo_trabajo, estado, responsable, created_by,
+         plantilla_clave, plantilla_titulo, plantilla_version, contenido_html, campos_rellenos)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, cli.contacto_nombre, cli.contacto_cargo, cli.direccion,
       b.tipo || 'Venta de Licencia', b.producto_nombre || null, b.moneda || 'USD', b.monto,
       b.modalidad_pago || null, b.fecha_inicio || null, b.fecha_fin || null, b.garantia || null, b.objeto || null,
       b.entregables || null, b.metodo_trabajo || 'SCRUM (Desarrollo Ágil por Sprints)', b.estado || 'borrador', b.responsable || null, req.user.id,
+      b.plantilla_clave || null, b.plantilla_titulo || null, b.plantilla_version || 1, b.contenido_html || null,
+      b.campos_rellenos ? JSON.stringify(b.campos_rellenos) : null
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ contract });
