@@ -20,6 +20,7 @@ const { pool }         = require('../db');
 const cloudinary       = require('../config/cloudinary');
 const { requireAuth }  = require('../middleware/auth');
 const { getEmployeeArea } = require('../lib/employeeArea');
+const { requireModuleAccess } = require('../lib/moduleAccess');
 const ti                = require('./ti'); // reutiliza canAccessProject (misma regla de acceso a proyectos TI/ADG)
 
 const router = express.Router();
@@ -288,6 +289,98 @@ router.get('/team-availability', async (req, res) => {
     });
 
     res.json({ area, from, to, members, busy, generated_at: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   Plan de proyecto → reuniones en la agenda de un equipo (OTI).
+   Comercial, al guardar una proforma, envía el inicio y cada entregable
+   (sprint) con su hora y los integrantes de OTI elegidos. Se crean como
+   reuniones del área del equipo (TI) para que aparezcan en
+   "Calendario — OTI" y en "Mi agenda" de cada participante.
+   Solo cuentas con acceso a Comercial/ODN/ADG (o privilegiadas).
+   ============================================================ */
+const HORA_RE = /^\d{2}:\d{2}$/;
+const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+router.post('/team-plan', requireModuleAccess('COMERCIAL', 'ODN', 'ADG'), async (req, res) => {
+  try {
+    const area = String(req.body.area || 'TI').toUpperCase();
+    const modality = req.body.modality === 'presencial' ? 'presencial' : 'virtual';
+    const origen = String(req.body.origen || '').slice(0, 120);
+    const proyecto = String(req.body.proyecto || '').slice(0, 160);
+    const resumen = String(req.body.resumen || '').slice(0, 2000);
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    if (!items.length) return res.status(400).json({ error: 'No hay reuniones para agendar' });
+    if (items.length > 40) return res.status(400).json({ error: 'Máximo 40 reuniones por plan' });
+
+    for (const it of items) {
+      if (!FECHA_RE.test(it.fecha || '') || !HORA_RE.test(it.hora_inicio || '') || !HORA_RE.test(it.hora_fin || '') || it.hora_fin <= it.hora_inicio) {
+        return res.status(400).json({ error: 'Fecha u hora inválida en el plan' });
+      }
+      if (!Array.isArray(it.participantes) || !it.participantes.length) {
+        return res.status(400).json({ error: `Elige al menos un integrante de ${area} para la reunión del ${it.fecha}` });
+      }
+    }
+
+    // Los participantes deben ser integrantes activos del área destino
+    const todos = [...new Set(items.flatMap(it => it.participantes.map(Number)))];
+    const { rows: validos } = await pool.query(`
+      SELECT u.id FROM public.usuarios u
+      JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
+      JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      WHERE u.estado = 'activo' AND upper(trim(c.nombre)) = $1 AND u.id = ANY($2)
+    `, [area, todos]);
+    if (validos.length !== todos.length) {
+      return res.status(400).json({ error: `Algún participante no es un integrante activo de ${area}` });
+    }
+
+    // Cruces de horario (mismo criterio que al crear una reunión)
+    const viewerArea = await getEmployeeArea(req.user.username);
+    const ctx = { viewerArea, viewerId: req.user.id, privileged: isPrivileged(req) };
+    const conflictos = [];
+    for (const it of items) {
+      const rows = await findScheduleConflicts({ userIds: it.participantes.map(Number), date: it.fecha, startTime: it.hora_inicio, endTime: it.hora_fin });
+      conflictos.push(...formatConflicts(rows, ctx, modality));
+    }
+    if (conflictos.some(c => c.hard)) {
+      return res.status(409).json({ error: 'Existen cruces de horario con reuniones presenciales', conflicts: conflictos });
+    }
+
+    const client = await pool.connect();
+    const creadas = [];
+    try {
+      await client.query('BEGIN');
+      for (const it of items) {
+        const id = uid();
+        const esInicio = it.tipo === 'inicio';
+        const etiqueta = esInicio ? 'Inicio del proyecto' : `Entrega Sprint ${Number(it.numero) || ''}${it.final ? ' (entrega final)' : ''}`.trim();
+        const title = `${etiqueta}${proyecto ? ' — ' + proyecto : ''}`.slice(0, 200);
+        await client.query(`
+          INSERT INTO calendar.meetings (id,title,description,motivo,modality,meeting_date,start_time,end_time,area,meeting_type,created_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [id, title, resumen || null, origen ? `Plan de ${origen} (Comercial)` : 'Plan de proyecto (Comercial)', modality,
+           it.fecha, it.hora_inicio, it.hora_fin, area, esInicio ? 'Planificación' : 'Revisión', req.user.id]
+        );
+        for (const uidPart of it.participantes.map(Number)) {
+          await client.query(`
+            INSERT INTO calendar.meeting_participants (id, meeting_id, participant_type, user_id, role, time_range, modality)
+            VALUES ($1,$2,'internal',$3,$4, tsrange(($5::date + $6::time)::timestamp, ($5::date + $7::time)::timestamp, '[)'), $8)`,
+            [uid(), id, uidPart, esInicio ? 'Equipo de inicio' : 'Equipo de entrega', it.fecha, it.hora_inicio, it.hora_fin, modality]
+          );
+        }
+        creadas.push({ id, fecha: it.fecha, hora_inicio: it.hora_inicio, title });
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK');
+      if (e.code === '23P01') {
+        return res.status(409).json({ error: 'Un integrante quedó ocupado en ese horario justo ahora. Revisa la agenda e intenta de nuevo.' });
+      }
+      throw e;
+    } finally { client.release(); }
+
+    res.status(201).json({ created: creadas, warnings: conflictos });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
