@@ -116,6 +116,8 @@ function ensureSchema() {
       ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS tipo_cambio_info JSONB;
       ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS tipo_cambio NUMERIC(18,6);
       ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS tipo_cambio_info JSONB;
+      -- Proforma de la que se generó el contrato
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS proforma_id TEXT;
       CREATE INDEX IF NOT EXISTS comercial_proformas_cliente_idx ON comercial.proformas(cliente_id);
 
       -- Catálogo genérico de valores agregados a mano desde los combobox
@@ -319,8 +321,8 @@ router.post('/contracts', async (req, res) => {
          tipo, producto_nombre, moneda, monto, modalidad_pago, fecha_inicio, fecha_fin, garantia, objeto,
          entregables, metodo_trabajo, estado, responsable, created_by,
          plantilla_clave, plantilla_titulo, plantilla_version, contenido_html, campos_rellenos,
-         tipo_cambio, tipo_cambio_info)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+         tipo_cambio, tipo_cambio_info, proforma_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, cli.contacto_nombre, cli.contacto_cargo, cli.direccion,
@@ -330,8 +332,14 @@ router.post('/contracts', async (req, res) => {
       b.plantilla_clave || null, b.plantilla_titulo || null, b.plantilla_version || 1, b.contenido_html || null,
       b.campos_rellenos ? JSON.stringify(b.campos_rellenos) : null,
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
-      b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null
+      b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
+      b.proforma_id || null
     ]).then(r => r.rows[0]));
+
+    // La proforma de origen queda como "convertida" recién cuando el contrato existe
+    if (b.proforma_id) {
+      await pool.query("UPDATE comercial.proformas SET estado='convertida', updated_at=NOW() WHERE id=$1", [b.proforma_id]);
+    }
 
     res.status(201).json({ contract });
   } catch (e) { res.status(500).json({ error: e.message }); }
