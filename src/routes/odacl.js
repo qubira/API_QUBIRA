@@ -37,6 +37,19 @@ function ensureOdaclSchema() {
       );
       CREATE INDEX IF NOT EXISTS idx_odacl_docs_tipo ON odacl.legal_documents (tipo_documento);
       CREATE INDEX IF NOT EXISTS idx_odacl_docs_updated ON odacl.legal_documents (updated_at DESC);
+
+      -- Plantillas oficiales del Catálogo reemplazadas por un documento editado
+      CREATE TABLE IF NOT EXISTS odacl.official_templates (
+        clave TEXT PRIMARY KEY,
+        titulo TEXT,
+        tipo_documento TEXT,
+        contenido_html TEXT NOT NULL,
+        origen_doc_id TEXT,
+        origen_titulo TEXT,
+        origen_version INT,
+        actualizado_por TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
   }
   return schemaReady;
@@ -266,6 +279,80 @@ router.delete('/documents/:id', async (req, res) => {
   } catch (err) {
     console.error('[ODACL] Error eliminando documento:', err.message);
     res.status(500).json({ ok: false, error: 'Error al eliminar el documento' });
+  }
+});
+
+/* ============================================================
+   PLANTILLAS OFICIALES DEL CATÁLOGO
+   Un documento editado puede publicarse como la plantilla oficial de su
+   tipo; todo el equipo ODACL la ve en el Catálogo con fecha y autor.
+   ============================================================ */
+const CLAVE_PLANTILLA = /^[a-z0-9_]{2,60}$/;
+
+router.get('/templates', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo,
+              origen_version, actualizado_por, updated_at
+         FROM odacl.official_templates ORDER BY updated_at DESC`
+    );
+    res.json({ ok: true, templates: result.rows });
+  } catch (err) {
+    console.error('[ODACL] Error listando plantillas oficiales:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudieron obtener las plantillas oficiales' });
+  }
+});
+
+router.put('/templates/:clave', async (req, res) => {
+  try {
+    const { clave } = req.params;
+    if (!CLAVE_PLANTILLA.test(clave)) {
+      return res.status(400).json({ ok: false, error: 'Clave de plantilla no válida' });
+    }
+    const { titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version } = req.body || {};
+    if (!contenido_html || typeof contenido_html !== 'string' || contenido_html.length < 20) {
+      return res.status(400).json({ ok: false, error: 'El contenido de la plantilla es requerido' });
+    }
+    if (contenido_html.length > 950 * 1024) {
+      return res.status(413).json({ ok: false, error: 'La plantilla supera el tamaño máximo (1 MB)' });
+    }
+    const autor = req.user?.username || 'ODACL Legal';
+    const result = await pool.query(
+      `INSERT INTO odacl.official_templates
+         (clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, actualizado_por, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       ON CONFLICT (clave) DO UPDATE SET
+         titulo = EXCLUDED.titulo,
+         tipo_documento = EXCLUDED.tipo_documento,
+         contenido_html = EXCLUDED.contenido_html,
+         origen_doc_id = EXCLUDED.origen_doc_id,
+         origen_titulo = EXCLUDED.origen_titulo,
+         origen_version = EXCLUDED.origen_version,
+         actualizado_por = EXCLUDED.actualizado_por,
+         updated_at = NOW()
+       RETURNING *`,
+      [clave, titulo || null, tipo_documento || null, contenido_html, origen_doc_id || null,
+       origen_titulo || null, Number.isInteger(origen_version) ? origen_version : null, autor]
+    );
+    res.json({ ok: true, message: 'Plantilla oficial actualizada', template: result.rows[0] });
+  } catch (err) {
+    console.error('[ODACL] Error actualizando plantilla oficial:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo actualizar la plantilla oficial' });
+  }
+});
+
+// Restaurar la plantilla original del sistema (elimina la versión oficial publicada)
+router.delete('/templates/:clave', async (req, res) => {
+  try {
+    const { clave } = req.params;
+    if (!CLAVE_PLANTILLA.test(clave)) {
+      return res.status(400).json({ ok: false, error: 'Clave de plantilla no válida' });
+    }
+    await pool.query(`DELETE FROM odacl.official_templates WHERE clave = $1`, [clave]);
+    res.json({ ok: true, message: 'Plantilla restaurada a la versión original' });
+  } catch (err) {
+    console.error('[ODACL] Error restaurando plantilla:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo restaurar la plantilla' });
   }
 });
 
