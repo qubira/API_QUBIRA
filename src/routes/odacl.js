@@ -15,7 +15,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 // y permite lectura (GET) de plantillas oficiales del Catálogo también a ODN / COMERCIAL.
 router.use(requireAuth);
 router.use((req, res, next) => {
-  if (req.method === 'GET' && req.path.startsWith('/templates')) {
+  if (req.method === 'GET' && (req.path.startsWith('/templates') || req.path === '/info-societaria')) {
     return requireModuleAccess('ODACL', 'DJ', 'ADG', 'COMERCIAL', 'ODN')(req, res, next);
   }
   return requireModuleAccess('ODACL', 'DJ', 'ADG')(req, res, next);
@@ -53,6 +53,14 @@ function ensureOdaclSchema() {
         origen_doc_id TEXT,
         origen_titulo TEXT,
         origen_version INT,
+        actualizado_por TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- Ficha societaria oficial de QUBIRA (la usan los contratos de ODN)
+      CREATE TABLE IF NOT EXISTS odacl.info_societaria (
+        id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        datos JSONB NOT NULL DEFAULT '{}'::jsonb,
         actualizado_por TEXT,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
@@ -293,6 +301,55 @@ router.delete('/documents/:id', async (req, res) => {
    Un documento editado puede publicarse como la plantilla oficial de su
    tipo; todo el equipo ODACL la ve en el Catálogo con fecha y autor.
    ============================================================ */
+/* ============================================================
+   INFORMACIÓN SOCIETARIA OFICIAL DE QUBIRA
+   ODACL la mantiene; ODN / COMERCIAL la lee para los contratos.
+   ============================================================ */
+const INFO_SOCIETARIA_BASE = {
+  razon_social: 'QUBIRA',
+  tipo_sociedad: 'Sociedad Anónima Cerrada (Ley 26887)',
+  ruc: '10764275981',
+  estado_ruc: 'ACTIVO',
+  condicion_ruc: 'HABIDO',
+  domicilio: 'Lima, República del Perú',
+  distrito: 'Ancón',
+  provincia: 'Lima',
+  departamento: 'Lima',
+  correo: 'qubirasac@gmail.com',
+  web: 'www.qubira.vercel.app',
+  regimen: 'Régimen MYPE Tributario SUNAT',
+};
+const CAMPOS_INFO_SOCIETARIA = Object.keys(INFO_SOCIETARIA_BASE);
+
+async function leerInfoSocietaria() {
+  const { rows } = await pool.query('SELECT datos, actualizado_por, updated_at FROM odacl.info_societaria WHERE id = 1');
+  const r = rows[0];
+  return { ...INFO_SOCIETARIA_BASE, ...(r?.datos || {}), actualizado_por: r?.actualizado_por || null, updated_at: r?.updated_at || null };
+}
+
+router.get('/info-societaria', async (req, res) => {
+  try { res.json({ ok: true, info: await leerInfoSocietaria() }); }
+  catch (e) { console.error('[ODACL] info societaria:', e.message); res.status(500).json({ ok: false, error: 'No se pudo leer la información societaria.' }); }
+});
+
+router.put('/info-societaria', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const datos = {};
+    CAMPOS_INFO_SOCIETARIA.forEach(k => { if (b[k] !== undefined) datos[k] = String(b[k] ?? '').trim().slice(0, 300); });
+    if (datos.razon_social === '' || datos.ruc === '') return res.status(400).json({ ok: false, error: 'La razón social y el RUC son obligatorios.' });
+    const autor = `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim() || req.user.username;
+    await pool.query(`
+      INSERT INTO odacl.info_societaria (id, datos, actualizado_por, updated_at) VALUES (1, $1::jsonb, $2, NOW())
+      ON CONFLICT (id) DO UPDATE SET datos = odacl.info_societaria.datos || EXCLUDED.datos, actualizado_por = EXCLUDED.actualizado_por, updated_at = NOW()`,
+      [JSON.stringify(datos), autor]);
+    res.json({ ok: true, info: await leerInfoSocietaria() });
+  } catch (e) {
+    console.error('[ODACL] guardar info societaria:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la información societaria.' });
+  }
+});
+
 const CLAVE_PLANTILLA = /^[a-z0-9_]{2,60}$/;
 
 router.get('/templates', async (req, res) => {
