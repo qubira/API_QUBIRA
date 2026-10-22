@@ -605,6 +605,9 @@ async function getApprovedTemplates(poolInstance) {
           origenVersion: row.origen_version
         };
         templatesMap[row.clave].updated_at = row.updated_at;
+      } else if (/_anexo_[a-z0-9]+$/.test(row.clave)) {
+        // Los anexos de un contrato (ODACL) no son plantillas de contrato
+        continue;
       } else {
         // Plantilla extra registrada en la base de datos
         templatesMap[row.clave] = {
