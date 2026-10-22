@@ -182,10 +182,11 @@ router.get('/mi-perfil', async (req, res) => {
         WHERE lower(e.usuario) = lower($1) LIMIT 1`, [req.user.username]);
     const e = rows[0];
     if (e) {
-      const completo = limpio([e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido].join(' ')) || limpio(`${e.nombre || ''} ${e.apellido || ''}`);
-      if (completo && completo.length > nombre.length) nombre = completo;
-      if (!dni) dni = limpio(e.numero_documento);
-      cargo = limpio(e.cargo);
+      // Algunos campos de RRHH se guardan cifrados: solo se usan si son texto legible
+      const legible = v => { const t = limpio(v); return t && !/[=+\/]|[A-Za-z0-9]{20,}/.test(t) ? t : ''; };
+      if (!nombre) nombre = [e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido].map(legible).filter(Boolean).join(' ');
+      if (!dni) dni = /^[0-9A-Za-z-]{6,15}$/.test(limpio(e.numero_documento)) ? limpio(e.numero_documento) : '';
+      cargo = legible(e.cargo);
     }
   } catch (e) { /* sin ficha en RRHH */ }
   res.json({ ok: true, perfil: { nombre: nombre || limpio(req.user.username), dni, cargo, username: req.user.username } });
