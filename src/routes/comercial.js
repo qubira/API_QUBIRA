@@ -124,6 +124,26 @@ function ensureSchema() {
       ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS proforma_id TEXT;
       CREATE INDEX IF NOT EXISTS comercial_proformas_cliente_idx ON comercial.proformas(cliente_id);
 
+      -- Versiones de la proforma (ítems, costos variables y requerimientos). La v1 es
+      -- lo emitido originalmente; cada cambio desde el contrato crea una versión nueva
+      -- y la proforma pasa a usar esa (version_actual). Nada se borra.
+      ALTER TABLE comercial.proformas ADD COLUMN IF NOT EXISTS version_actual INT NOT NULL DEFAULT 1;
+      ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS proforma_version INT;
+      CREATE TABLE IF NOT EXISTS comercial.proforma_versiones (
+        id SERIAL PRIMARY KEY,
+        proforma_id TEXT NOT NULL REFERENCES comercial.proformas(id) ON DELETE CASCADE,
+        version INT NOT NULL,
+        items JSONB NOT NULL DEFAULT '[]',
+        requerimientos JSONB NOT NULL DEFAULT '[]',
+        moneda TEXT,
+        subtotal NUMERIC(12,2), descuento_pct NUMERIC(5,2), descuento_monto NUMERIC(12,2),
+        subtotal_neto NUMERIC(12,2), igv_tipo TEXT, igv_monto NUMERIC(12,2), total NUMERIC(12,2),
+        nota TEXT,
+        creado_por TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (proforma_id, version)
+      );
+
       -- Catálogo genérico de valores agregados a mano desde los combobox
       -- de Cliente (Rubro, País, Provincia, Distrito, Cargo, y cualquier
       -- otro que se sume después — "tipo" los distingue, sin necesitar
@@ -418,8 +438,8 @@ router.post('/contracts', async (req, res) => {
          tipo, producto_nombre, moneda, monto, modalidad_pago, fecha_inicio, fecha_fin, garantia, objeto,
          entregables, metodo_trabajo, estado, responsable, created_by,
          plantilla_clave, plantilla_titulo, plantilla_version, contenido_html, campos_rellenos,
-         tipo_cambio, tipo_cambio_info, proforma_id)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+         tipo_cambio, tipo_cambio_info, proforma_id, proforma_version)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
       RETURNING *
     `, [
       id, cli.id, cli.razon_social, cli.ruc, cli.contacto_nombre, cli.contacto_cargo, cli.direccion,
@@ -430,7 +450,8 @@ router.post('/contracts', async (req, res) => {
       b.campos_rellenos ? JSON.stringify(b.campos_rellenos) : null,
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
-      b.proforma_id || null
+      b.proforma_id || null,
+      Number(b.proforma_version) > 0 ? Number(b.proforma_version) : null,
     ]).then(r => r.rows[0]));
 
     // La proforma de origen queda como "convertida" recién cuando el contrato existe
@@ -598,7 +619,118 @@ router.put('/proformas/:id', async (req, res) => {
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
       JSON.stringify(limpiarRequerimientos(b.requerimientos)),
     ]);
-    res.json({ proforma: rows[0] });
+    // Si la proforma ya tiene historial y cambiaron sus ítems o requerimientos, queda como versión nueva
+    let proforma = rows[0];
+    const { rows: ult } = await pool.query('SELECT items, requerimientos FROM comercial.proforma_versiones WHERE proforma_id=$1 ORDER BY version DESC LIMIT 1', [proforma.id]);
+    if (ult.length && (JSON.stringify(ult[0].items) !== JSON.stringify(proforma.items) || JSON.stringify(ult[0].requerimientos) !== JSON.stringify(proforma.requerimientos))) {
+      const r = await crearVersionProforma(proforma.id, { items: proforma.items, requerimientos: proforma.requerimientos, descuento_pct: proforma.descuento_pct }, 'Editada en Proformas', autorDe(req));
+      if (r.proforma) proforma = r.proforma;
+    }
+    res.json({ proforma });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* ============================================================
+   VERSIONES DE LA PROFORMA
+   ============================================================ */
+const COLS_VERSION = 'id, proforma_id, version, items, requerimientos, moneda, subtotal, descuento_pct, descuento_monto, subtotal_neto, igv_tipo, igv_monto, total, nota, creado_por, created_at';
+
+// La primera vez que se versiona, lo emitido originalmente queda guardado como v1
+async function asegurarVersionInicial(db, p) {
+  const { rows } = await db.query('SELECT 1 FROM comercial.proforma_versiones WHERE proforma_id=$1 LIMIT 1', [p.id]);
+  if (rows.length) return;
+  await db.query(`
+    INSERT INTO comercial.proforma_versiones
+      (proforma_id, version, items, requerimientos, moneda, subtotal, descuento_pct, descuento_monto, subtotal_neto, igv_tipo, igv_monto, total, nota, creado_por, created_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'Versión original de la proforma', $13, $14)
+    ON CONFLICT (proforma_id, version) DO NOTHING`,
+    [p.id, p.version_actual || 1, JSON.stringify(p.items || []), JSON.stringify(p.requerimientos || []), p.moneda,
+     p.subtotal, p.descuento_pct, p.descuento_monto, p.subtotal_neto, p.igv_tipo, p.igv_monto, p.total,
+     p.responsable || null, p.created_at || new Date()]);
+}
+
+async function listarVersiones(db, id) {
+  const { rows } = await db.query(`SELECT ${COLS_VERSION} FROM comercial.proforma_versiones WHERE proforma_id=$1 ORDER BY version DESC`, [id]);
+  return rows;
+}
+
+// Guarda {items, requerimientos, descuento_pct} como versión nueva y la deja activa
+async function crearVersionProforma(id, datos, nota, autor) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    const { rows: pr } = await db.query('SELECT * FROM comercial.proformas WHERE id=$1 FOR UPDATE', [id]);
+    if (!pr.length) { await db.query('ROLLBACK'); return { status: 404, error: 'Proforma no encontrada' }; }
+    const p = pr[0];
+    await asegurarVersionInicial(db, p);
+    const calc = calcularProforma({
+      items: datos.items,
+      descuento_pct: datos.descuento_pct !== undefined ? datos.descuento_pct : p.descuento_pct,
+      igv_tipo: p.igv_tipo,
+    });
+    const reqs = limpiarRequerimientos(datos.requerimientos);
+    const { rows: mx } = await db.query('SELECT COALESCE(MAX(version), 0) + 1 AS n FROM comercial.proforma_versiones WHERE proforma_id=$1', [id]);
+    const n = mx[0].n;
+    await db.query(`
+      INSERT INTO comercial.proforma_versiones
+        (proforma_id, version, items, requerimientos, moneda, subtotal, descuento_pct, descuento_monto, subtotal_neto, igv_tipo, igv_monto, total, nota, creado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [id, n, JSON.stringify(calc.items), JSON.stringify(reqs), p.moneda, calc.subtotal, calc.descuentoPct, calc.descuentoMonto,
+       calc.subtotalNeto, calc.igvTipo, calc.igvMonto, calc.total, String(nota || '').slice(0, 500) || null, autor]);
+    const { rows: act } = await db.query(`
+      UPDATE comercial.proformas SET items=$2, requerimientos=$3, subtotal=$4, descuento_pct=$5, descuento_monto=$6,
+        subtotal_neto=$7, igv_monto=$8, total=$9, version_actual=$10, updated_at=NOW()
+      WHERE id=$1 RETURNING *`,
+      [id, JSON.stringify(calc.items), JSON.stringify(reqs), calc.subtotal, calc.descuentoPct, calc.descuentoMonto,
+       calc.subtotalNeto, calc.igvMonto, calc.total, n]);
+    await db.query('COMMIT');
+    return { proforma: act[0], versiones: await listarVersiones(pool, id) };
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
+}
+
+function autorDe(req) { return `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim() || req.user.username; }
+
+router.get('/proformas/:id/versiones', async (req, res) => {
+  try {
+    const { rows: pr } = await pool.query('SELECT * FROM comercial.proformas WHERE id=$1', [req.params.id]);
+    if (!pr.length) return res.status(404).json({ error: 'Proforma no encontrada' });
+    let versiones = await listarVersiones(pool, req.params.id);
+    if (!versiones.length) {
+      // Sin cambios todavía: la proforma tal cual es la v1 (aún no se guarda)
+      const p = pr[0];
+      versiones = [{ proforma_id: p.id, version: p.version_actual || 1, items: p.items, requerimientos: p.requerimientos, moneda: p.moneda,
+        subtotal: p.subtotal, descuento_pct: p.descuento_pct, descuento_monto: p.descuento_monto, subtotal_neto: p.subtotal_neto,
+        igv_tipo: p.igv_tipo, igv_monto: p.igv_monto, total: p.total, nota: 'Versión original de la proforma', creado_por: p.responsable, created_at: p.created_at }];
+    }
+    res.json({ version_actual: pr[0].version_actual || 1, versiones });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/proformas/:id/versiones', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!Array.isArray(b.items) || !b.items.length) return res.status(400).json({ error: 'La versión debe tener al menos un ítem cotizado.' });
+    const r = await crearVersionProforma(req.params.id, b, b.nota || 'Editada desde el contrato', autorDe(req));
+    if (r.error) return res.status(r.status).json({ error: r.error });
+    res.status(201).json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Recuperar una versión anterior: se copia como versión nueva (el historial no se pierde)
+router.post('/proformas/:id/versiones/:version/restaurar', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT ${COLS_VERSION} FROM comercial.proforma_versiones WHERE proforma_id=$1 AND version=$2`, [req.params.id, Number(req.params.version)]);
+    if (!rows.length) return res.status(404).json({ error: 'Versión no encontrada' });
+    const v = rows[0];
+    const r = await crearVersionProforma(req.params.id, { items: v.items, requerimientos: v.requerimientos, descuento_pct: v.descuento_pct },
+      `Recuperada de la versión ${v.version}`, autorDe(req));
+    if (r.error) return res.status(r.status).json({ error: r.error });
+    res.status(201).json(r);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
