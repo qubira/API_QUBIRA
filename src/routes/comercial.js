@@ -164,6 +164,34 @@ async function withIdRetry(genId, insert) {
 }
 
 /* ============================================================
+   MI PERFIL — representante de QUBIRA que firma los contratos
+   (nombre y DNI del usuario con sesión; RRHH completa lo que falte)
+   ============================================================ */
+router.get('/mi-perfil', async (req, res) => {
+  const limpio = v => String(v || '').replace(/\s+/g, ' ').trim();
+  let nombre = '', dni = '', cargo = '';
+  try {
+    const { rows } = await pool.query('SELECT nombre, apellidos, dni FROM usuarios WHERE id = $1', [req.user.id]);
+    if (rows[0]) { nombre = limpio(`${rows[0].nombre || ''} ${rows[0].apellidos || ''}`); dni = limpio(rows[0].dni); }
+  } catch (e) { /* tabla sin columna dni: se usa RRHH */ }
+  try {
+    const { rows } = await pool.query(
+      `SELECT e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido, e.nombre, e.apellido,
+              e.numero_documento, c.nombre AS cargo
+         FROM rrhh.empleados e LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id
+        WHERE lower(e.usuario) = lower($1) LIMIT 1`, [req.user.username]);
+    const e = rows[0];
+    if (e) {
+      const completo = limpio([e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido].join(' ')) || limpio(`${e.nombre || ''} ${e.apellido || ''}`);
+      if (completo && completo.length > nombre.length) nombre = completo;
+      if (!dni) dni = limpio(e.numero_documento);
+      cargo = limpio(e.cargo);
+    }
+  } catch (e) { /* sin ficha en RRHH */ }
+  res.json({ ok: true, perfil: { nombre: nombre || limpio(req.user.username), dni, cargo, username: req.user.username } });
+});
+
+/* ============================================================
    CLIENTES
    ============================================================ */
 router.get('/clients', async (req, res) => {
@@ -229,6 +257,35 @@ router.post('/clients', async (req, res) => {
 
     res.status(201).json({ client });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Agrega un representante legal a un cliente (p. ej. desde el contrato) */
+router.post('/clients/:id/representantes', async (req, res) => {
+  try {
+    const r = req.body || {};
+    if (!String(r.nombre || '').trim()) return res.status(400).json({ error: 'El nombre del representante es obligatorio.' });
+    const { rows: act } = await pool.query('SELECT * FROM comercial.clientes WHERE id = $1', [req.params.id]);
+    if (!act.length) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const c = act[0];
+    const principal = { nombre: c.contacto_nombre || '', cargo: c.contacto_cargo || '', dni: '', telefono: c.telefono || '', email: c.email || '' };
+    const previos = Array.isArray(c.representantes) && c.representantes.length ? c.representantes
+      : (principal.nombre ? [{ ...principal, principal: true }] : []);
+    const nombreNuevo = String(r.nombre).trim().toLowerCase();
+    if (previos.some(p => String(p.nombre || '').trim().toLowerCase() === nombreNuevo)) {
+      return res.status(409).json({ error: `${String(r.nombre).trim()} ya es representante de ${c.razon_social}.` });
+    }
+    const reps = limpiarRepresentantes([...previos, { ...r, principal: !previos.length }], principal);
+    const p0 = reps[0];
+    const { rows } = await pool.query(`
+      UPDATE comercial.clientes SET representantes = $2::jsonb,
+        contacto_nombre = COALESCE(NULLIF(contacto_nombre, ''), $3), contacto_cargo = COALESCE(NULLIF(contacto_cargo, ''), $4),
+        updated_at = NOW()
+      WHERE id = $1 RETURNING *`, [req.params.id, JSON.stringify(reps), p0.nombre, p0.cargo || null]);
+    res.status(201).json({ client: rows[0] });
+  } catch (e) {
+    console.error('[COMERCIAL] add representante:', e.message);
+    res.status(500).json({ error: 'No se pudo agregar el representante.' });
+  }
 });
 
 router.put('/clients/:id', async (req, res) => {
