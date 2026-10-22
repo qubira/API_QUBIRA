@@ -55,6 +55,8 @@ function ensureSchema() {
       ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS pais TEXT;
       ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS provincia TEXT;
       ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS distrito TEXT;
+      -- Varios representantes legales por cliente (el principal = contacto_*)
+      ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS representantes JSONB DEFAULT '[]'::jsonb;
 
       CREATE TABLE IF NOT EXISTS comercial.contratos (
         id TEXT PRIMARY KEY,
@@ -179,6 +181,29 @@ async function nextClientId() {
   return `CLI-${String(rows[0].n).padStart(3, '0')}`;
 }
 
+// Representantes legales del cliente: el principal va primero y coincide con contacto_*
+function limpiarRepresentantes(lista, principal) {
+  const reps = (Array.isArray(lista) ? lista : [])
+    .filter(r => r && String(r.nombre || '').trim())
+    .slice(0, 20)
+    .map(r => ({
+      nombre: String(r.nombre).trim().slice(0, 160),
+      cargo: String(r.cargo || '').trim().slice(0, 120),
+      dni: String(r.dni || '').trim().slice(0, 20),
+      telefono: String(r.telefono || '').trim().slice(0, 40),
+      email: String(r.email || '').trim().slice(0, 160),
+      principal: !!r.principal,
+    }));
+  let idx = reps.findIndex(r => r.principal);
+  if (idx < 0 && principal.nombre) {
+    reps.unshift({ ...principal, principal: true });
+    idx = 0;
+  }
+  reps.forEach((r, k) => { r.principal = k === idx; });
+  if (idx > 0) reps.unshift(reps.splice(idx, 1)[0]);
+  return reps;
+}
+
 router.post('/clients', async (req, res) => {
   try {
     const b = req.body || {};
@@ -190,14 +215,15 @@ router.post('/clients', async (req, res) => {
 
     const client = await withIdRetry(nextClientId, (id) => pool.query(`
       INSERT INTO comercial.clientes
-        (id, razon_social, ruc, sector, direccion, pais, provincia, distrito, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+        (id, razon_social, ruc, sector, direccion, pais, provincia, distrito, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by, representantes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
       RETURNING *
     `, [
       id, b.razon_social, b.ruc, b.sector || null, b.direccion || null,
       b.pais || 'Perú', b.provincia || null, b.distrito || null,
       b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email,
       b.tipo || 'pyme', b.estado || 'activo', b.origen || 'Prospección Directa', b.notas || null, req.user.id,
+      JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })),
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ client });
@@ -216,10 +242,13 @@ router.put('/clients/:id', async (req, res) => {
     const { rows } = await pool.query(`
       UPDATE comercial.clientes SET
         razon_social=$1, ruc=$2, sector=$3, direccion=$4, pais=$5, provincia=$6, distrito=$7,
-        contacto_nombre=$8, contacto_cargo=$9, telefono=$10, email=$11, tipo=$12, estado=$13, notas=$14, updated_at=NOW()
+        contacto_nombre=$8, contacto_cargo=$9, telefono=$10, email=$11, tipo=$12, estado=$13, notas=$14,
+        representantes=COALESCE($16::jsonb, representantes), updated_at=NOW()
       WHERE id=$15 RETURNING *
     `, [b.razon_social, b.ruc, b.sector || null, b.direccion || null, b.pais || 'Perú', b.provincia || null, b.distrito || null,
-        b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email, b.tipo, b.estado, b.notas || null, req.params.id]);
+        b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email, b.tipo, b.estado, b.notas || null, req.params.id,
+        // Si no llegan representantes (versión anterior de la página), se conservan los guardados
+        Array.isArray(b.representantes) ? JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })) : null]);
     if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
 
     // Las copias "foto" en contratos/proformas ya emitidos se mantienen tal cual (historial),
