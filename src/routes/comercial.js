@@ -215,8 +215,8 @@ router.post('/clients', async (req, res) => {
 
     const client = await withIdRetry(nextClientId, (id) => pool.query(`
       INSERT INTO comercial.clientes
-        (id, razon_social, ruc, sector, direccion, pais, provincia, distrito, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by, representantes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+        (id, razon_social, ruc, sector, direccion, pais, provincia, distrito, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by, representantes, correo_empresa)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
       RETURNING *
     `, [
       id, b.razon_social, b.ruc, b.sector || null, b.direccion || null,
@@ -224,6 +224,7 @@ router.post('/clients', async (req, res) => {
       b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email,
       b.tipo || 'pyme', b.estado || 'activo', b.origen || 'Prospección Directa', b.notas || null, req.user.id,
       JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })),
+      (b.correo_empresa || b.email_empresa) ? String(b.correo_empresa || b.email_empresa).trim() : null,
     ]).then(r => r.rows[0]));
 
     res.status(201).json({ client });
@@ -239,16 +240,23 @@ router.put('/clients/:id', async (req, res) => {
     const { rows: dupe } = await pool.query('SELECT razon_social FROM comercial.clientes WHERE ruc = $1 AND id != $2', [b.ruc, req.params.id]);
     if (dupe.length) return res.status(409).json({ error: `El RUC ${b.ruc} ya está registrado para ${dupe[0].razon_social}.` });
 
+    const correoEmpresaVal = (b.correo_empresa !== undefined || b.email_empresa !== undefined)
+      ? (String(b.correo_empresa || b.email_empresa || '').trim() || null)
+      : '__UNCHANGED__';
+
     const { rows } = await pool.query(`
       UPDATE comercial.clientes SET
         razon_social=$1, ruc=$2, sector=$3, direccion=$4, pais=$5, provincia=$6, distrito=$7,
         contacto_nombre=$8, contacto_cargo=$9, telefono=$10, email=$11, tipo=$12, estado=$13, notas=$14,
-        representantes=COALESCE($16::jsonb, representantes), updated_at=NOW()
+        representantes=COALESCE($16::jsonb, representantes),
+        correo_empresa=CASE WHEN $17::text = '__UNCHANGED__' THEN correo_empresa ELSE $17::text END,
+        updated_at=NOW()
       WHERE id=$15 RETURNING *
     `, [b.razon_social, b.ruc, b.sector || null, b.direccion || null, b.pais || 'Perú', b.provincia || null, b.distrito || null,
         b.contacto_nombre, b.contacto_cargo || null, b.telefono, b.email, b.tipo, b.estado, b.notas || null, req.params.id,
         // Si no llegan representantes (versión anterior de la página), se conservan los guardados
-        Array.isArray(b.representantes) ? JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })) : null]);
+        Array.isArray(b.representantes) ? JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })) : null,
+        correoEmpresaVal]);
     if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
 
     // Las copias "foto" en contratos/proformas ya emitidos se mantienen tal cual (historial),
