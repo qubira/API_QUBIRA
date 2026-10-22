@@ -219,13 +219,13 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   doc.fillColor(COLOR_TEXT).font('Inter-Bold').fontSize(7)
     .text((constancia.firmanteCargo || '').toUpperCase(), stampX, stampY + 17, { width: stampW, align: 'center' });
   doc.fillColor(COLOR_MUTED).font('Inter').fontSize(6.5)
-    .text('QUBIRA S.A.C.', stampX, stampY + 26, { width: stampW, align: 'center' });
+    .text('QUBIRA', stampX, stampY + 26, { width: stampW, align: 'center' });
 
   // ── Pie de página, centrado al fondo (dentro del área imprimible,
   //    nunca más abajo del margen inferior — si no, pdfkit crea una
   //    segunda página vacía solo para esta línea). ──
   doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(7.5)
-    .text(`QUBIRA S.A.C.   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center', link: COMPANY_SITE_URL });
+    .text(`QUBIRA   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center', link: COMPANY_SITE_URL });
 
   doc.end();
   return done;

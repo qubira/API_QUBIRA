@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Catálogo Oficial de 12 Plantillas Legales Corporativas de QUBIRA S.A.C.
+ * Catálogo Oficial de 12 Plantillas Legales Corporativas de QUBIRA
  * Sincronizado y aprobado por ODACL (Oficina de Dirección y Asesoría Legal).
  * Permite que ODN (Comercial) obtenga siempre la versión oficial más reciente,
  * aplicando cualquier actualización aprobada en odacl.official_templates.
@@ -10,7 +10,7 @@
 const BASE_LEGAL_TEMPLATES = {
   desarrollo_software: {
     clave: 'desarrollo_software',
-    titulo: 'Contrato de Desarrollo de Software - QUBIRA S.A.C.',
+    titulo: 'Contrato de Desarrollo de Software - QUBIRA',
     tipo: 'Contrato de Desarrollo de Software',
     categoria: 'Tecnología & Software',
     descripcion: 'Modelo oficial completo de 14 cláusulas con metodología SCRUM, Sprints, entregables, penalidades y cesión patrimonial.',
@@ -20,7 +20,7 @@ const BASE_LEGAL_TEMPLATES = {
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
           <div>
-            <div style="font-size:16px; font-weight:800; color:#0f172a; letter-spacing:1px;">QUBIRA S.A.C.</div>
+            <div style="font-size:16px; font-weight:800; color:#0f172a; letter-spacing:1px;">QUBIRA</div>
             <div style="font-size:11px; font-weight:700; color:#b45309;">SOLUCIONES CORPORATIVAS DE SOFTWARE</div>
           </div>
         </div>
@@ -38,7 +38,7 @@ const BASE_LEGAL_TEMPLATES = {
 
       <p>Conste por el presente documento el <strong>CONTRATO DE PRESTACIÓN DE SERVICIOS DE DESARROLLO DE SOFTWARE</strong>, que celebran de una parte:</p>
       
-      <p><strong>EL PROVEEDOR:</strong> <strong>QUBIRA S.A.C.</strong>, con RUC N° <strong>10764275981</strong>, con domicilio legal en la ciudad de Lima, República del Perú, debidamente representada por sus CEO y accionistas <strong>Melani A. Luyo R.</strong> y <strong>Abraham Aranda Cerna</strong>, a quien en adelante se denominará simplemente como <strong>QUBIRA</strong>; y de la otra parte:</p>
+      <p><strong>EL PROVEEDOR:</strong> <strong>QUBIRA</strong>, con RUC N° <strong>10764275981</strong>, con domicilio legal en la ciudad de Lima, República del Perú, debidamente representada por sus CEO y accionistas <strong>Melani A. Luyo R.</strong> y <strong>Abraham Aranda Cerna</strong>, a quien en adelante se denominará simplemente como <strong>QUBIRA</strong>; y de la otra parte:</p>
 
       <p><strong>EL CLIENTE:</strong> <strong>[NOMBRE_EMPRESA]</strong>, con RUC/DNI N° <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, debidamente representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong> en su calidad de <strong>[CARGO_REPRESENTANTE_CLIENTE]</strong>, a quien en adelante se denominará <strong>EL CLIENTE</strong>; bajo los términos y condiciones siguientes:</p>
 
@@ -65,7 +65,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="word-signature-block">
         <div>
           <div class="signature-line">
-            <strong>QUBIRA S.A.C.</strong><br>
+            <strong>QUBIRA</strong><br>
             RUC 10764275981<br>
             Melani A. Luyo R. / Abraham Aranda Cerna
           </div>
@@ -94,7 +94,7 @@ const BASE_LEGAL_TEMPLATES = {
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
           <div>
-            <div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div>
+            <div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div>
             <div style="font-size:11px; font-weight:700; color:#b45309;">LOCACIÓN DE SERVICIOS INDEPENDIENTES</div>
           </div>
         </div>
@@ -106,7 +106,7 @@ const BASE_LEGAL_TEMPLATES = {
         <span style="font-size:12px; font-weight:600; color:#64748b;">(CÓDIGO CIVIL PERUANO, ARTÍCULO 1764°)</span>
       </h2>
 
-      <p>Conste por el presente documento el Contrato de Locación de Servicios celebrado entre <strong>QUBIRA S.A.C.</strong>, con RUC N° <strong>10764275981</strong>, como <strong>EL COMITENTE</strong>; y de la otra parte <strong>[NOMBRE_EMPRESA]</strong>, con RUC/DNI <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, debidamente representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, en calidad de <strong>EL LOCADOR</strong>.</p>
+      <p>Conste por el presente documento el Contrato de Locación de Servicios celebrado entre <strong>QUBIRA</strong>, con RUC N° <strong>10764275981</strong>, como <strong>EL COMITENTE</strong>; y de la otra parte <strong>[NOMBRE_EMPRESA]</strong>, con RUC/DNI <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, debidamente representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, en calidad de <strong>EL LOCADOR</strong>.</p>
 
       <p><strong>PRIMERA: NATURALEZA DEL CONTRATO:</strong> El presente contrato es de naturaleza estrictamente civil, regulado por los artículos 1764° y siguientes del Código Civil. En consecuencia, EL LOCADOR actuará con total autonomía técnica y sin subordinación.</p>
 
@@ -119,7 +119,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>QUINTA: DETRACCIÓN DEL 12% (SUNAT):</strong> Si el servicio supera el importe establecido por la R.S. 183-2004/SUNAT, se aplicará la detracción correspondiente en la cuenta del Banco de la Nación.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>EL COMITENTE</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>EL COMITENTE</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>EL LOCADOR<br>DNI / RUC: [RUC_CLIENTE]</div></div>
       </div>
     `
@@ -136,7 +136,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">LICENCIAS DE SOFTWARE & SERVICIOS CLOUD</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">LICENCIAS DE SOFTWARE & SERVICIOS CLOUD</div></div>
         </div>
         <div class="header-info">RUC: 10764275981 &bull; D.L. 822 Derechos de Autor</div>
       </div>
@@ -145,7 +145,7 @@ const BASE_LEGAL_TEMPLATES = {
         CONTRATO DE LICENCIA DE USO DE SOFTWARE COMO SERVICIO (SaaS)
       </h2>
 
-      <p>Entre <strong>QUBIRA S.A.C.</strong> (<strong>EL LICENCIANTE</strong>) y <strong>[NOMBRE_EMPRESA]</strong> con RUC/DNI <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong> (<strong>EL LICENCIATARIO</strong>) se acuerda:</p>
+      <p>Entre <strong>QUBIRA</strong> (<strong>EL LICENCIANTE</strong>) y <strong>[NOMBRE_EMPRESA]</strong> con RUC/DNI <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong> (<strong>EL LICENCIATARIO</strong>) se acuerda:</p>
       
       <p><strong>1. CONCESIÓN DE LICENCIA:</strong> QUBIRA otorga a EL LICENCIATARIO una licencia de uso no exclusiva, intransferible y temporal para acceder a la plataforma <strong>[NOMBRE_PROYECTO]</strong> a través de internet.</p>
 
@@ -156,7 +156,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>4. VIGENCIA Y RENOVACIÓN:</strong> El presente contrato rige por un plazo de <strong>[TOTAL_DIAS]</strong> días / meses calendario, renovable automáticamente salvo preaviso de 30 días.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>EL LICENCIANTE</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>EL LICENCIANTE</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>EL LICENCIATARIO<br>RUC / DNI: [RUC_CLIENTE]</div></div>
       </div>
     `
@@ -173,7 +173,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">ACUERDO DE NIVEL DE SERVICIO (SLA)</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">ACUERDO DE NIVEL DE SERVICIO (SLA)</div></div>
         </div>
         <div class="header-info">RUC: 10764275981 &bull; Mesa de Ayuda TI</div>
       </div>
@@ -182,7 +182,7 @@ const BASE_LEGAL_TEMPLATES = {
         ACUERDO DE NIVEL DE SERVICIO TÉCNICO (SLA)
       </h2>
 
-      <p>Celebrado entre <strong>QUBIRA S.A.C.</strong> y <strong>[NOMBRE_EMPRESA]</strong> (RUC/DNI <strong>[RUC_CLIENTE]</strong>) para el sistema y plataforma tecnológica <strong>[NOMBRE_PROYECTO]</strong>:</p>
+      <p>Celebrado entre <strong>QUBIRA</strong> y <strong>[NOMBRE_EMPRESA]</strong> (RUC/DNI <strong>[RUC_CLIENTE]</strong>) para el sistema y plataforma tecnológica <strong>[NOMBRE_PROYECTO]</strong>:</p>
 
       <p><strong>1. DISPONIBILIDAD MENSUAL DEL SISTEMA:</strong> QUBIRA garantiza un Uptime de disponibilidad del <strong>[PORCENTAJE_DISPONIBILIDAD]</strong> mensual en los servidores de producción.</p>
 
@@ -213,7 +213,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>3. TARIFA DEL SERVICIO:</strong> Se pacta un valor de mantenimiento y soporte de <strong>[MONEDA] [PRECIO_ACORDADO]</strong> ([PRECIO_EN_LETRAS]) mensual.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>Dirección de Operaciones TI</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>Dirección de Operaciones TI</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>Aceptación del SLA</div></div>
       </div>
     `
@@ -231,7 +231,7 @@ const BASE_LEGAL_TEMPLATES = {
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
           <div>
-            <div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div>
+            <div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div>
             <div style="font-size:11px; font-weight:700; color:#b45309;">DEPARTAMENTO LEGAL & RR.HH.</div>
           </div>
         </div>
@@ -247,7 +247,7 @@ const BASE_LEGAL_TEMPLATES = {
         <span style="font-size:12px; font-weight:600; color:#64748b;">(DECRETO LEGISLATIVO N° 728, ART. 57)</span>
       </h2>
 
-      <p>Conste por el presente documento el Contrato Individual de Trabajo a Plazo Fijo que celebran de una parte <strong>QUBIRA S.A.C.</strong>, con RUC N° <strong>10764275981</strong>, representada por su CEO <strong>Melani A. Luyo R.</strong>, en calidad de <strong>EL EMPLEADOR</strong>; y de la otra parte <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, identificado con DNI N° <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, a quien se denominará <strong>EL TRABAJADOR</strong>:</p>
+      <p>Conste por el presente documento el Contrato Individual de Trabajo a Plazo Fijo que celebran de una parte <strong>QUBIRA</strong>, con RUC N° <strong>10764275981</strong>, representada por su CEO <strong>Melani A. Luyo R.</strong>, en calidad de <strong>EL EMPLEADOR</strong>; y de la otra parte <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, identificado con DNI N° <strong>[RUC_CLIENTE]</strong>, con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>, a quien se denominará <strong>EL TRABAJADOR</strong>:</p>
 
       <p><strong>PRIMERA: OBJETO Y CARGO:</strong> EL EMPLEADOR contrata a EL TRABAJADOR para desempeñar las funciones de <strong>[CARGO_TRABAJADOR]</strong>, realizando tareas de programación, pruebas de software, soporte técnico y documentación de sistemas.</p>
 
@@ -257,14 +257,14 @@ const BASE_LEGAL_TEMPLATES = {
 
       <p><strong>CUARTA: PERIODO DE PRUEBA:</strong> Las partes pactan expresamente un periodo de prueba de tres (3) meses de conformidad con el Artículo 10° del D.L. 728.</p>
 
-      <p><strong>QUINTA: DERECHOS DE AUTOR SOBRE EL SOFTWARE (D.L. 822):</strong> Todo programa de cómputo, código fuente, script o documentación técnica desarrollado por EL TRABAJADOR en ejercicio de sus funciones será de titularidad patrimonial exclusiva de QUBIRA S.A.C.</p>
+      <p><strong>QUINTA: DERECHOS DE AUTOR SOBRE EL SOFTWARE (D.L. 822):</strong> Todo programa de cómputo, código fuente, script o documentación técnica desarrollado por EL TRABAJADOR en ejercicio de sus funciones será de titularidad patrimonial exclusiva de QUBIRA</p>
 
       <p><strong>SEXTA: CONFIDENCIALIDAD:</strong> EL TRABAJADOR se obliga a no divulgar secretos comerciales, credenciales ni código fuente de la empresa a terceros.</p>
 
       <div class="word-signature-block">
         <div>
           <div class="signature-line">
-            <strong>QUBIRA S.A.C.</strong><br>
+            <strong>QUBIRA</strong><br>
             EL EMPLEADOR
           </div>
         </div>
@@ -290,7 +290,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">CONSULTORÍA PROFESIONAL DE SOFTWARE</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">CONSULTORÍA PROFESIONAL DE SOFTWARE</div></div>
         </div>
         <div class="header-info">RUC: 10764275981 &bull; D.L. 822</div>
       </div>
@@ -299,16 +299,16 @@ const BASE_LEGAL_TEMPLATES = {
         CONTRATO DE SERVICIOS PROFESIONALES CON CESIÓN DE DERECHOS DE AUTOR
       </h2>
 
-      <p>Celebrado entre <strong>QUBIRA S.A.C.</strong> y el Ingeniero/Desarrollador Independiente <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, DNI/RUC N° <strong>[RUC_CLIENTE]</strong> con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>:</p>
+      <p>Celebrado entre <strong>QUBIRA</strong> y el Ingeniero/Desarrollador Independiente <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, DNI/RUC N° <strong>[RUC_CLIENTE]</strong> con domicilio en <strong>[DIRECCION_COMPLETA_EMPRESA]</strong>:</p>
 
       <p><strong>1. ACTIVIDADES:</strong> EL PROFESIONAL prestará servicios de desarrollo de software, testing automatizado y mantenimiento de APIs para el proyecto <strong>[NOMBRE_PROYECTO]</strong> sin relación de dependencia.</p>
 
-      <p><strong>2. CESIÓN DE DERECHOS PATRIMONIALES (ART. 16 D.L. 822):</strong> Todo el código fuente, librerías, scripts y bases de datos creadas pasan a ser propiedad exclusiva y perpetua de QUBIRA S.A.C.</p>
+      <p><strong>2. CESIÓN DE DERECHOS PATRIMONIALES (ART. 16 D.L. 822):</strong> Todo el código fuente, librerías, scripts y bases de datos creadas pasan a ser propiedad exclusiva y perpetua de QUBIRA</p>
 
       <p><strong>3. HONORARIOS:</strong> Se pacta la suma de <strong>[MONEDA] [PRECIO_ACORDADO]</strong> ([PRECIO_EN_LETRAS]) por entregables aprobados, emitiéndose el respectivo Recibo por Honorarios electrónico. Forma de pago: <strong>[DETALLE_DE_PAGOS]</strong>.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>EL CONTRATANTE</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>EL CONTRATANTE</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_COMPLETO_CLIENTE]</strong><br>EL PROFESIONAL<br>DNI N° [RUC_CLIENTE]</div></div>
       </div>
     `
@@ -325,7 +325,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">MODALIDADES FORMATIVAS LABORALES</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">MODALIDADES FORMATIVAS LABORALES</div></div>
         </div>
         <div class="header-info">Ley N° 28518 &bull; RUC 10764275981</div>
       </div>
@@ -334,7 +334,7 @@ const BASE_LEGAL_TEMPLATES = {
         CONVENIO DE APRENDIZAJE DE PRÁCTICAS PRE PROFESIONALES
       </h2>
 
-      <p>Comparecen <strong>QUBIRA S.A.C.</strong> (LA EMPRESA), <strong>[NOMBRE_COMPLETO_CLIENTE]</strong> (EL PRACTICANTE) identificado con DNI N° <strong>[RUC_CLIENTE]</strong> y la <strong>[CENTRO_FORMATIVO]</strong> (EL CENTRO FORMATIVO):</p>
+      <p>Comparecen <strong>QUBIRA</strong> (LA EMPRESA), <strong>[NOMBRE_COMPLETO_CLIENTE]</strong> (EL PRACTICANTE) identificado con DNI N° <strong>[RUC_CLIENTE]</strong> y la <strong>[CENTRO_FORMATIVO]</strong> (EL CENTRO FORMATIVO):</p>
 
       <p><strong>1. JORNADA FORMATIVA:</strong> La jornada no excederá de seis (6) horas diarias ni treinta (30) horas semanales.</p>
 
@@ -343,7 +343,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>3. SEGURO MÉDICO (FOLA):</strong> LA EMPRESA contratará una póliza de seguro médico con cobertura del 100% en enfermedades y accidentes.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>LA EMPRESA</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>LA EMPRESA</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_COMPLETO_CLIENTE]</strong><br>DNI N° [RUC_CLIENTE]<br>EL PRACTICANTE</div></div>
       </div>
     `
@@ -360,7 +360,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">INFRAESTRUCTURA & SERVIDORES CLOUD</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">INFRAESTRUCTURA & SERVIDORES CLOUD</div></div>
         </div>
         <div class="header-info">RUC: 10764275981 &bull; Lima, Perú</div>
       </div>
@@ -369,7 +369,7 @@ const BASE_LEGAL_TEMPLATES = {
         CONTRATO DE SUMINISTRO DE INFRAESTRUCTURA Y SERVICIOS EN LA NUBE
       </h2>
 
-      <p>Celebrado entre <strong>QUBIRA S.A.C.</strong> y el Proveedor de Infraestructura Tecnológica <strong>[NOMBRE_EMPRESA]</strong>, con RUC/ID <strong>[RUC_CLIENTE]</strong>, representado por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>:</p>
+      <p>Celebrado entre <strong>QUBIRA</strong> y el Proveedor de Infraestructura Tecnológica <strong>[NOMBRE_EMPRESA]</strong>, con RUC/ID <strong>[RUC_CLIENTE]</strong>, representado por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>:</p>
 
       <p><strong>1. OBJETO:</strong> Suministro de cómputo en la nube, almacenamiento seguro de objetos e instancias de base de datos relacional PostgreSQL con disponibilidad 24/7 para el proyecto <strong>[NOMBRE_PROYECTO]</strong>.</p>
 
@@ -380,7 +380,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>4. PRECIO DEL SERVICIO:</strong> Se acuerda la tarifa mensual de <strong>[MONEDA] [PRECIO_ACORDADO]</strong> ([PRECIO_EN_LETRAS]).</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>EL CLIENTE</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>EL CLIENTE</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>EL PROVEEDOR CLOUD</div></div>
       </div>
     `
@@ -397,7 +397,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">ACUERDO DE NO DIVULGACIÓN (NDA)</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">ACUERDO DE NO DIVULGACIÓN (NDA)</div></div>
         </div>
         <div class="header-info">RUC: 10764275981 &bull; Secreto Industrial</div>
       </div>
@@ -406,7 +406,7 @@ const BASE_LEGAL_TEMPLATES = {
         ACUERDO MUTUO DE CONFIDENCIALIDAD Y NO DIVULGACIÓN (NDA)
       </h2>
 
-      <p>Las partes, <strong>QUBIRA S.A.C.</strong> (RUC 10764275981) y <strong>[NOMBRE_EMPRESA]</strong> (RUC/DNI <strong>[RUC_CLIENTE]</strong>), representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, acuerdan proteger la <strong>INFORMACIÓN CONFIDENCIAL</strong> intercambiada en el marco de las negociaciones de <strong>[NOMBRE_PROYECTO]</strong>:</p>
+      <p>Las partes, <strong>QUBIRA</strong> (RUC 10764275981) y <strong>[NOMBRE_EMPRESA]</strong> (RUC/DNI <strong>[RUC_CLIENTE]</strong>), representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>, acuerdan proteger la <strong>INFORMACIÓN CONFIDENCIAL</strong> intercambiada en el marco de las negociaciones de <strong>[NOMBRE_PROYECTO]</strong>:</p>
 
       <p><strong>1. DEFINICIÓN:</strong> Incluye código fuente, algoritmos, claves de API, estructuras de bases de datos, costos y documentación de software.</p>
 
@@ -415,7 +415,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>3. PENALIDAD POR INCUMPLIMIENTO:</strong> La parte infractora responderá por los daños y perjuicios ocasionados, acordándose una penalidad convencional de hasta cincuenta (50) Unidades Impositivas Tributarias (UIT).</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>Parte Emisora / Receptora</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>Parte Emisora / Receptora</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>Parte Emisora / Receptora</div></div>
       </div>
     `
@@ -432,7 +432,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">POLÍTICA DE PRIVACIDAD OFICIAL</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">POLÍTICA DE PRIVACIDAD OFICIAL</div></div>
         </div>
         <div class="header-info">RUC 10764275981 &bull; Ley N° 29733</div>
       </div>
@@ -441,7 +441,7 @@ const BASE_LEGAL_TEMPLATES = {
         POLÍTICA DE PRIVACIDAD Y PROTECCIÓN DE DATOS PERSONALES
       </h2>
 
-      <p><strong>QUBIRA S.A.C.</strong> y <strong>[NOMBRE_EMPRESA]</strong> (RUC <strong>[RUC_CLIENTE]</strong>) informan a los usuarios del sistema <strong>[NOMBRE_PROYECTO]</strong> sobre el tratamiento de sus datos personales:</p>
+      <p><strong>QUBIRA</strong> y <strong>[NOMBRE_EMPRESA]</strong> (RUC <strong>[RUC_CLIENTE]</strong>) informan a los usuarios del sistema <strong>[NOMBRE_PROYECTO]</strong> sobre el tratamiento de sus datos personales:</p>
 
       <p><strong>1. BANCO DE DATOS:</strong> Los datos personales se almacenan en los bancos de datos debidamente registrados ante la Dirección General de Transparencia y Protección de Datos Personales (MINJUS).</p>
 
@@ -450,7 +450,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>3. SEGURIDAD:</strong> Se aplican medidas de cifrado SSL, hash bcryptjs y protección en servidores seguros en la nube.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>Responsable de Banco de Datos</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>Responsable de Banco de Datos</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>Cumplimiento Normativo</div></div>
       </div>
     `
@@ -467,7 +467,7 @@ const BASE_LEGAL_TEMPLATES = {
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
-          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div><div style="font-size:11px; font-weight:700; color:#b45309;">TÉRMINOS Y CONDICIONES GENERALES</div></div>
+          <div><div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div><div style="font-size:11px; font-weight:700; color:#b45309;">TÉRMINOS Y CONDICIONES GENERALES</div></div>
         </div>
         <div class="header-info">RUC 10764275981 &bull; Lima, Perú</div>
       </div>
@@ -485,7 +485,7 @@ const BASE_LEGAL_TEMPLATES = {
       <p><strong>3. LIBRO DE RECLAMACIONES:</strong> Se encuentra a disposición el Libro de Reclamaciones Virtual en cumplimiento de la Ley N° 29571.</p>
 
       <div class="word-signature-block">
-        <div><div class="signature-line"><strong>QUBIRA S.A.C.</strong><br>Dirección Ejecutiva</div></div>
+        <div><div class="signature-line"><strong>QUBIRA</strong><br>Dirección Ejecutiva</div></div>
         <div><div class="signature-line"><strong>[NOMBRE_EMPRESA]</strong><br>[NOMBRE_COMPLETO_CLIENTE]<br>Revisión Legal</div></div>
       </div>
     `
@@ -496,14 +496,14 @@ const BASE_LEGAL_TEMPLATES = {
     titulo: 'Documento Legal en Blanco con Membrete Corporativo',
     tipo: 'Documento Legal Personalizado',
     categoria: 'Personalizado',
-    descripcion: 'Hoja en blanco con membrete oficial de QUBIRA S.A.C. y pie de firma para redactar cualquier contrato libremente.',
+    descripcion: 'Hoja en blanco con membrete oficial de QUBIRA y pie de firma para redactar cualquier contrato libremente.',
     badge: 'En Blanco',
     contenido_html: `
       <div class="qubira-official-header">
         <div class="header-brand">
           <img src="https://raw.githubusercontent.com/qubira/IMAGENES/main/logo2.png" alt="QUBIRA">
           <div>
-            <div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA S.A.C.</div>
+            <div style="font-size:16px; font-weight:800; color:#0f172a;">QUBIRA</div>
             <div style="font-size:11px; font-weight:700; color:#b45309;">OFICINA DE ASUNTOS CORPORATIVOS Y LEGALES</div>
           </div>
         </div>
@@ -518,14 +518,14 @@ const BASE_LEGAL_TEMPLATES = {
         [TITULO_DOCUMENTO_LEGAL]
       </h2>
 
-      <p>Conste por el presente documento celebrado entre <strong>QUBIRA S.A.C.</strong> (RUC 10764275981) y <strong>[NOMBRE_EMPRESA]</strong> (RUC/DNI <strong>[RUC_CLIENTE]</strong>), representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>:</p>
+      <p>Conste por el presente documento celebrado entre <strong>QUBIRA</strong> (RUC 10764275981) y <strong>[NOMBRE_EMPRESA]</strong> (RUC/DNI <strong>[RUC_CLIENTE]</strong>), representada por <strong>[NOMBRE_COMPLETO_CLIENTE]</strong>:</p>
 
       <p style="margin-top:20px;">[CONTENIDO_DOCUMENTO_LEGAL]</p>
 
       <div class="word-signature-block">
         <div>
           <div class="signature-line">
-            <strong>QUBIRA S.A.C.</strong><br>
+            <strong>QUBIRA</strong><br>
             Representante Legal
           </div>
         </div>
