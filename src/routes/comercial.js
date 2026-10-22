@@ -6,6 +6,7 @@ const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
 const { getApprovedTemplates, getApprovedTemplateByKey } = require('../lib/legalTemplates');
+const { decrypt: descifrar } = require('../lib/crypto');
 
 function uid() { return crypto.randomUUID(); }
 
@@ -202,14 +203,46 @@ router.get('/mi-perfil', async (req, res) => {
         WHERE lower(e.usuario) = lower($1) LIMIT 1`, [req.user.username]);
     const e = rows[0];
     if (e) {
-      // Algunos campos de RRHH se guardan cifrados: solo se usan si son texto legible
+      // Segundo nombre, segundo apellido y documento se guardan cifrados en RRHH
       const legible = v => { const t = limpio(v); return t && !/[=+\/]|[A-Za-z0-9]{20,}/.test(t) ? t : ''; };
-      if (!nombre) nombre = [e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido].map(legible).filter(Boolean).join(' ');
-      if (!dni) dni = /^[0-9A-Za-z-]{6,15}$/.test(limpio(e.numero_documento)) ? limpio(e.numero_documento) : '';
+      const completo = nombreCompletoEmpleado(e);
+      if (completo && completo.length > nombre.length) nombre = completo;
+      if (!dni) { const doc = limpio(descifrar(e.numero_documento) ?? e.numero_documento); dni = /^[0-9A-Za-z-]{6,15}$/.test(doc) ? doc : ''; }
       cargo = legible(e.cargo);
     }
   } catch (e) { /* sin ficha en RRHH */ }
   res.json({ ok: true, perfil: { nombre: nombre || limpio(req.user.username), dni, cargo, username: req.user.username } });
+});
+
+// Nombre completo de un empleado de RRHH (descifra los campos protegidos)
+function nombreCompletoEmpleado(e) {
+  const limpio = v => String(v || '').replace(/\s+/g, ' ').trim();
+  const legible = v => { const t = limpio(v); return t && !/[=+\/]|[A-Za-z0-9]{20,}/.test(t) ? t : ''; };
+  const des = v => legible(descifrar(v) ?? v);
+  const partes = [legible(e.primer_nombre), des(e.segundo_nombre), legible(e.primer_apellido), des(e.segundo_apellido)].filter(Boolean);
+  return partes.length ? partes.join(' ') : limpio(`${legible(e.nombre)} ${legible(e.apellido)}`);
+}
+
+/* Trabajadores activos de RRHH (nombre completo, cargo y área) — para elegir
+   responsables en los contratos. Solo datos de identificación, nada sensible. */
+router.get('/trabajadores-activos', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT e.id, e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido, e.nombre, e.apellido,
+             c.nombre AS cargo, a.nombre AS area
+        FROM rrhh.empleados e
+        LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id
+        LEFT JOIN rrhh.catalogos a ON a.id = e.area_trabajo_id
+       WHERE COALESCE(lower(e.estado), 'activo') = 'activo'`);
+    const trabajadores = rows
+      .map(e => ({ id: e.id, nombre: nombreCompletoEmpleado(e), cargo: String(e.cargo || '').trim(), area: String(e.area || '').trim() }))
+      .filter(t => t.nombre)
+      .sort((x, y) => x.nombre.localeCompare(y.nombre, 'es'));
+    res.json({ trabajadores });
+  } catch (e) {
+    console.error('[COMERCIAL] trabajadores activos:', e.message);
+    res.status(500).json({ error: 'No se pudo leer la lista de trabajadores.' });
+  }
 });
 
 /* ============================================================
