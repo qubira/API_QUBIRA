@@ -587,7 +587,7 @@ async function getApprovedTemplates(poolInstance) {
     try {
       const { rows } = await pool.query(`
         SELECT clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo,
-               origen_version, actualizado_por, updated_at
+               origen_version, actualizado_por, updated_at, categoria, descripcion, badge
         FROM odacl.official_templates
         ORDER BY updated_at DESC
       `);
@@ -614,9 +614,9 @@ async function getApprovedTemplates(poolInstance) {
           clave: row.clave,
           titulo: row.titulo || row.clave,
           tipo: row.tipo_documento || 'Contrato Legal',
-          categoria: 'Legal ODACL',
-          descripcion: `Plantilla oficial personalizada ${row.titulo}`,
-          badge: 'ODACL Oficial',
+          categoria: row.categoria || 'Legal ODACL',
+          descripcion: row.descripcion || `Plantilla oficial personalizada ${row.titulo}`,
+          badge: row.badge || 'ODACL Oficial',
           contenido_html: row.contenido_html,
           oficial: {
             fecha: row.updated_at,

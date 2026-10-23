@@ -56,6 +56,10 @@ function ensureOdaclSchema() {
         actualizado_por TEXT,
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Datos de catálogo de las plantillas creadas por ODACL
+      ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS categoria TEXT;
+      ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS descripcion TEXT;
+      ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS badge TEXT;
 
       -- Ficha societaria oficial de QUBIRA (la usan los contratos de ODN)
       CREATE TABLE IF NOT EXISTS odacl.info_societaria (
@@ -356,7 +360,7 @@ router.get('/templates', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo,
-              origen_version, actualizado_por, updated_at
+              origen_version, actualizado_por, updated_at, categoria, descripcion, badge
          FROM odacl.official_templates ORDER BY updated_at DESC`
     );
     res.json({ ok: true, templates: result.rows });
@@ -372,7 +376,8 @@ router.put('/templates/:clave', async (req, res) => {
     if (!CLAVE_PLANTILLA.test(clave)) {
       return res.status(400).json({ ok: false, error: 'Clave de plantilla no válida' });
     }
-    const { titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version } = req.body || {};
+    const { titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, categoria, descripcion, badge } = req.body || {};
+    const corto = (v, n) => (v === undefined || v === null || String(v).trim() === '') ? null : String(v).trim().slice(0, n);
     if (!contenido_html || typeof contenido_html !== 'string' || contenido_html.length < 20) {
       return res.status(400).json({ ok: false, error: 'El contenido de la plantilla es requerido' });
     }
@@ -382,8 +387,8 @@ router.put('/templates/:clave', async (req, res) => {
     const autor = req.user?.username || 'ODACL Legal';
     const result = await pool.query(
       `INSERT INTO odacl.official_templates
-         (clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, actualizado_por, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         (clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, actualizado_por, updated_at, categoria, descripcion, badge)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
        ON CONFLICT (clave) DO UPDATE SET
          titulo = EXCLUDED.titulo,
          tipo_documento = EXCLUDED.tipo_documento,
@@ -392,10 +397,15 @@ router.put('/templates/:clave', async (req, res) => {
          origen_titulo = EXCLUDED.origen_titulo,
          origen_version = EXCLUDED.origen_version,
          actualizado_por = EXCLUDED.actualizado_por,
-         updated_at = NOW()
+         updated_at = NOW(),
+         -- Si una nueva publicación no los envía, se conservan los datos de catálogo
+         categoria = COALESCE(EXCLUDED.categoria, odacl.official_templates.categoria),
+         descripcion = COALESCE(EXCLUDED.descripcion, odacl.official_templates.descripcion),
+         badge = COALESCE(EXCLUDED.badge, odacl.official_templates.badge)
        RETURNING *`,
       [clave, titulo || null, tipo_documento || null, contenido_html, origen_doc_id || null,
-       origen_titulo || null, Number.isInteger(origen_version) ? origen_version : null, autor]
+       origen_titulo || null, Number.isInteger(origen_version) ? origen_version : null, autor,
+       corto(categoria, 120), corto(descripcion, 600), corto(badge, 60)]
     );
     res.json({ ok: true, message: 'Plantilla oficial actualizada', template: result.rows[0] });
   } catch (err) {
