@@ -60,6 +60,15 @@ function ensureOdaclSchema() {
       ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS categoria TEXT;
       ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS descripcion TEXT;
       ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS badge TEXT;
+      -- Sección del catálogo: contratos, acuerdos, politicas, terminos
+      ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS grupo TEXT;
+      -- Gestión: casos supuestos y los documentos que requiere cada uno
+      CREATE TABLE IF NOT EXISTS odacl.gestion_casos (
+        id SERIAL PRIMARY KEY,
+        titulo TEXT NOT NULL, descripcion TEXT, icono TEXT,
+        documentos JSONB NOT NULL DEFAULT '[]'::jsonb,
+        orden INT DEFAULT 0, updated_por TEXT, updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
 
       -- Contratos que ODACL registra a mano (NDA, proveedores, locación, etc.)
       CREATE TABLE IF NOT EXISTS odacl.contratos_externos (
@@ -542,11 +551,84 @@ router.delete('/riesgos/:id', async (req, res) => {
 
 const CLAVE_PLANTILLA = /^[a-z0-9_]{2,60}$/;
 
+// Gestión: casos supuestos → documentos que se deben usar (la primera vez, casos base)
+const o = (clave, nota = '') => ({ clave, requisito: 'obligatorio', nota });
+const a = (clave, nota = '') => ({ clave, requisito: 'si_aplica', nota });
+const CASOS_BASE = [
+  ['💻', 'Nuevo cliente: desarrollo de software a medida', 'Un cliente contrata a QUBIRA para desarrollar una web, app móvil o sistema a medida con Sprints.',
+    [o('desarrollo_software'), o('desarrollo_software_anexo_a', 'Uno por cada Sprint aprobado'), o('desarrollo_software_anexo_b', 'Cuando el cliente pida un cambio'), o('desarrollo_software_anexo_c', 'Al entregar el proyecto'), a('acuerdo_nda', 'Si el cliente comparte información sensible antes de firmar'), a('sla_servicio', 'Si incluye soporte o hosting después de la entrega')]],
+  ['☁️', 'Cliente contrata un software por suscripción (SaaS)', 'El cliente usa una plataforma de QUBIRA pagando una licencia mensual o anual.',
+    [o('licenciamiento_software'), o('sla_servicio', 'Disponibilidad y tiempos de respuesta'), o('terminos_condiciones'), o('politica_privacidad')]],
+  ['🛵', 'Lanzar una app de delivery o marketplace', 'Se publica una plataforma donde usuarios piden, comercios venden y repartidores entregan.',
+    [o('terminos_usuarios_app'), o('politica_privacidad_app'), o('afiliacion_comercios', 'Con cada comercio afiliado'), o('servicios_reparto', 'Con cada repartidor')]],
+  ['🏪', 'Afiliar un comercio a la plataforma', 'Un restaurante o tienda se une a la app para vender sus productos.',
+    [o('afiliacion_comercios'), o('politica_privacidad_app', 'Entregarla junto con el contrato')]],
+  ['📦', 'Incorporar un repartidor independiente', 'Una persona se registra para realizar entregas sin relación laboral.',
+    [o('servicios_reparto'), o('politica_privacidad_app')]],
+  ['👔', 'Contratar a un trabajador en planilla', 'Ingreso de personal dependiente bajo el régimen laboral privado.',
+    [o('laboral_dl728'), o('acuerdo_nda', 'Si tendrá acceso a código o datos de clientes')]],
+  ['🧑‍💻', 'Contratar a un programador independiente (freelance)', 'Servicios por recibo por honorarios donde QUBIRA debe quedarse con los derechos del código.',
+    [o('servicios_profesionales', 'Incluye la cesión de derechos patrimoniales'), o('acuerdo_nda')]],
+  ['🎓', 'Incorporar a un practicante', 'Estudiante o egresado que realiza prácticas pre profesionales.',
+    [o('servicios_preprofesionales'), a('acuerdo_nda', 'Si tendrá acceso a información confidencial')]],
+  ['🖥️', 'Contratar servidores o servicios cloud', 'Proveedor de hosting, base de datos, CDN u otra infraestructura.',
+    [o('proveedores_infraestructura'), a('acuerdo_nda'), a('sla_servicio', 'Para exigir disponibilidad al proveedor')]],
+  ['🤝', 'Reunión con un posible cliente o socio', 'Antes de mostrar información interna, propuestas técnicas o código.',
+    [o('acuerdo_nda')]],
+  ['🌐', 'Publicar o actualizar el sitio web de QUBIRA', 'El sitio recoge datos de contacto o permite registrarse.',
+    [o('terminos_condiciones'), o('politica_privacidad')]],
+  ['🧾', 'Servicio puntual o consultoría', 'Un trabajo específico sin desarrollo por Sprints (asesoría, capacitación, auditoría).',
+    [o('prestacion_servicios'), a('acuerdo_nda')]],
+];
+const datosCaso = b => {
+  const docs = (Array.isArray(b.documentos) ? b.documentos : [])
+    .filter(d => d && CLAVE_PLANTILLA.test(String(d.clave || '')))
+    .slice(0, 40)
+    .map(d => ({ clave: d.clave, requisito: d.requisito === 'si_aplica' ? 'si_aplica' : 'obligatorio', nota: String(d.nota || '').trim().slice(0, 200) }));
+  return [txt(b.titulo, 200), txt(b.descripcion, 800), txt(b.icono, 8), JSON.stringify(docs)];
+};
+router.get('/gestion-casos', async (req, res) => {
+  try {
+    let { rows } = await pool.query('SELECT * FROM odacl.gestion_casos ORDER BY orden, id');
+    if (!rows.length) {
+      for (const [i, [icono, titulo, descripcion, documentos]] of CASOS_BASE.entries()) {
+        await pool.query('INSERT INTO odacl.gestion_casos (titulo, descripcion, icono, documentos, orden) VALUES ($1,$2,$3,$4::jsonb,$5)',
+          [titulo, descripcion, icono, JSON.stringify(documentos), i]);
+      }
+      ({ rows } = await pool.query('SELECT * FROM odacl.gestion_casos ORDER BY orden, id'));
+    }
+    res.json({ ok: true, casos: rows });
+  } catch (e) { console.error('[ODACL] gestion:', e.message); res.status(500).json({ ok: false, error: 'No se pudo leer los casos de gestión.' }); }
+});
+router.post('/gestion-casos', async (req, res) => {
+  try {
+    const d = datosCaso(req.body || {});
+    if (!d[0]) return res.status(400).json({ ok: false, error: 'El caso necesita un título.' });
+    const { rows } = await pool.query(`INSERT INTO odacl.gestion_casos (titulo, descripcion, icono, documentos, orden, updated_por)
+      VALUES ($1,$2,$3,$4::jsonb,(SELECT COALESCE(MAX(orden),0)+1 FROM odacl.gestion_casos),$5) RETURNING *`, [...d, autorDe(req)]);
+    res.status(201).json({ ok: true, caso: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo guardar el caso.' }); }
+});
+router.put('/gestion-casos/:id', async (req, res) => {
+  try {
+    const d = datosCaso(req.body || {});
+    if (!d[0]) return res.status(400).json({ ok: false, error: 'El caso necesita un título.' });
+    const { rows } = await pool.query(`UPDATE odacl.gestion_casos SET titulo=$2, descripcion=$3, icono=$4, documentos=$5::jsonb,
+      updated_por=$6, updated_at=NOW() WHERE id=$1 RETURNING *`, [Number(req.params.id), ...d, autorDe(req)]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Caso no encontrado' });
+    res.json({ ok: true, caso: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo actualizar el caso.' }); }
+});
+router.delete('/gestion-casos/:id', async (req, res) => {
+  try { await pool.query('DELETE FROM odacl.gestion_casos WHERE id=$1', [Number(req.params.id)]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: 'No se pudo eliminar el caso.' }); }
+});
+
 router.get('/templates', async (req, res) => {
   try {
     const result = await pool.query(
       `SELECT clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo,
-              origen_version, actualizado_por, updated_at, categoria, descripcion, badge
+              origen_version, actualizado_por, updated_at, categoria, descripcion, badge, grupo
          FROM odacl.official_templates ORDER BY updated_at DESC`
     );
     res.json({ ok: true, templates: result.rows });
@@ -562,7 +644,7 @@ router.put('/templates/:clave', async (req, res) => {
     if (!CLAVE_PLANTILLA.test(clave)) {
       return res.status(400).json({ ok: false, error: 'Clave de plantilla no válida' });
     }
-    const { titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, categoria, descripcion, badge } = req.body || {};
+    const { titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, categoria, descripcion, badge, grupo } = req.body || {};
     const corto = (v, n) => (v === undefined || v === null || String(v).trim() === '') ? null : String(v).trim().slice(0, n);
     if (!contenido_html || typeof contenido_html !== 'string' || contenido_html.length < 20) {
       return res.status(400).json({ ok: false, error: 'El contenido de la plantilla es requerido' });
@@ -573,8 +655,8 @@ router.put('/templates/:clave', async (req, res) => {
     const autor = req.user?.username || 'ODACL Legal';
     const result = await pool.query(
       `INSERT INTO odacl.official_templates
-         (clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, actualizado_por, updated_at, categoria, descripcion, badge)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
+         (clave, titulo, tipo_documento, contenido_html, origen_doc_id, origen_titulo, origen_version, actualizado_por, updated_at, categoria, descripcion, badge, grupo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12)
        ON CONFLICT (clave) DO UPDATE SET
          titulo = EXCLUDED.titulo,
          tipo_documento = EXCLUDED.tipo_documento,
@@ -587,11 +669,13 @@ router.put('/templates/:clave', async (req, res) => {
          -- Si una nueva publicación no los envía, se conservan los datos de catálogo
          categoria = COALESCE(EXCLUDED.categoria, odacl.official_templates.categoria),
          descripcion = COALESCE(EXCLUDED.descripcion, odacl.official_templates.descripcion),
-         badge = COALESCE(EXCLUDED.badge, odacl.official_templates.badge)
+         badge = COALESCE(EXCLUDED.badge, odacl.official_templates.badge),
+         grupo = COALESCE(EXCLUDED.grupo, odacl.official_templates.grupo)
        RETURNING *`,
       [clave, titulo || null, tipo_documento || null, contenido_html, origen_doc_id || null,
        origen_titulo || null, Number.isInteger(origen_version) ? origen_version : null, autor,
-       corto(categoria, 120), corto(descripcion, 600), corto(badge, 60)]
+       corto(categoria, 120), corto(descripcion, 600), corto(badge, 60),
+       ['contratos', 'acuerdos', 'politicas', 'terminos'].includes(grupo) ? grupo : null]
     );
     res.json({ ok: true, message: 'Plantilla oficial actualizada', template: result.rows[0] });
   } catch (err) {
