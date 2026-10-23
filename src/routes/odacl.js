@@ -61,6 +61,31 @@ function ensureOdaclSchema() {
       ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS descripcion TEXT;
       ALTER TABLE odacl.official_templates ADD COLUMN IF NOT EXISTS badge TEXT;
 
+      -- Contratos que ODACL registra a mano (NDA, proveedores, locación, etc.)
+      CREATE TABLE IF NOT EXISTS odacl.contratos_externos (
+        id TEXT PRIMARY KEY,
+        codigo TEXT, contraparte TEXT NOT NULL, tipo TEXT,
+        moneda TEXT DEFAULT 'PEN', monto NUMERIC(12,2) DEFAULT 0, forma_pago TEXT,
+        fecha_inicio DATE, fecha_fin DATE, estado TEXT DEFAULT 'vigente', notas TEXT,
+        creado_por TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      -- Bandeja de asesoría legal: consultas de las áreas y dictámenes de ODACL
+      CREATE TABLE IF NOT EXISTS odacl.consultas (
+        id SERIAL PRIMARY KEY,
+        radicado TEXT UNIQUE NOT NULL,
+        asunto TEXT NOT NULL, detalle TEXT, area TEXT, urgencia TEXT DEFAULT 'Media',
+        estado TEXT DEFAULT 'pendiente', dictamen TEXT,
+        solicitante TEXT, dictaminado_por TEXT, dictaminado_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      -- Matriz de riesgos legales (editable)
+      CREATE TABLE IF NOT EXISTS odacl.riesgos (
+        id SERIAL PRIMARY KEY,
+        dimension TEXT NOT NULL, riesgo TEXT NOT NULL, probabilidad TEXT, impacto TEXT,
+        control TEXT, responsable TEXT, nivel TEXT DEFAULT 'Bajo', orden INT DEFAULT 0,
+        updated_por TEXT, updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       -- Ficha societaria oficial de QUBIRA (la usan los contratos de ODN)
       CREATE TABLE IF NOT EXISTS odacl.info_societaria (
         id INT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
@@ -352,6 +377,167 @@ router.put('/info-societaria', async (req, res) => {
     console.error('[ODACL] guardar info societaria:', e.message);
     res.status(500).json({ ok: false, error: 'No se pudo guardar la información societaria.' });
   }
+});
+
+/* ============================================================
+   CONTRATOS (Comercial + registrados por ODACL), ASESORÍA Y RIESGOS
+   ============================================================ */
+const txt = (v, n = 500) => (v === undefined || v === null || String(v).trim() === '') ? null : String(v).trim().slice(0, n);
+const fecha = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? v : null);
+const autorDe = req => `${req.user?.nombre || ''} ${req.user?.apellidos || ''}`.trim() || req.user?.username || 'ODACL';
+
+// Contratos reales: los generados en Comercial y los registrados en ODACL
+router.get('/contratos', async (req, res) => {
+  try {
+    let comerciales = [];
+    try {
+      const { rows } = await pool.query(`
+        SELECT id, cliente_nombre AS contraparte, tipo, producto_nombre, moneda, monto, modalidad_pago AS forma_pago,
+               fecha_inicio, fecha_fin, estado, plantilla_titulo, plantilla_clave, responsable, created_at, updated_at,
+               (contenido_html IS NOT NULL) AS tiene_documento
+          FROM comercial.contratos ORDER BY created_at DESC`);
+      comerciales = rows.map(r => ({ ...r, codigo: r.id, origen: 'comercial' }));
+    } catch (e) { /* el módulo Comercial aún no creó su tabla */ }
+    const { rows: ext } = await pool.query('SELECT * FROM odacl.contratos_externos ORDER BY created_at DESC');
+    res.json({ ok: true, contratos: [...comerciales, ...ext.map(r => ({ ...r, origen: 'odacl' }))] });
+  } catch (e) {
+    console.error('[ODACL] contratos:', e.message);
+    res.status(500).json({ ok: false, error: 'No se pudo leer los contratos.' });
+  }
+});
+
+// Documento del contrato generado en Comercial (para leerlo desde ODACL)
+router.get('/contratos/:id/documento', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, cliente_nombre, plantilla_titulo, contenido_html FROM comercial.contratos WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Contrato no encontrado' });
+    res.json({ ok: true, contrato: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo leer el contrato.' }); }
+});
+
+async function siguienteId(tabla, campo, prefijo) {
+  const anio = new Date().getFullYear();
+  const { rows } = await pool.query(
+    `SELECT COALESCE(MAX((regexp_match(${campo}, '^${prefijo}-${anio}-(\\d+)$'))[1]::int), 0) + 1 AS n FROM ${tabla}`);
+  return `${prefijo}-${anio}-${String(rows[0].n).padStart(3, '0')}`;
+}
+
+router.post('/contratos-externos', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!txt(b.contraparte)) return res.status(400).json({ ok: false, error: 'La contraparte es obligatoria.' });
+    const id = await siguienteId('odacl.contratos_externos', 'id', 'EXT');
+    const { rows } = await pool.query(`
+      INSERT INTO odacl.contratos_externos (id, codigo, contraparte, tipo, moneda, monto, forma_pago, fecha_inicio, fecha_fin, estado, notas, creado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [id, txt(b.codigo, 80) || id, txt(b.contraparte, 200), txt(b.tipo, 160), txt(b.moneda, 5) || 'PEN', Number(b.monto) || 0,
+       txt(b.forma_pago, 200), fecha(b.fecha_inicio), fecha(b.fecha_fin), txt(b.estado, 30) || 'vigente', txt(b.notas, 2000), autorDe(req)]);
+    res.status(201).json({ ok: true, contrato: { ...rows[0], origen: 'odacl' } });
+  } catch (e) { console.error('[ODACL] contrato externo:', e.message); res.status(500).json({ ok: false, error: 'No se pudo registrar el contrato.' }); }
+});
+
+router.put('/contratos-externos/:id', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!txt(b.contraparte)) return res.status(400).json({ ok: false, error: 'La contraparte es obligatoria.' });
+    const { rows } = await pool.query(`
+      UPDATE odacl.contratos_externos SET codigo=$2, contraparte=$3, tipo=$4, moneda=$5, monto=$6, forma_pago=$7,
+        fecha_inicio=$8, fecha_fin=$9, estado=$10, notas=$11, updated_at=NOW() WHERE id=$1 RETURNING *`,
+      [req.params.id, txt(b.codigo, 80) || req.params.id, txt(b.contraparte, 200), txt(b.tipo, 160), txt(b.moneda, 5) || 'PEN', Number(b.monto) || 0,
+       txt(b.forma_pago, 200), fecha(b.fecha_inicio), fecha(b.fecha_fin), txt(b.estado, 30) || 'vigente', txt(b.notas, 2000)]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Contrato no encontrado' });
+    res.json({ ok: true, contrato: { ...rows[0], origen: 'odacl' } });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo actualizar el contrato.' }); }
+});
+
+router.delete('/contratos-externos/:id', async (req, res) => {
+  try { await pool.query('DELETE FROM odacl.contratos_externos WHERE id=$1', [req.params.id]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: 'No se pudo eliminar el contrato.' }); }
+});
+
+// Asesoría legal
+router.get('/consultas', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM odacl.consultas ORDER BY created_at DESC');
+    res.json({ ok: true, consultas: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo leer las consultas.' }); }
+});
+
+router.post('/consultas', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!txt(b.asunto)) return res.status(400).json({ ok: false, error: 'El asunto es obligatorio.' });
+    const radicado = await siguienteId('odacl.consultas', 'radicado', 'ODACL');
+    const { rows } = await pool.query(`
+      INSERT INTO odacl.consultas (radicado, asunto, detalle, area, urgencia, estado, solicitante)
+      VALUES ($1,$2,$3,$4,$5,'pendiente',$6) RETURNING *`,
+      [radicado, txt(b.asunto, 300), txt(b.detalle, 5000), txt(b.area, 60), txt(b.urgencia, 20) || 'Media', autorDe(req)]);
+    res.status(201).json({ ok: true, consulta: rows[0] });
+  } catch (e) { console.error('[ODACL] consulta:', e.message); res.status(500).json({ ok: false, error: 'No se pudo registrar la consulta.' }); }
+});
+
+router.put('/consultas/:id', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const estado = ['pendiente', 'en_analisis', 'dictaminado', 'archivado'].includes(b.estado) ? b.estado : null;
+    const { rows } = await pool.query(`
+      UPDATE odacl.consultas SET
+        estado = COALESCE($2::text, estado), dictamen = COALESCE($3::text, dictamen),
+        urgencia = COALESCE($4::text, urgencia),
+        dictaminado_por = CASE WHEN $2::text = 'dictaminado' THEN $5::text ELSE dictaminado_por END,
+        dictaminado_at = CASE WHEN $2::text = 'dictaminado' THEN NOW() ELSE dictaminado_at END,
+        updated_at = NOW()
+      WHERE id = $1 RETURNING *`,
+      [Number(req.params.id), estado, txt(b.dictamen, 8000), txt(b.urgencia, 20), autorDe(req)]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Consulta no encontrada' });
+    res.json({ ok: true, consulta: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo actualizar la consulta.' }); }
+});
+
+// Matriz de riesgos (la primera vez se carga la matriz base de QUBIRA)
+const RIESGOS_BASE = [
+  ['Datos Personales', 'Filtración o acceso no autorizado a datos de clientes en la nube', 'Baja', 'Alto', 'Cifrado SSL, variables protegidas, verificación 2FA y bcryptjs', 'OTI & Legal', 'Bajo'],
+  ['Propiedad Intelectual', 'Reclamo de titularidad de código por parte de programador independiente', 'Baja', 'Crítico', 'Contratos con Cláusula de Cesión de Derechos Patrimoniales (D.L. 822)', 'ODACL / RRHH', 'Bajo'],
+  ['Contratos & Pagos', 'Impago de armadas por cliente una vez culminado el software', 'Media', 'Medio', 'Cobro del 50% al inicio y retención de entrega en producción hasta cancelación final', 'Comercial & ODACL', 'Medio'],
+  ['Tributario SUNAT', 'Omisión de depósito de detracción del 12% en el Banco de la Nación', 'Baja', 'Medio', 'Control cruzado con comprobantes de pago de la OPP y portal SUNAT', 'Finanzas & Legal', 'Bajo'],
+  ['Seguridad Laboral', 'Reclamos por fatiga ergonómica o desnaturalización de teletrabajo', 'Baja', 'Bajo', 'Convenios de teletrabajo según Ley 31572 y pausas activas recomendadas', 'RRHH', 'Bajo'],
+];
+router.get('/riesgos', async (req, res) => {
+  try {
+    let { rows } = await pool.query('SELECT * FROM odacl.riesgos ORDER BY orden, id');
+    if (!rows.length) {
+      for (const [i, r] of RIESGOS_BASE.entries()) {
+        await pool.query('INSERT INTO odacl.riesgos (dimension, riesgo, probabilidad, impacto, control, responsable, nivel, orden) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [...r, i]);
+      }
+      ({ rows } = await pool.query('SELECT * FROM odacl.riesgos ORDER BY orden, id'));
+    }
+    res.json({ ok: true, riesgos: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo leer la matriz de riesgos.' }); }
+});
+
+const datosRiesgo = b => [txt(b.dimension, 120), txt(b.riesgo, 600), txt(b.probabilidad, 20), txt(b.impacto, 20), txt(b.control, 800), txt(b.responsable, 120), txt(b.nivel, 20) || 'Bajo'];
+router.post('/riesgos', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!txt(b.dimension) || !txt(b.riesgo)) return res.status(400).json({ ok: false, error: 'La dimensión y el riesgo son obligatorios.' });
+    const { rows } = await pool.query(`INSERT INTO odacl.riesgos (dimension, riesgo, probabilidad, impacto, control, responsable, nivel, orden, updated_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,(SELECT COALESCE(MAX(orden),0)+1 FROM odacl.riesgos),$8) RETURNING *`, [...datosRiesgo(b), autorDe(req)]);
+    res.status(201).json({ ok: true, riesgo: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo agregar el riesgo.' }); }
+});
+router.put('/riesgos/:id', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!txt(b.dimension) || !txt(b.riesgo)) return res.status(400).json({ ok: false, error: 'La dimensión y el riesgo son obligatorios.' });
+    const { rows } = await pool.query(`UPDATE odacl.riesgos SET dimension=$2, riesgo=$3, probabilidad=$4, impacto=$5, control=$6, responsable=$7, nivel=$8,
+      updated_por=$9, updated_at=NOW() WHERE id=$1 RETURNING *`, [Number(req.params.id), ...datosRiesgo(b), autorDe(req)]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Riesgo no encontrado' });
+    res.json({ ok: true, riesgo: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo actualizar el riesgo.' }); }
+});
+router.delete('/riesgos/:id', async (req, res) => {
+  try { await pool.query('DELETE FROM odacl.riesgos WHERE id=$1', [Number(req.params.id)]); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ ok: false, error: 'No se pudo eliminar el riesgo.' }); }
 });
 
 const CLAVE_PLANTILLA = /^[a-z0-9_]{2,60}$/;
