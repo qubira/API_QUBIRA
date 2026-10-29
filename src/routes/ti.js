@@ -1845,6 +1845,163 @@ router.delete('/tech-plan-info/:id', async (req, res) => {
 
 /* Compartidos con otros módulos (p.ej. calendar.js) que necesitan las mismas
    reglas de acceso a un proyecto sin reimplementarlas. */
+/* ============================================================
+   CALIDAD — actas de auditoría de los proyectos (seguridad, calidad y
+   reglas de negocio) con el modelo MODELO_DOC/AUDITORIA. El contenido
+   del acta se guarda en `datos` (JSON) y `resumen` lleva los conteos
+   de hallazgos para listar sin abrir cada acta.
+   ============================================================ */
+const TIPOS_ACTA = { seguridad: 'SEC', calidad: 'CAL', reglas: 'RN' };
+const ESTADOS_ACTA = ['borrador', 'en_revision', 'emitida', 'cerrada'];
+let _calidadLista = null;
+function ensureCalidad() {
+  if (!_calidadLista) {
+    _calidadLista = pool.query(`
+      CREATE TABLE IF NOT EXISTS ti.auditorias_calidad (
+        id TEXT PRIMARY KEY,
+        codigo TEXT UNIQUE NOT NULL,
+        tipo TEXT NOT NULL,
+        project_id TEXT REFERENCES ti.projects(id) ON DELETE SET NULL,
+        estado TEXT NOT NULL DEFAULT 'borrador',
+        version TEXT NOT NULL DEFAULT '1.0',
+        fecha_emision DATE,
+        datos JSONB NOT NULL DEFAULT '{}'::jsonb,
+        resumen JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_by INTEGER, updated_by INTEGER,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS auditorias_calidad_project_idx ON ti.auditorias_calidad(project_id);`).catch(e => { _calidadLista = null; throw e; });
+  }
+  return _calidadLista;
+}
+// Conteos de hallazgos por severidad y cuántos siguen abiertos / vencidos
+function resumenActa(datos) {
+  const hs = Array.isArray(datos?.hallazgos) ? datos.hallazgos : [];
+  const sev = { critico: 0, alto: 0, medio: 0, bajo: 0 };
+  const abiertos = { critico: 0, alto: 0, medio: 0, bajo: 0 };
+  const hoy = new Date().toISOString().slice(0, 10);
+  let vencidos = 0;
+  hs.forEach(h => {
+    const k = sev[h.severidad] !== undefined ? h.severidad : 'bajo';
+    sev[k]++;
+    const abierto = !['corregido', 'verificado'].includes(h.estado);
+    if (abierto) { abiertos[k]++; if (h.fecha_limite && h.fecha_limite < hoy) vencidos++; }
+  });
+  const ctr = (Array.isArray(datos?.controles) ? datos.controles : []).flatMap(d => d.items || []);
+  const evaluados = ctr.filter(c => ['si', 'no'].includes(c.cumple));
+  return {
+    total: hs.length, severidad: sev, abiertos, vencidos,
+    controles: { total: ctr.length, evaluados: evaluados.length, cumplen: evaluados.filter(c => c.cumple === 'si').length },
+  };
+}
+async function puedeVerActa(req, acta) {
+  if (await isPrivilegedViewer(req)) return true;
+  if (String(acta.created_by) === String(req.user.id)) return true;
+  return acta.project_id ? canAccessProject(req, acta.project_id) : false;
+}
+
+router.get('/calidad/actas', async (req, res) => {
+  try {
+    await ensureCalidad();
+    const { tipo, project_id, estado } = req.query;
+    const params = []; let where = 'WHERE 1=1';
+    if (tipo) { params.push(tipo); where += ` AND a.tipo=$${params.length}`; }
+    if (project_id) { params.push(project_id); where += ` AND a.project_id=$${params.length}`; }
+    if (estado) { params.push(estado); where += ` AND a.estado=$${params.length}`; }
+    if (!(await isPrivilegedViewer(req))) {
+      const ids = await getAccessibleProjectIds(req.user.id);
+      params.push(ids); params.push(req.user.id);
+      where += ` AND (a.project_id = ANY($${params.length - 1}::text[]) OR a.created_by = $${params.length})`;
+    }
+    const { rows } = await pool.query(`
+      SELECT a.id, a.codigo, a.tipo, a.project_id, a.estado, a.version, to_char(a.fecha_emision,'YYYY-MM-DD') AS fecha_emision,
+             a.resumen, a.created_at, a.updated_at, a.datos->>'auditor' AS auditor, a.datos->'periodo' AS periodo,
+             p.name AS project_name, p.code AS project_code, p.client AS project_client,
+             cu.nombre AS created_by_name, uu.nombre AS updated_by_name
+        FROM ti.auditorias_calidad a
+        LEFT JOIN ti.projects p ON p.id = a.project_id
+        LEFT JOIN public.usuarios cu ON cu.id = a.created_by
+        LEFT JOIN public.usuarios uu ON uu.id = a.updated_by
+        ${where} ORDER BY a.updated_at DESC`, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/calidad/actas/:id', async (req, res) => {
+  try {
+    await ensureCalidad();
+    const { rows } = await pool.query(`
+      SELECT a.*, to_char(a.fecha_emision,'YYYY-MM-DD') AS fecha_emision, p.name AS project_name, p.code AS project_code, p.client AS project_client
+        FROM ti.auditorias_calidad a LEFT JOIN ti.projects p ON p.id = a.project_id WHERE a.id=$1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Acta no encontrada' });
+    if (!(await puedeVerActa(req, rows[0]))) return res.status(403).json({ error: 'No tienes acceso a esta acta' });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/calidad/actas', async (req, res) => {
+  try {
+    await ensureCalidad();
+    const { tipo, project_id, datos } = req.body || {};
+    if (!TIPOS_ACTA[tipo]) return res.status(400).json({ error: 'Tipo de acta inválido' });
+    if (project_id && !(await canAccessProject(req, project_id))) return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    const anio = new Date().getFullYear();
+    const pref = `QB-AUD-${TIPOS_ACTA[tipo]}-${anio}-`;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('ti.auditorias_calidad'))");
+      const { rows: n } = await client.query(`SELECT COALESCE(MAX(substring(codigo from '([0-9]+)$')::int), 0) + 1 AS n FROM ti.auditorias_calidad WHERE codigo LIKE $1`, [pref + '%']);
+      const codigo = pref + String(n[0].n).padStart(3, '0');
+      const id = uid();
+      const d = datos && typeof datos === 'object' ? datos : {};
+      await client.query(`INSERT INTO ti.auditorias_calidad (id, codigo, tipo, project_id, datos, resumen, fecha_emision, created_by, updated_by)
+        VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$8)`, [id, codigo, tipo, project_id || null, JSON.stringify(d), JSON.stringify(resumenActa(d)), d.fecha_emision || new Date().toISOString().slice(0, 10), req.user.id]);
+      await client.query('COMMIT');
+      if (project_id) await logActivity(project_id, req.user.id, 'audit_created', `${req.user.nombre || req.user.username} abrió el acta de auditoría ${codigo} (${tipo === 'seguridad' ? 'seguridad' : tipo === 'calidad' ? 'calidad' : 'reglas de negocio'})`);
+      res.status(201).json({ id, codigo });
+    } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.put('/calidad/actas/:id', async (req, res) => {
+  try {
+    await ensureCalidad();
+    const { rows } = await pool.query('SELECT * FROM ti.auditorias_calidad WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Acta no encontrada' });
+    const acta = rows[0];
+    if (!(await puedeVerActa(req, acta))) return res.status(403).json({ error: 'No tienes acceso a esta acta' });
+    const b = req.body || {};
+    const datos = b.datos && typeof b.datos === 'object' ? b.datos : acta.datos;
+    const estado = ESTADOS_ACTA.includes(b.estado) ? b.estado : acta.estado;
+    let projectId = b.project_id !== undefined ? (b.project_id || null) : acta.project_id;
+    if (projectId && projectId !== acta.project_id && !(await canAccessProject(req, projectId))) return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
+    const version = String(b.version || acta.version || '1.0').slice(0, 10);
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(datos.fecha_emision || '')) ? datos.fecha_emision : acta.fecha_emision;
+    const { rows: out } = await pool.query(`UPDATE ti.auditorias_calidad SET datos=$2::jsonb, resumen=$3::jsonb, estado=$4, project_id=$5, version=$6, fecha_emision=$7,
+      updated_by=$8, updated_at=NOW() WHERE id=$1 RETURNING id, codigo, estado, resumen, updated_at`,
+      [req.params.id, JSON.stringify(datos), JSON.stringify(resumenActa(datos)), estado, projectId, version, fecha, req.user.id]);
+    if (projectId && estado !== acta.estado) {
+      await logActivity(projectId, req.user.id, 'audit_status', `${req.user.nombre || req.user.username} cambió el acta ${acta.codigo} a «${estado.replace('_', ' ')}»`);
+    }
+    res.json(out[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/calidad/actas/:id', async (req, res) => {
+  try {
+    await ensureCalidad();
+    const { rows } = await pool.query('SELECT * FROM ti.auditorias_calidad WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Acta no encontrada' });
+    const acta = rows[0];
+    if (!(await isPrivilegedViewer(req)) && String(acta.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Solo quien creó el acta o ADG puede eliminarla' });
+    if (['emitida', 'cerrada'].includes(acta.estado) && !(await isPrivilegedViewer(req))) return res.status(403).json({ error: 'Un acta emitida solo la puede eliminar ADG' });
+    await pool.query('DELETE FROM ti.auditorias_calidad WHERE id=$1', [req.params.id]);
+    if (acta.project_id) await logActivity(acta.project_id, req.user.id, 'audit_deleted', `${req.user.nombre || req.user.username} eliminó el acta de auditoría ${acta.codigo}`);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds, logActivity };
 
 module.exports = router;
