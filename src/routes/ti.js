@@ -1946,7 +1946,7 @@ router.post('/calidad/actas', async (req, res) => {
     if (!TIPOS_ACTA[tipo]) return res.status(400).json({ error: 'Tipo de acta inválido' });
     if (project_id && !(await canAccessProject(req, project_id))) return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
     const anio = new Date().getFullYear();
-    const pref = `QB-AUD-${TIPOS_ACTA[tipo]}-${anio}-`;
+    const pref = `AUD-${TIPOS_ACTA[tipo]}-${anio}-`;
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
