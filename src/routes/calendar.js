@@ -86,6 +86,9 @@ function ensureSchema() {
       ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS modality TEXT NOT NULL DEFAULT 'presencial';
       CREATE INDEX IF NOT EXISTS calendar_meetings_area_date_idx ON calendar.meetings(area, meeting_date);
       CREATE INDEX IF NOT EXISTS calendar_meetings_project_idx ON calendar.meetings(project_id);
+      -- Una reunión puede tratar varios proyectos (revisiones, auditorías, comités)
+      ALTER TABLE calendar.meetings ADD COLUMN IF NOT EXISTS related_project_ids TEXT[] NOT NULL DEFAULT '{}';
+      CREATE INDEX IF NOT EXISTS calendar_meetings_related_projects_idx ON calendar.meetings USING GIN (related_project_ids);
 
       CREATE TABLE IF NOT EXISTS calendar.meeting_participants (
         id TEXT PRIMARY KEY, meeting_id TEXT REFERENCES calendar.meetings(id) ON DELETE CASCADE,
@@ -396,7 +399,7 @@ router.get('/meetings', async (req, res) => {
     const privileged = isPrivileged(req);
 
     const params = []; let where = 'WHERE 1=1';
-    if (project_id) { params.push(project_id); where += ` AND m.project_id=$${params.length}`; }
+    if (project_id) { params.push(project_id); where += ` AND (m.project_id=$${params.length} OR $${params.length} = ANY(m.related_project_ids))`; }
     if (mine === 'true') {
       params.push(req.user.id);
       where += ` AND (EXISTS (SELECT 1 FROM calendar.meeting_participants mp WHERE mp.meeting_id=m.id AND mp.user_id=$${params.length} AND mp.participant_type='internal') OR m.created_by=$${params.length})`;
@@ -421,6 +424,7 @@ router.get('/meetings', async (req, res) => {
     const { rows: meetings } = await pool.query(`
       SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, m.modality, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
+             (SELECT array_agg(DISTINCT x) FROM unnest(array_remove(array_prepend(m.project_id, m.related_project_ids), NULL)) x) AS project_ids,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m
       LEFT JOIN public.usuarios u ON u.id = m.created_by
@@ -470,6 +474,7 @@ router.get('/meetings/:id', async (req, res) => {
     const { rows } = await pool.query(`
       SELECT m.id, m.title, m.description, m.motivo, m.location, m.image_url, m.modality, to_char(m.meeting_date,'YYYY-MM-DD') AS meeting_date,
              m.start_time, m.end_time, m.area, m.meeting_type, m.project_id, m.status,
+             (SELECT array_agg(DISTINCT x) FROM unnest(array_remove(array_prepend(m.project_id, m.related_project_ids), NULL)) x) AS project_ids,
              m.created_by, u.nombre AS created_by_name, m.created_at, m.updated_at
       FROM calendar.meetings m LEFT JOIN public.usuarios u ON u.id = m.created_by
       WHERE m.id=$1`, [req.params.id]);
@@ -513,7 +518,7 @@ router.post('/check-availability', async (req, res) => {
 
 async function validateAndBuildMeeting(req, { requireProjectAccess }) {
   const { title, date, start_time, end_time, motivo, description, meeting_type, location, image_url, modality,
-          participants, external_participants, project_id, area: bodyArea } = req.body;
+          participants, external_participants, project_id, project_ids, area: bodyArea } = req.body;
 
   if (!title || !date || !start_time || !end_time) {
     return { error: [400, 'Nombre, fecha, hora de inicio y hora de fin son requeridos'] };
@@ -528,6 +533,17 @@ async function validateAndBuildMeeting(req, { requireProjectAccess }) {
   if (project_id && requireProjectAccess) {
     if (!(await ti.helpers.canAccessProject(req, project_id))) {
       return { error: [403, 'No tienes acceso a este proyecto'] };
+    }
+  }
+  // Proyectos relacionados: solo los que existen y a los que se tiene acceso
+  const relatedIds = [...new Set((Array.isArray(project_ids) ? project_ids : []).map(x => String(x || '').trim()).filter(Boolean))].slice(0, 20);
+  if (relatedIds.length) {
+    const { rows: existentes } = await pool.query('SELECT id FROM ti.projects WHERE id = ANY($1)', [relatedIds]);
+    if (existentes.length !== relatedIds.length) return { error: [400, 'Uno de los proyectos relacionados no existe'] };
+    const yaTenia = new Set(req._proyectosPrevios || []);
+    for (const pid of relatedIds) {
+      if (yaTenia.has(pid)) continue;
+      if (!(await ti.helpers.canAccessProject(req, pid))) return { error: [403, 'No tienes acceso a uno de los proyectos relacionados'] };
     }
   }
 
@@ -560,13 +576,15 @@ async function validateAndBuildMeeting(req, { requireProjectAccess }) {
   return {
     fields: { title, date, start_time, end_time, motivo: motivo || null, description: description || null,
               meeting_type: meeting_type || null, location: location || null, image_url: image_url || null,
-              modality: modality || 'presencial', project_id: project_id || null, area },
+              modality: modality || 'presencial', project_id: project_id || null, area,
+              related_project_ids: relatedIds },
     internalList, externalList, myArea, privileged,
   };
 }
 
 router.post('/meetings', async (req, res) => {
   try {
+    if (!req.body.project_id && Array.isArray(req.body.project_ids) && req.body.project_ids.length) req.body.project_id = req.body.project_ids[0];
     const v = await validateAndBuildMeeting(req, { requireProjectAccess: true });
     if (v.error) return res.status(v.error[0]).json({ error: v.error[1] });
     const { fields, internalList, externalList, myArea, privileged } = v;
@@ -583,10 +601,10 @@ router.post('/meetings', async (req, res) => {
       await client.query('BEGIN');
       const id = uid();
       await client.query(`
-        INSERT INTO calendar.meetings (id,title,description,motivo,location,image_url,modality,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        INSERT INTO calendar.meetings (id,title,description,motivo,location,image_url,modality,meeting_date,start_time,end_time,area,meeting_type,project_id,created_by,related_project_ids)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [id, fields.title, fields.description, fields.motivo, fields.location, fields.image_url, fields.modality, fields.date, fields.start_time, fields.end_time,
-         fields.area, fields.meeting_type, fields.project_id, req.user.id]
+         fields.area, fields.meeting_type, fields.project_id, req.user.id, fields.related_project_ids.filter(x => x !== fields.project_id)]
       );
       for (const p of internalList) {
         await client.query(`
@@ -603,8 +621,8 @@ router.post('/meetings', async (req, res) => {
         );
       }
       await client.query('COMMIT');
-      if (fields.project_id) {
-        await ti.helpers.logActivity(fields.project_id, req.user.id, 'meeting_scheduled',
+      for (const pid of [...new Set([fields.project_id, ...fields.related_project_ids].filter(Boolean))]) {
+        await ti.helpers.logActivity(pid, req.user.id, 'meeting_scheduled',
           `${req.user.nombre || req.user.username} agendó la reunión "${fields.title}" (${fields.date} ${fields.start_time.slice(0,5)}–${fields.end_time.slice(0,5)})`);
       }
       res.status(201).json({ id });
@@ -628,6 +646,9 @@ router.put('/meetings/:id', async (req, res) => {
     }
 
     req.body.project_id = old.project_id; // el área/proyecto de origen no se reasigna al editar
+    const previos = [old.project_id, ...(old.related_project_ids || [])].filter(Boolean);
+    req._proyectosPrevios = previos;
+    if (!Array.isArray(req.body.project_ids)) req.body.project_ids = previos; // clientes antiguos: se conservan
     const v = await validateAndBuildMeeting(req, { requireProjectAccess: false });
     if (v.error) return res.status(v.error[0]).json({ error: v.error[1] });
     const { fields, internalList, externalList, myArea, privileged } = v;
@@ -646,8 +667,9 @@ router.put('/meetings/:id', async (req, res) => {
       await client.query('BEGIN');
       await client.query(`
         UPDATE calendar.meetings SET title=$1, description=$2, motivo=$3, meeting_date=$4, start_time=$5, end_time=$6,
-          meeting_type=$7, location=$8, image_url=$9, modality=$10, updated_at=NOW() WHERE id=$11`,
-        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, fields.image_url, fields.modality, req.params.id]
+          meeting_type=$7, location=$8, image_url=$9, modality=$10, related_project_ids=$12, updated_at=NOW() WHERE id=$11`,
+        [fields.title, fields.description, fields.motivo, fields.date, fields.start_time, fields.end_time, fields.meeting_type, fields.location, fields.image_url, fields.modality, req.params.id,
+         fields.related_project_ids.filter(x => x !== fields.project_id)]
       );
       await client.query('DELETE FROM calendar.meeting_participants WHERE meeting_id=$1', [req.params.id]);
       for (const p of internalList) {
@@ -665,9 +687,9 @@ router.put('/meetings/:id', async (req, res) => {
         );
       }
       await client.query('COMMIT');
-      if (fields.project_id) {
-        await ti.helpers.logActivity(fields.project_id, req.user.id, 'meeting_updated',
-          `${req.user.nombre || req.user.username} editó la reunión "${fields.title}" (${fields.date} ${fields.start_time.slice(0,5)}–${fields.end_time.slice(0,5)})`);
+      for (const pid of [...new Set([fields.project_id, ...fields.related_project_ids].filter(Boolean))]) {
+        await ti.helpers.logActivity(pid, req.user.id, previos.includes(pid) ? 'meeting_updated' : 'meeting_scheduled',
+          `${req.user.nombre || req.user.username} ${previos.includes(pid) ? 'editó' : 'vinculó'} la reunión "${fields.title}" (${fields.date} ${fields.start_time.slice(0,5)}–${fields.end_time.slice(0,5)})`);
       }
       res.json({ message: 'Actualizado' });
     } catch (e) {
@@ -689,8 +711,8 @@ router.post('/meetings/:id/cancel', async (req, res) => {
     }
     await pool.query("UPDATE calendar.meetings SET status='cancelled', updated_at=NOW() WHERE id=$1", [req.params.id]);
     await pool.query('DELETE FROM calendar.meeting_participants WHERE meeting_id=$1', [req.params.id]);
-    if (rows[0].project_id) {
-      await ti.helpers.logActivity(rows[0].project_id, req.user.id, 'meeting_cancelled',
+    for (const pid of [...new Set([rows[0].project_id, ...(rows[0].related_project_ids || [])].filter(Boolean))]) {
+      await ti.helpers.logActivity(pid, req.user.id, 'meeting_cancelled',
         `${req.user.nombre || req.user.username} canceló la reunión "${rows[0].title}"`);
     }
     res.json({ message: 'Cancelada' });
