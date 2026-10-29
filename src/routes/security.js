@@ -676,6 +676,7 @@ async function detalleCloudinary(forzar) {
     generado: new Date().toISOString(),
   };
   _cacheCloud.detalle = det; _cacheCloud.detalleAt = Date.now();
+  _cacheCloud.todos = todos;
   return det;
 }
 
@@ -761,6 +762,139 @@ router.get('/storage/cloudinary', requirePrivileged, async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: 'No se pudo consultar Cloudinary: ' + (e.message || e.error?.message || 'error') });
   }
+});
+
+/* ── Dónde se usa cada archivo de Cloudinary ──
+   Recorre las columnas de texto/JSON de todas las tablas buscando la URL o
+   el public_id del archivo. Las tablas de auditoría cuentan aparte (solo
+   historial: no significan que el archivo se esté mostrando en algún sitio). */
+const TABLAS_AUDITORIA = new Set(['audit.logs', 'public.auditoria_usuarios', 'security.storage_snapshots']);
+const COLUMNAS_ETIQUETA = ['title', 'titulo', 'name', 'nombre', 'razon_social', 'asunto', 'codigo', 'code', 'username', 'filename', 'original_name', 'descripcion'];
+const qi = x => '"' + String(x).replace(/"/g, '""') + '"';
+function contieneId(valor, id) {
+  let i = valor.indexOf(id);
+  while (i >= 0) {
+    const sig = valor[i + id.length];
+    const ant = valor[i - 1];
+    if ((!sig || !/[A-Za-z0-9_-]/.test(sig)) && (!ant || !/[A-Za-z0-9_-]/.test(ant))) return true;
+    i = valor.indexOf(id, i + 1);
+  }
+  return false;
+}
+async function mapaUsos(archivos) {
+  const { rows: tablas } = await pool.query(`
+    SELECT c.table_schema AS esquema, c.table_name AS tabla, array_agg(c.column_name::text ORDER BY c.ordinal_position) AS cols,
+           bool_or(c.column_name = 'id') AS tiene_id
+      FROM information_schema.columns c
+      JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name AND t.table_type = 'BASE TABLE'
+     WHERE c.table_schema NOT IN ('pg_catalog', 'information_schema') AND c.table_schema NOT LIKE 'pg_%'
+       AND c.data_type IN ('text', 'character varying', 'json', 'jsonb', 'ARRAY')
+     GROUP BY 1, 2`);
+  const { rows: todasCols } = await pool.query(`SELECT table_schema AS esquema, table_name AS tabla, array_agg(column_name::text) AS cols
+      FROM information_schema.columns WHERE table_schema NOT IN ('pg_catalog','information_schema') GROUP BY 1, 2`);
+  const colsDe = new Map(todasCols.map(r => [r.esquema + '.' + r.tabla, r.cols]));
+  // Patrones: URLs de Cloudinary y las carpetas raíz de los archivos (public_id sin URL)
+  const raices = [...new Set(archivos.map(a => String(a.public_id).split('/')[0]).filter(Boolean))];
+  const patrones = ['%res.cloudinary.com%', ...raices.map(r => '%' + r.replace(/[%_\\]/g, m => '\\' + m) + '/%')];
+  const usos = new Map();
+  for (const t of tablas) {
+    const clave = t.esquema + '.' + t.tabla;
+    if (clave === 'security.storage_snapshots') continue;
+    const todas = colsDe.get(clave) || [];
+    const pk = todas.includes('id') ? 'id' : null;
+    const etiqueta = COLUMNAS_ETIQUETA.find(c => todas.includes(c));
+    const cond = t.cols.map(c => `${qi(c)}::text ILIKE ANY($1)`).join(' OR ');
+    let filas;
+    try {
+      ({ rows: filas } = await pool.query(`SELECT ${pk ? qi(pk) + '::text' : 'NULL'} AS _id, ${etiqueta ? qi(etiqueta) + '::text' : 'NULL'} AS _etiqueta,
+        ${t.cols.map((c, i) => `${qi(c)}::text AS c${i}`).join(', ')}
+        FROM ${qi(t.esquema)}.${qi(t.tabla)} WHERE ${cond} LIMIT 5000`, [patrones]));
+    } catch (_) { continue; }
+    for (const f of filas) {
+      t.cols.forEach((col, i) => {
+        const v = f['c' + i];
+        if (!v) return;
+        for (const a of archivos) {
+          if (!contieneId(v, a.public_id)) continue;
+          const lista = usos.get(a.public_id) || [];
+          if (lista.length < 30) lista.push({ esquema: t.esquema, tabla: t.tabla, columna: col, id: f._id, etiqueta: f._etiqueta ? String(f._etiqueta).slice(0, 120) : null, auditoria: TABLAS_AUDITORIA.has(clave) });
+          usos.set(a.public_id, lista);
+        }
+      });
+    }
+  }
+  return usos;
+}
+
+function miniatura(a) {
+  try {
+    if (a.resource_type === 'image') {
+      return cloudinaryLib.url(a.public_id, { resource_type: 'image', secure: true, ...(a.format === 'pdf' ? { format: 'jpg', page: 1 } : {}),
+        transformation: [{ width: 240, height: 240, crop: 'fill', gravity: 'auto' }, { quality: 'auto' }] });
+    }
+    if (a.resource_type === 'video') {
+      return cloudinaryLib.url(a.public_id, { resource_type: 'video', secure: true, format: 'jpg', transformation: [{ width: 240, height: 240, crop: 'fill', start_offset: 0 }] });
+    }
+  } catch (_) { /* sin miniatura */ }
+  return null;
+}
+
+// Lista completa de archivos con miniatura y dónde se usa cada uno
+router.get('/storage/cloudinary/archivos', requirePrivileged, async (req, res) => {
+  try {
+    const forzar = req.query.refrescar === '1';
+    if (forzar || !_cacheCloud.todos || Date.now() - _cacheCloud.detalleAt > 300000) await detalleCloudinary(true);
+    if (forzar || !_cacheCloud.usos) { _cacheCloud.usos = await mapaUsos(_cacheCloud.todos); _cacheCloud.usosAt = Date.now(); }
+    const archivos = _cacheCloud.todos.map(a => {
+      const partes = String(a.public_id).split('/');
+      return {
+        public_id: a.public_id, tipo: a.resource_type, formato: a.format || (partes[partes.length - 1].includes('.') ? partes[partes.length - 1].split('.').pop() : ''),
+        bytes: a.bytes || 0, creado: a.created_at, url: a.secure_url, miniatura: miniatura(a),
+        carpeta: a.asset_folder || (partes.length > 1 ? partes.slice(0, -1).join('/') : '(raíz)'), nombre: a.display_name || partes[partes.length - 1],
+        ancho: a.width || null, alto: a.height || null, duracion: a.duration || null, paginas: a.pages || null,
+        usos: _cacheCloud.usos.get(a.public_id) || [],
+      };
+    });
+    res.json({ archivos, generado: new Date(_cacheCloud.detalleAt).toISOString(), usos_calculados: new Date(_cacheCloud.usosAt).toISOString() });
+  } catch (e) {
+    res.status(502).json({ error: 'No se pudo listar Cloudinary: ' + (e.message || e.error?.message || 'error') });
+  }
+});
+
+// Eliminación definitiva (exige el código 2FA de quien elimina)
+router.post('/storage/cloudinary/eliminar', requirePrivileged, async (req, res) => {
+  try {
+    const lista = (Array.isArray(req.body?.archivos) ? req.body.archivos : [])
+      .filter(a => a && typeof a.public_id === 'string' && ['image', 'raw', 'video'].includes(a.tipo)).slice(0, 100);
+    if (!lista.length) return res.status(400).json({ error: 'No se indicó ningún archivo válido' });
+    const { valid, error } = await sec.verifyAccountTotp({
+      userId: req.user.id, username: req.user.username, code: req.body?.code, ip: sec.clientIp(req), userAgent: req.headers['user-agent'],
+    });
+    if (!valid) return res.status(403).json({ error: error || 'Código 2FA inválido', code: 'TOTP_INVALID' });
+
+    // Archivos en uso: solo con confirmación expresa
+    if (!req.body?.forzar && _cacheCloud.usos) {
+      const enUso = lista.filter(a => (_cacheCloud.usos.get(a.public_id) || []).some(u => !u.auditoria));
+      if (enUso.length) return res.status(409).json({ error: 'Hay archivos en uso', en_uso: enUso.map(a => a.public_id) });
+    }
+
+    const resultados = [];
+    for (const a of lista) {
+      try {
+        const r = await cloudinaryLib.uploader.destroy(a.public_id, { resource_type: a.tipo, type: 'upload', invalidate: true });
+        const ok = r?.result === 'ok';
+        resultados.push({ public_id: a.public_id, ok, resultado: r?.result || 'error' });
+        try { await logSecurityEvent({ userId: req.user.id, path: '/storage/cloudinary/' + a.public_id, actionType: ok ? 'CLOUDINARY_DELETE' : 'CLOUDINARY_DELETE_FAIL', ip: sec.clientIp(req), statusCode: ok ? 200 : 404 }); } catch (_) {}
+      } catch (e) {
+        resultados.push({ public_id: a.public_id, ok: false, resultado: e.message || e.error?.message || 'error' });
+      }
+    }
+    // Lo eliminado ya no debe aparecer en las cifras ni en la lista
+    const borrados = new Set(resultados.filter(r => r.ok).map(r => r.public_id));
+    if (_cacheCloud.todos) _cacheCloud.todos = _cacheCloud.todos.filter(a => !borrados.has(a.public_id));
+    _cacheCloud.detalle = null; _cacheCloud.detalleAt = 0; _cacheCloud.uso = null;
+    res.json({ eliminados: borrados.size, resultados });
+  } catch (e) { res.status(500).json({ error: e.message || 'No se pudo eliminar' }); }
 });
 
 router.get('/storage/history', requirePrivileged, async (req, res) => {
