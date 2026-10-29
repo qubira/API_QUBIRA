@@ -282,6 +282,8 @@ router.get('/team-availability', async (req, res) => {
         || String(r.created_by) === String(req.user.id)
         || misReuniones.has(r.meeting_id);
       return {
+        // meeting_id: al editar una reunión, el panel no la cuenta como ocupación propia
+        meeting_id: r.meeting_id,
         user_id: r.user_id, date: r.date, start_time: r.start_time, end_time: r.end_time,
         area: r.area, modality: r.modality,
         title: canSeeDetail ? r.title : 'Reunión privada',
