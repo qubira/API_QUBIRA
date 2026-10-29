@@ -1897,7 +1897,9 @@ function resumenActa(datos) {
 async function puedeVerActa(req, acta) {
   if (await isPrivilegedViewer(req)) return true;
   if (String(acta.created_by) === String(req.user.id)) return true;
-  return acta.project_id ? canAccessProject(req, acta.project_id) : false;
+  const ids = [...new Set([acta.project_id, ...(acta.datos?.proyectos_ids || [])].filter(Boolean))];
+  for (const id of ids) if (await canAccessProject(req, id)) return true;
+  return false;
 }
 
 router.get('/calidad/actas', async (req, res) => {
@@ -1906,12 +1908,13 @@ router.get('/calidad/actas', async (req, res) => {
     const { tipo, project_id, estado } = req.query;
     const params = []; let where = 'WHERE 1=1';
     if (tipo) { params.push(tipo); where += ` AND a.tipo=$${params.length}`; }
-    if (project_id) { params.push(project_id); where += ` AND a.project_id=$${params.length}`; }
+    // Un acta puede auditar varios proyectos: figura en cada uno de ellos
+    if (project_id) { params.push(String(project_id)); where += ` AND (a.project_id=$${params.length} OR COALESCE(a.datos->'proyectos_ids','[]'::jsonb) ? $${params.length} OR COALESCE(a.datos->'proyectos','[]'::jsonb) @> jsonb_build_array(jsonb_build_object('id', $${params.length}::text)))`; }
     if (estado) { params.push(estado); where += ` AND a.estado=$${params.length}`; }
     if (!(await isPrivilegedViewer(req))) {
       const ids = await getAccessibleProjectIds(req.user.id);
       params.push(ids); params.push(req.user.id);
-      where += ` AND (a.project_id = ANY($${params.length - 1}::text[]) OR a.created_by = $${params.length})`;
+      where += ` AND (a.project_id = ANY($${params.length - 1}::text[]) OR COALESCE(a.datos->'proyectos_ids','[]'::jsonb) ?| $${params.length - 1}::text[] OR a.created_by = $${params.length})`;
     }
     const { rows } = await pool.query(`
       SELECT a.id, a.codigo, a.tipo, a.project_id, a.estado, a.version, to_char(a.fecha_emision,'YYYY-MM-DD') AS fecha_emision,
