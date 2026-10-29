@@ -1915,7 +1915,7 @@ router.get('/calidad/actas', async (req, res) => {
     }
     const { rows } = await pool.query(`
       SELECT a.id, a.codigo, a.tipo, a.project_id, a.estado, a.version, to_char(a.fecha_emision,'YYYY-MM-DD') AS fecha_emision,
-             a.resumen, a.created_at, a.updated_at, a.datos->>'auditor' AS auditor, a.datos->'periodo' AS periodo,
+             a.datos, a.resumen, a.created_at, a.updated_at, a.datos->>'auditor' AS auditor, a.datos->'periodo' AS periodo,
              p.name AS project_name, p.code AS project_code, p.client AS project_client,
              cu.nombre AS created_by_name, uu.nombre AS updated_by_name
         FROM ti.auditorias_calidad a
