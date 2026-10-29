@@ -605,4 +605,177 @@ router.get('/login-history/:username', requirePrivileged, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* ============================================================
+   CONTROL DE ALMACENAMIENTO (Neon + Cloudinary) — panel DST
+   - Neon: tamaño real de la base, por esquema y por tabla, conexiones
+     y caché, consultado en vivo.
+   - Cloudinary: consumo del plan (créditos, almacenamiento, ancho de
+     banda, transformaciones). Cloudinary actualiza estas cifras una vez
+     al día; se cachean 60 s para no gastar su límite de llamadas. El
+     detalle por carpeta y los archivos más pesados se cachean 5 min.
+   - Historial: una foto cada 15 min como máximo (security.storage_snapshots).
+   ============================================================ */
+const cloudinaryLib = require('../config/cloudinary');
+const NEON_LIMITE_BYTES = Math.round((Number(process.env.NEON_STORAGE_LIMIT_MB) || 512) * 1048576); // Plan Free de Neon: 0,5 GB
+let _storageSchemaListo = null;
+function ensureStorageSchema() {
+  if (!_storageSchemaListo) {
+    _storageSchemaListo = pool.query(`
+      CREATE TABLE IF NOT EXISTS security.storage_snapshots (
+        id BIGSERIAL PRIMARY KEY,
+        taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        neon_bytes BIGINT,
+        cloud_storage_bytes BIGINT,
+        cloud_bandwidth_bytes BIGINT,
+        cloud_credits_used NUMERIC(10,3),
+        cloud_credits_limit NUMERIC(10,3),
+        cloud_objects INT
+      );
+      CREATE INDEX IF NOT EXISTS storage_snapshots_taken_idx ON security.storage_snapshots(taken_at);`).catch(e => { _storageSchemaListo = null; throw e; });
+  }
+  return _storageSchemaListo;
+}
+
+const _cacheCloud = { uso: null, usoAt: 0, detalle: null, detalleAt: 0 };
+async function usoCloudinary(forzar) {
+  if (!forzar && _cacheCloud.uso && Date.now() - _cacheCloud.usoAt < 60000) return _cacheCloud.uso;
+  const u = await cloudinaryLib.api.usage();
+  _cacheCloud.uso = u; _cacheCloud.usoAt = Date.now();
+  return u;
+}
+// Recorre los archivos (imagen, raw, video) para sumar por carpeta y hallar los más pesados
+async function detalleCloudinary(forzar) {
+  if (!forzar && _cacheCloud.detalle && Date.now() - _cacheCloud.detalleAt < 300000) return _cacheCloud.detalle;
+  const todos = [];
+  for (const resource_type of ['image', 'raw', 'video']) {
+    let next_cursor;
+    for (let pagina = 0; pagina < 10; pagina++) {
+      const r = await cloudinaryLib.api.resources({ resource_type, type: 'upload', max_results: 500, next_cursor });
+      (r.resources || []).forEach(x => todos.push({ ...x, resource_type }));
+      if (!r.next_cursor) break;
+      next_cursor = r.next_cursor;
+    }
+  }
+  const carpetas = {};
+  todos.forEach(x => {
+    const partes = String(x.public_id || '').split('/');
+    const carpeta = x.asset_folder || (partes.length > 1 ? partes.slice(0, Math.min(partes.length - 1, 3)).join('/') : '(raíz)');
+    const c = carpetas[carpeta] ||= { carpeta, archivos: 0, bytes: 0, imagenes: 0, documentos: 0, videos: 0, ultimo: null };
+    c.archivos++; c.bytes += x.bytes || 0;
+    if (x.resource_type === 'image') c.imagenes++; else if (x.resource_type === 'video') c.videos++; else c.documentos++;
+    if (!c.ultimo || x.created_at > c.ultimo) c.ultimo = x.created_at;
+  });
+  const resumen = x => ({ public_id: x.public_id, tipo: x.resource_type, formato: x.format || (String(x.public_id).split('.').pop() || ''), bytes: x.bytes || 0, creado: x.created_at, url: x.secure_url, ancho: x.width, alto: x.height });
+  const det = {
+    total_archivos: todos.length,
+    total_bytes: todos.reduce((a, x) => a + (x.bytes || 0), 0),
+    por_tipo: ['image', 'raw', 'video'].map(t => ({ tipo: t, archivos: todos.filter(x => x.resource_type === t).length, bytes: todos.filter(x => x.resource_type === t).reduce((a, x) => a + (x.bytes || 0), 0) })),
+    carpetas: Object.values(carpetas).sort((a, b) => b.bytes - a.bytes),
+    mas_pesados: todos.slice().sort((a, b) => (b.bytes || 0) - (a.bytes || 0)).slice(0, 15).map(resumen),
+    recientes: todos.slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))).slice(0, 10).map(resumen),
+    generado: new Date().toISOString(),
+  };
+  _cacheCloud.detalle = det; _cacheCloud.detalleAt = Date.now();
+  return det;
+}
+
+async function guardarFoto(neonBytes) {
+  try {
+    await ensureStorageSchema();
+    const { rows } = await pool.query("SELECT 1 FROM security.storage_snapshots WHERE taken_at > NOW() - INTERVAL '15 minutes' LIMIT 1");
+    if (rows.length) return;
+    let u = null;
+    try { u = await usoCloudinary(); } catch (_) { /* sin Cloudinary igual se guarda Neon */ }
+    await pool.query(`INSERT INTO security.storage_snapshots (neon_bytes, cloud_storage_bytes, cloud_bandwidth_bytes, cloud_credits_used, cloud_credits_limit, cloud_objects)
+      VALUES ($1,$2,$3,$4,$5,$6)`, [neonBytes, u?.storage?.usage ?? null, u?.bandwidth?.usage ?? null, u?.credits?.usage ?? null, u?.credits?.limit ?? null, u?.objects?.usage ?? null]);
+  } catch (e) { console.warn('[storage] foto no guardada:', e.message); }
+}
+
+router.get('/storage/neon', requirePrivileged, async (req, res) => {
+  try {
+    const t0 = Date.now();
+    const { rows: [base] } = await pool.query(`SELECT current_database() AS db, pg_database_size(current_database())::bigint AS bytes,
+      current_setting('server_version') AS version, current_setting('max_connections')::int AS max_conexiones`);
+    const latencia = Date.now() - t0;
+    const [esquemas, tablas, conexiones, cache] = await Promise.all([
+      pool.query(`SELECT n.nspname AS esquema,
+          sum(pg_total_relation_size(c.oid))::bigint AS bytes,
+          sum(pg_relation_size(c.oid))::bigint AS datos,
+          sum(pg_indexes_size(c.oid))::bigint AS indices,
+          count(*)::int AS tablas,
+          sum(COALESCE(st.n_live_tup, GREATEST(c.reltuples, 0)))::bigint AS filas
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace LEFT JOIN pg_stat_user_tables st ON st.relid = c.oid
+        WHERE c.relkind IN ('r','m','p') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+        GROUP BY 1 ORDER BY 2 DESC`),
+      pool.query(`SELECT n.nspname AS esquema, c.relname AS tabla,
+          pg_total_relation_size(c.oid)::bigint AS bytes, pg_relation_size(c.oid)::bigint AS datos,
+          pg_indexes_size(c.oid)::bigint AS indices,
+          COALESCE(st.n_live_tup, GREATEST(c.reltuples, 0))::bigint AS filas,
+          COALESCE(st.n_dead_tup, 0)::bigint AS filas_muertas,
+          GREATEST(st.last_autovacuum, st.last_vacuum) AS ultimo_vacuum,
+          COALESCE(st.n_tup_ins, 0)::bigint AS inserciones
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        LEFT JOIN pg_stat_user_tables st ON st.relid = c.oid
+        WHERE c.relkind IN ('r','m','p') AND n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%'
+        ORDER BY 3 DESC LIMIT 25`),
+      pool.query(`SELECT count(*)::int AS total,
+          count(*) FILTER (WHERE state = 'active')::int AS activas,
+          count(*) FILTER (WHERE state = 'idle')::int AS inactivas,
+          count(*) FILTER (WHERE state LIKE 'idle in transaction%')::int AS en_transaccion
+        FROM pg_stat_activity WHERE datname = current_database()`),
+      pool.query(`SELECT CASE WHEN sum(blks_hit) + sum(blks_read) = 0 THEN NULL
+          ELSE round(sum(blks_hit)::numeric * 100 / (sum(blks_hit) + sum(blks_read)), 2) END AS cache_hit,
+          sum(xact_commit)::bigint AS commits, sum(xact_rollback)::bigint AS rollbacks
+        FROM pg_stat_database WHERE datname = current_database()`),
+    ]);
+    const bytes = Number(base.bytes);
+    guardarFoto(bytes); // sin esperar
+    res.json({
+      db: base.db, version: base.version, bytes, limite_bytes: NEON_LIMITE_BYTES,
+      porcentaje: Math.round(bytes / NEON_LIMITE_BYTES * 1000) / 10, latencia_ms: latencia,
+      esquemas: esquemas.rows, tablas: tablas.rows,
+      conexiones: { ...conexiones.rows[0], max: base.max_conexiones },
+      cache_hit: cache.rows[0].cache_hit !== null ? Number(cache.rows[0].cache_hit) : null,
+      commits: Number(cache.rows[0].commits || 0), rollbacks: Number(cache.rows[0].rollbacks || 0),
+      generado: new Date().toISOString(),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/storage/cloudinary', requirePrivileged, async (req, res) => {
+  try {
+    const forzar = req.query.refrescar === '1';
+    const u = await usoCloudinary(forzar);
+    const out = {
+      plan: u.plan, actualizado_por_cloudinary: u.last_updated, consultado: new Date(_cacheCloud.usoAt).toISOString(),
+      creditos: u.credits || null,
+      almacenamiento: u.storage || null, ancho_banda: u.bandwidth || null, transformaciones: u.transformations || null,
+      objetos: u.objects?.usage ?? null, recursos: u.resources ?? null, derivados: u.derived_resources ?? null, solicitudes: u.requests ?? null,
+      limites: u.media_limits || null,
+      rate_limit: { permitido: u.rate_limit_allowed, restante: u.rate_limit_remaining, reinicio: u.rate_limit_reset_at },
+    };
+    if (req.query.detalle === '1') {
+      try { out.detalle = await detalleCloudinary(forzar); } catch (e) { out.detalle_error = e.message || e.error?.message; }
+    }
+    res.json(out);
+  } catch (e) {
+    res.status(502).json({ error: 'No se pudo consultar Cloudinary: ' + (e.message || e.error?.message || 'error') });
+  }
+});
+
+router.get('/storage/history', requirePrivileged, async (req, res) => {
+  try {
+    await ensureStorageSchema();
+    const dias = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 365);
+    // Un punto por día (el último de cada día) + todos los de las últimas 24 h
+    const { rows } = await pool.query(`
+      SELECT DISTINCT ON (date_trunc('day', taken_at)) taken_at, neon_bytes, cloud_storage_bytes, cloud_bandwidth_bytes, cloud_credits_used, cloud_credits_limit, cloud_objects
+        FROM security.storage_snapshots WHERE taken_at > NOW() - ($1 || ' days')::interval
+        ORDER BY date_trunc('day', taken_at), taken_at DESC`, [dias]);
+    const { rows: hoy } = await pool.query(`SELECT taken_at, neon_bytes, cloud_storage_bytes, cloud_credits_used FROM security.storage_snapshots
+        WHERE taken_at > NOW() - INTERVAL '24 hours' ORDER BY taken_at`);
+    res.json({ dias: rows, ultimas_24h: hoy });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 module.exports = router;
