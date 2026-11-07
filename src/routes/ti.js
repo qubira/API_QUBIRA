@@ -688,7 +688,7 @@ router.get('/projects/web-cases', async (req, res) => {
 });
 
 /* Actualización rápida de estado web y atributos desde el panel Qubira Web */
-router.patch('/projects/:id/web-status', async (req, res) => {
+const updateWebStatus = async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
     const { show_on_web, website_url, web_metric, web_tagline, web_description, web_order, company_logo } = req.body;
@@ -728,7 +728,9 @@ router.patch('/projects/:id/web-status', async (req, res) => {
 
     res.json({ ok: true, message: 'Estado web actualizado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
+};
+router.patch('/projects/:id/web-status', updateWebStatus);
+router.put('/projects/:id/web-status', updateWebStatus);
 
 /* TI reclama un proyecto pendiente creado por ADG */
 router.post('/projects/:id/claim', async (req, res) => {
