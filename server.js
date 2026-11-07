@@ -22,6 +22,7 @@ const constanciasPublicRouter = require('./src/routes/constancias-public');
 const oppRouter = require('./src/routes/opp');
 const divisasRouter = require('./src/routes/divisas');
 const odaclRouter = require('./src/routes/odacl');
+const casesPublicRouter = require('./src/routes/cases-public');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -118,6 +119,7 @@ app.use('/api/opp',        oppRouter);
 app.use('/api/divisas',    divisasRouter);
 app.use('/api/odacl',      odaclRouter);
 app.use('/api/public/constancias', constanciasPublicRouter);
+app.use('/api/public/cases',       casesPublicRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });

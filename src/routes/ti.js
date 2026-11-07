@@ -175,6 +175,11 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_price NUMERIC;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_price_currency TEXT DEFAULT 'PEN';
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS commercial_notes TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS show_on_web BOOLEAN DEFAULT false;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_metric TEXT DEFAULT '100%';
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_tagline TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_description TEXT;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_order INTEGER DEFAULT 0;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
       ALTER TABLE ti.requirements ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
@@ -369,6 +374,7 @@ const FIELD_LABEL = {
   id_document_type:'Tipo de Documento', id_document_number:'Número de Documento',
   project_type:'Tipo de Proyecto', github_url:'Link de GitHub', website_url:'Link de la Página',
   family:'Familia de Proyecto', show_to_comercial:'Visible en Comercial', commercial_offer_type:'Tipo de Oferta Comercial',
+  show_on_web:'Publicado en Web', web_metric:'Métrica Web', web_tagline:'Etiqueta Web', web_description:'Descripción Web', web_order:'Orden Web',
 };
 const COMMERCIAL_OFFER_LABEL = { venta:'Venta', alquiler:'Alquiler', venta_alquiler:'Venta o alquiler' };
 
@@ -486,12 +492,15 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
     const { name, client, description, status, budget, currency, start_date, end_date,
-            responsible_id, priority, company_name, id_document_type, id_document_number,
+            responsible_id, priority, company_name, company_logo_url, id_document_type, id_document_number,
             project_type, github_url, website_url, family,
-            show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes } = req.body;
+            show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes,
+            show_on_web, web_metric, web_tagline, web_description, web_order } = req.body;
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
 
     const show_to_comercial_val = show_to_comercial === true || show_to_comercial === 'true';
+    const show_on_web_val = show_on_web === true || show_on_web === 'true';
+    const web_order_val = (web_order === undefined || web_order === '') ? 0 : parseInt(web_order, 10);
     const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
 
     const id = uid();
@@ -505,18 +514,22 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/logos', 'image', req.file.originalname);
       company_logo = result.secure_url;
+    } else if (company_logo_url) {
+      company_logo = company_logo_url.trim();
     }
 
     await pool.query(`
       INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family,
-        show_to_comercial,commercial_offer_type,commercial_price,commercial_price_currency,commercial_notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+        show_to_comercial,commercial_offer_type,commercial_price,commercial_price_currency,commercial_notes,
+        show_on_web,web_metric,web_tagline,web_description,web_order)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
       [id, code, name, client, description || null, status || 'pending', 0,
        budget || 0, currency || 'USD', start_date || null, end_date || null,
        responsible_id || null, priority || 'medium', req.user.id,
        company_name || null, company_logo, id_document_type || null, id_document_number || null,
        project_type || null, github_url || null, website_url || null, family || null,
-       show_to_comercial_val, commercial_offer_type || null, commercial_price_val, commercial_price_currency || null, commercial_notes || null]
+       show_to_comercial_val, commercial_offer_type || null, commercial_price_val, commercial_price_currency || null, commercial_notes || null,
+       show_on_web_val, web_metric || '100%', web_tagline || null, web_description || null, web_order_val]
     );
     await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
     res.status(201).json({ id, code, name });
@@ -526,9 +539,10 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
 router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
   try {
     const { name, client, description, status, budget, currency, start_date, end_date,
-            responsible_id, priority, company_name, id_document_type, id_document_number,
+            responsible_id, priority, company_name, company_logo_url, id_document_type, id_document_number,
             project_type, github_url, website_url, family,
             show_to_comercial, commercial_offer_type, commercial_price, commercial_price_currency, commercial_notes,
+            show_on_web, web_metric, web_tagline, web_description, web_order,
             opp_cost_base, sale_price_min, rental_price, rental_price_min, opp_margin_pct, opp_roi_months } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
@@ -555,17 +569,17 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     if (req.file) {
       const result = await uploadToCloudinary(req.file.buffer, 'qubira/ti/logos', 'image', req.file.originalname);
       company_logo = result.secure_url;
+    } else if (company_logo_url !== undefined && company_logo_url !== '') {
+      company_logo = company_logo_url.trim();
     }
 
     const show_to_comercial_val = (show_to_comercial === undefined || show_to_comercial === '')
       ? null : (show_to_comercial === true || show_to_comercial === 'true');
+    const show_on_web_val = (show_on_web === undefined || show_on_web === '')
+      ? null : (show_on_web === true || show_on_web === 'true');
+    const web_order_val = (web_order === undefined || web_order === '') ? null : parseInt(web_order, 10);
     const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
-    /* Estructura de precios de OPP (costo base, piso mínimo de venta,
-       alquiler y su piso, margen, ROI) — ADG la ve y puede editarla
-       desde este mismo formulario si hace falta corregirla, aunque la
-       arma OPP normalmente desde su propio panel. Vacío/undefined no
-       borra el valor existente (mismo criterio COALESCE que el resto
-       del formulario). */
+
     const num = v => (v === undefined || v === '' || v === null) ? null : Number(v);
     const opp_cost_base_val = num(opp_cost_base);
     const sale_price_min_val = num(sale_price_min);
@@ -590,8 +604,11 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         opp_cost_base=COALESCE($24,opp_cost_base), sale_price_min=COALESCE($25,sale_price_min),
         rental_price=COALESCE($26,rental_price), rental_price_min=COALESCE($27,rental_price_min),
         opp_margin_pct=COALESCE($28,opp_margin_pct), opp_roi_months=COALESCE($29,opp_roi_months),
+        show_on_web=COALESCE($30,show_on_web), web_metric=COALESCE($31,web_metric),
+        web_tagline=COALESCE($32,web_tagline), web_description=COALESCE($33,web_description),
+        web_order=COALESCE($34,web_order),
         updated_at=NOW()
-      WHERE id=$30`,
+      WHERE id=$35`,
       [name||null, client||null, description||null, status||null,
        budget??null, currency||null, start_date||null, end_date||null,
        responsible_id||null, priority||null, company_name||null, company_logo,
@@ -600,13 +617,15 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
        show_to_comercial_val, commercial_offer_type||null, commercial_price_val, commercial_notes||null,
        commercial_price_currency||null,
        opp_cost_base_val, sale_price_min_val, rental_price_val, rental_price_min_val, opp_margin_pct_val, opp_roi_months_val,
+       show_on_web_val, web_metric||null, web_tagline||null, web_description||null, web_order_val,
        req.params.id]
     );
 
     const submitted = { name, client, description, status, budget, currency, start_date, end_date,
       responsible_id, priority, company_name, id_document_type, id_document_number,
       project_type, github_url, website_url, family, company_logo,
-      show_to_comercial: show_to_comercial_val, commercial_offer_type };
+      show_to_comercial: show_to_comercial_val, commercial_offer_type,
+      show_on_web: show_on_web_val, web_metric, web_tagline };
     const changes = [];
     for (const [field, label] of Object.entries(FIELD_LABEL)) {
       const newVal = submitted[field];
@@ -628,6 +647,8 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         oldDisplay = COMMERCIAL_OFFER_LABEL[oldVal] || oldDisplay; newDisplay = COMMERCIAL_OFFER_LABEL[newVal] || newVal;
       } else if (field === 'show_to_comercial') {
         oldDisplay = oldVal ? 'Sí' : 'No'; newDisplay = newVal === true || newVal === 'true' ? 'Sí' : 'No';
+      } else if (field === 'show_on_web') {
+        oldDisplay = oldVal ? 'Sí' : 'No'; newDisplay = newVal === true || newVal === 'true' ? 'Sí' : 'No';
       } else if (field === 'budget') {
         oldDisplay = oldVal != null ? `$${Number(oldVal).toLocaleString()}` : '—';
         newDisplay = `$${Number(newVal).toLocaleString()}`;
@@ -646,6 +667,66 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
       await logActivity(req.params.id, req.user.id, 'updated', `${req.user.nombre || req.user.username} actualizó — ${changes.join(' · ')}`);
     }
     res.json({ message: 'Proyecto actualizado' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Listado de proyectos y casos de éxito para el módulo Qubira Web */
+router.get('/projects/web-cases', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.code, p.name, p.client, p.description, p.company_name, p.company_logo,
+             p.website_url, p.github_url, p.project_type, p.status, p.progress, p.family,
+             p.show_to_comercial, p.show_on_web, p.web_metric, p.web_tagline, p.web_description, p.web_order,
+             p.updated_at, p.created_at,
+             u.nombre AS responsible_name
+      FROM ti.projects p
+      LEFT JOIN public.usuarios u ON u.id = p.responsible_id
+      ORDER BY p.show_on_web DESC, COALESCE(p.web_order, 0) ASC, p.created_at DESC
+    `);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Actualización rápida de estado web y atributos desde el panel Qubira Web */
+router.patch('/projects/:id/web-status', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    const { show_on_web, website_url, web_metric, web_tagline, web_description, web_order, company_logo } = req.body;
+    const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
+    if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    const old = oldRows[0];
+
+    const show_on_web_val = (show_on_web === undefined || show_on_web === '')
+      ? old.show_on_web : (show_on_web === true || show_on_web === 'true');
+    const web_order_val = (web_order !== undefined && web_order !== '') ? parseInt(web_order, 10) : old.web_order;
+
+    await pool.query(`
+      UPDATE ti.projects SET
+        show_on_web = $1,
+        website_url = COALESCE($2, website_url),
+        web_metric = COALESCE($3, web_metric),
+        web_tagline = COALESCE($4, web_tagline),
+        web_description = COALESCE($5, web_description),
+        web_order = COALESCE($6, web_order),
+        company_logo = COALESCE($7, company_logo),
+        updated_at = NOW()
+      WHERE id = $8
+    `, [
+      show_on_web_val,
+      website_url !== undefined && website_url !== '' ? website_url.trim() : null,
+      web_metric !== undefined && web_metric !== '' ? web_metric.trim() : null,
+      web_tagline !== undefined && web_tagline !== '' ? web_tagline.trim() : null,
+      web_description !== undefined && web_description !== '' ? web_description.trim() : null,
+      web_order_val,
+      company_logo !== undefined && company_logo !== '' ? company_logo.trim() : null,
+      req.params.id
+    ]);
+
+    await logActivity(req.params.id, req.user.id, 'updated',
+      `${req.user.nombre || req.user.username} ${show_on_web_val ? 'publicó en Qubira Web' : 'despublicó de Qubira Web'} — ${old.name}`
+    );
+
+    res.json({ ok: true, message: 'Estado web actualizado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -2005,6 +2086,6 @@ router.delete('/calidad/actas/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds, logActivity };
+router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds, logActivity, ensureSchema };
 
 module.exports = router;
