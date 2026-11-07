@@ -180,6 +180,7 @@ function ensureSchema() {
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_tagline TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_description TEXT;
       ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_order INTEGER DEFAULT 0;
+      ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS web_link_locked BOOLEAN DEFAULT false;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
       ALTER TABLE ti.requirements ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
@@ -473,7 +474,7 @@ router.get('/projects/web-cases', async (req, res) => {
     const { rows } = await pool.query(`
       SELECT p.id, p.code, p.name, p.client, p.description, p.company_name, p.company_logo,
              p.website_url, p.github_url, p.project_type, p.status, p.progress, p.family,
-             p.show_to_comercial, p.show_on_web, p.web_metric, p.web_tagline, p.web_description, p.web_order,
+             p.show_to_comercial, p.show_on_web, p.web_metric, p.web_tagline, p.web_description, p.web_order, p.web_link_locked,
              p.updated_at, p.created_at,
              u.nombre AS responsible_name
       FROM ti.projects p
@@ -488,7 +489,7 @@ router.get('/projects/web-cases', async (req, res) => {
 const updateWebStatus = async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
-    const { show_on_web, website_url, web_metric, web_tagline, web_description, web_order, company_logo } = req.body;
+    const { show_on_web, website_url, web_metric, web_tagline, web_description, web_order, company_logo, web_link_locked } = req.body;
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
     const old = oldRows[0];
@@ -506,6 +507,7 @@ const updateWebStatus = async (req, res) => {
         web_description = COALESCE($5, web_description),
         web_order = COALESCE($6, web_order),
         company_logo = COALESCE($7, company_logo),
+        web_link_locked = COALESCE($9, web_link_locked),
         updated_at = NOW()
       WHERE id = $8
     `, [
@@ -516,7 +518,8 @@ const updateWebStatus = async (req, res) => {
       web_description !== undefined && web_description !== '' ? web_description.trim() : null,
       web_order_val,
       company_logo !== undefined && company_logo !== '' ? company_logo.trim() : null,
-      req.params.id
+      req.params.id,
+      typeof web_link_locked === 'boolean' ? web_link_locked : null
     ]);
 
     await logActivity(req.params.id, req.user.id, 'updated',
