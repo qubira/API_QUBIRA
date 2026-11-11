@@ -23,7 +23,7 @@ const TT_AUTH = 'https://www.tiktok.com/v2/auth/authorize/';
 const TT_API = 'https://open.tiktokapis.com/v2';
 const CAMPOS_USUARIO = 'open_id,avatar_url,display_name,username,bio_description,profile_deep_link,is_verified,follower_count,following_count,likes_count,video_count';
 const CAMPOS_VIDEO = 'id,title,video_description,create_time,cover_image_url,share_url,duration,view_count,like_count,comment_count,share_count';
-const PANEL_URL = () => (process.env.OCM_PANEL_URL || 'https://qubira-ocm.vercel.app').replace(/\/$/, '');
+const PANEL_URL = () => (process.env.OCM_PANEL_URL || 'https://qubiraocm.vercel.app').replace(/\/$/, '');
 
 // ─── Esquema ────────────────────────────────────────────────────────────────
 let esquemaListo = null;
