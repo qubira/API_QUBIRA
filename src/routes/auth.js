@@ -21,11 +21,16 @@ router.use((req, res, next) => { sec.ensureSecuritySchema().then(() => next()).c
    /exchange (el traspaso entre paneles del MISMO dispositivo/sesión
    central, ej. ADG → TI vía el botón "Módulos") — si no, tener dos
    paneles abiertos a la vez en la misma compu se rompería solo. */
-async function revokeOtherSessions(userId, newIp) {
+/* La app móvil QUBIRA Reporte usa su propio canal: una cuenta puede tener a la
+   vez una sesión web y una móvil, y un login nuevo solo reemplaza a la sesión
+   anterior del mismo canal. */
+const canalDe = req => (req.body && req.body.canal === 'movil' ? 'movil' : 'web');
+
+async function revokeOtherSessions(userId, newIp, canal = 'web') {
   await pool.query(
     `UPDATE sesiones SET expires_at = NOW(), revoked_reason = 'replaced', revoked_by_ip = $2
-     WHERE usuario_id = $1 AND expires_at > NOW() AND revoked_reason IS NULL`,
-    [userId, newIp]
+     WHERE usuario_id = $1 AND expires_at > NOW() AND revoked_reason IS NULL AND COALESCE(canal, 'web') = $3`,
+    [userId, newIp, canal]
   );
 }
 
@@ -33,8 +38,9 @@ async function revokeOtherSessions(userId, newIp) {
    usado tanto por /login (credenciales) como por /exchange (código de
    traspaso desde login/modulo.html), así ambos caminos terminan en
    exactamente la misma sesión. */
-async function issueSession(user, req) {
-  const expiresIn = process.env.JWT_EXPIRES_IN || '24h';
+async function issueSession(user, req, canal = 'web') {
+  // La sesión móvil dura 30 días para que el monitoreo en segundo plano no se corte cada día
+  const expiresIn = canal === 'movil' ? '720h' : (process.env.JWT_EXPIRES_IN || '24h');
   const token = jwt.sign(
     { sub: user.id, username: user.username, rol: user.rol },
     process.env.JWT_SECRET,
@@ -45,9 +51,9 @@ async function issueSession(user, req) {
   const ip = sec.clientIp(req);
 
   await pool.query(
-    `INSERT INTO sesiones (usuario_id, token, ip_address, user_agent, expires_at)
-     VALUES ($1, $2, $3, $4, $5)`,
-    [user.id, token, ip, req.headers['user-agent'] || null, expires]
+    `INSERT INTO sesiones (usuario_id, token, ip_address, user_agent, expires_at, canal)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [user.id, token, ip, req.headers['user-agent'] || null, expires, canal]
   );
 
   const [cargo, authorized_modules] = await Promise.all([
@@ -158,8 +164,8 @@ router.post('/login', async (req, res) => {
       return res.json({ ok: true, totp_required: true, pre_token: preToken });
     }
 
-    await revokeOtherSessions(user.id, ip);
-    const { token, user: userOut } = await issueSession(user, req);
+    await revokeOtherSessions(user.id, ip, canalDe(req));
+    const { token, user: userOut } = await issueSession(user, req, canalDe(req));
 
     await pool.query(
       `INSERT INTO auditoria_usuarios (usuario_id, accion, realizado_por) VALUES ($1, 'LOGIN', $1)`,
@@ -275,8 +281,8 @@ router.post('/login/totp', async (req, res) => {
     });
     if (!valid) return res.status(401).json({ ok: false, error });
 
-    await revokeOtherSessions(user.id, ip);
-    const { token, user: userOut } = await issueSession(user, req);
+    await revokeOtherSessions(user.id, ip, canalDe(req));
+    const { token, user: userOut } = await issueSession(user, req, canalDe(req));
 
     await pool.query(
       `INSERT INTO auditoria_usuarios (usuario_id, accion, realizado_por) VALUES ($1, 'LOGIN', $1)`,
@@ -614,8 +620,8 @@ router.post('/face/login', async (req, res) => {
     }
 
     await sec.recordLoginAttempt({ username: user.username, ip, success: true, userAgent: req.headers['user-agent'] });
-    await revokeOtherSessions(user.id, ip);
-    const { token, user: userOut } = await issueSession(user, req);
+    await revokeOtherSessions(user.id, ip, canalDe(req));
+    const { token, user: userOut } = await issueSession(user, req, canalDe(req));
 
     await pool.query(
       `INSERT INTO auditoria_usuarios (usuario_id, accion, realizado_por) VALUES ($1, 'LOGIN', $1)`,

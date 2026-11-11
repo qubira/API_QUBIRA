@@ -123,6 +123,7 @@ function ensureSecuritySchema() {
          avisarle a la sesión vieja con el IP que la reemplazó. */
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS revoked_reason TEXT;
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS revoked_by_ip TEXT;
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS canal TEXT DEFAULT 'web';
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION;
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION;
       ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS accuracy DOUBLE PRECISION;
