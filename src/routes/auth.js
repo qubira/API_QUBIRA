@@ -39,8 +39,8 @@ async function revokeOtherSessions(userId, newIp, canal = 'web') {
    traspaso desde login/modulo.html), así ambos caminos terminan en
    exactamente la misma sesión. */
 async function issueSession(user, req, canal = 'web') {
-  // La sesión móvil dura 30 días para que el monitoreo en segundo plano no se corte cada día
-  const expiresIn = canal === 'movil' ? '720h' : (process.env.JWT_EXPIRES_IN || '24h');
+  // La app móvil inicia sesión una sola vez: su sesión dura un año (uso exclusivo de personal de confianza)
+  const expiresIn = canal === 'movil' ? '8760h' : (process.env.JWT_EXPIRES_IN || '24h');
   const token = jwt.sign(
     { sub: user.id, username: user.username, rol: user.rol },
     process.env.JWT_SECRET,
