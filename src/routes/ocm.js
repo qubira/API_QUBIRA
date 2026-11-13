@@ -57,6 +57,13 @@ function asegurarEsquema() {
       );
       /* Copia permanente de la portada: las URLs de TikTok vencen a los pocos días */
       ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS portada_cloud TEXT;
+      /* Foto diaria de cada video para medir su crecimiento día a día */
+      CREATE TABLE IF NOT EXISTS ocm.tiktok_video_diario (
+        video_id TEXT REFERENCES ocm.tiktok_videos(video_id) ON DELETE CASCADE,
+        fecha DATE NOT NULL,
+        vistas BIGINT, likes BIGINT, comentarios BIGINT, compartidos BIGINT,
+        PRIMARY KEY (video_id, fecha)
+      );
     `).catch(e => { esquemaListo = null; throw e; });
   }
   return esquemaListo;
@@ -174,6 +181,12 @@ async function sincronizar(cuenta) {
       if (!d.has_more || !d.cursor) break;
       cursor = d.cursor;
     }
+    await pool.query(`
+      INSERT INTO ocm.tiktok_video_diario (video_id, fecha, vistas, likes, comentarios, compartidos)
+      SELECT video_id, (NOW() AT TIME ZONE 'America/Lima')::date, vistas, likes, comentarios, compartidos
+      FROM ocm.tiktok_videos WHERE cuenta_id = $1
+      ON CONFLICT (video_id, fecha) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes,
+        comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuenta.id]);
     await guardarPortadas(cuenta.id);
     return { ok: true };
   } catch (e) {
@@ -218,13 +231,16 @@ router.get('/tiktok/resumen', async (req, res) => {
     const cuenta = cuentas[0] || null;
     if (!cuenta) return res.json({ cuenta: null, historial: [], videos: [] });
     const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 90, 7), 365);
-    const [{ rows: historial }, { rows: videos }] = await Promise.all([
+    const [{ rows: historial }, { rows: videos }, { rows: diario }] = await Promise.all([
       pool.query(`SELECT to_char(fecha,'YYYY-MM-DD') AS fecha, seguidores, seguidos, likes, videos FROM ocm.tiktok_metricas_diarias
                   WHERE cuenta_id=$1 AND fecha >= CURRENT_DATE - $2::int ORDER BY fecha`, [cuenta.id, dias]),
       pool.query(`SELECT video_id, titulo, COALESCE(portada_cloud, portada) AS portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos
                   FROM ocm.tiktok_videos WHERE cuenta_id=$1 ORDER BY publicado_en DESC NULLS LAST`, [cuenta.id]),
+      pool.query(`SELECT d.video_id, to_char(d.fecha,'YYYY-MM-DD') AS fecha, d.vistas, d.likes, d.comentarios, d.compartidos
+                  FROM ocm.tiktok_video_diario d JOIN ocm.tiktok_videos v ON v.video_id = d.video_id
+                  WHERE v.cuenta_id=$1 AND d.fecha >= CURRENT_DATE - $2::int ORDER BY d.fecha`, [cuenta.id, dias]),
     ]);
-    res.json({ cuenta, historial, videos });
+    res.json({ cuenta, historial, videos, diario });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
