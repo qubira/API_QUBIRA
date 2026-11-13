@@ -49,6 +49,13 @@ function ensureSchema() {
       ALTER TABLE analytics.events ADD COLUMN IF NOT EXISTS utm_source TEXT;
       ALTER TABLE analytics.events ADD COLUMN IF NOT EXISTS utm_medium TEXT;
       ALTER TABLE analytics.events ADD COLUMN IF NOT EXISTS utm_campaign TEXT;
+      /* IPs que no se cuentan (la oficina, la laptop del equipo...) */
+      CREATE TABLE IF NOT EXISTS analytics.exclusiones (
+        ip         TEXT PRIMARY KEY,
+        nota       TEXT,
+        creado_por INTEGER,
+        creado_en  TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
   }
   return ready;
@@ -58,13 +65,14 @@ router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); 
 const EVENT_TYPES = [
   'page_view', 'case_click', 'whatsapp_click', 'chatbot_open', 'chatbot_message',
   'scroll_depth', 'time_on_page', 'outbound_click', 'nav_click',
-  'job_apply_click', 'job_apply_submit',
+  'job_apply_click', 'job_apply_submit', 'click',
 ];
 const EVENT_LABEL = {
   page_view: 'Vista de página', case_click: 'Click en caso de éxito',
   whatsapp_click: 'Click en WhatsApp', chatbot_open: 'Abrió el chatbot', chatbot_message: 'Mensaje al chatbot',
   scroll_depth: 'Scroll', time_on_page: 'Tiempo en página', outbound_click: 'Click a link externo', nav_click: 'Click en navegación',
   job_apply_click: 'Click en Postular (empleo)', job_apply_submit: 'Postulación enviada',
+  click: 'Click en botón o enlace',
 };
 
 /* Canal de tráfico, al estilo GA4 — se calcula a partir del referrer
@@ -166,8 +174,19 @@ async function requirePrivileged(req, res, next) {
    POST /event — público, sin autenticar (lo llama el sitio en
    Vercel desde el navegador de cualquier visitante).
    ============================================================ */
+// IPs excluidas en caché por 60 s para no consultar la base en cada evento
+let _excluidas = { set: new Set(), at: 0 };
+async function ipExcluida(ip) {
+  if (Date.now() - _excluidas.at > 60000) {
+    const { rows } = await pool.query('SELECT ip FROM analytics.exclusiones');
+    _excluidas = { set: new Set(rows.map(r => r.ip)), at: Date.now() };
+  }
+  return _excluidas.set.has(ip);
+}
+
 router.post('/event', async (req, res) => {
   try {
+    if (req.ip && await ipExcluida(req.ip)) return res.status(204).end();
     const { event_type, case_name, label, page, referrer, session_id, utm_source, utm_medium, utm_campaign } = req.body || {};
     if (!EVENT_TYPES.includes(event_type)) {
       return res.status(400).json({ error: 'event_type inválido' });
@@ -196,6 +215,92 @@ router.post('/event', async (req, res) => {
 /* ============================================================
    GET /summary — panel QUBIRA_DST, sección Visitas.
    ============================================================ */
+/* Hábitos de los visitantes: en vivo, días y horas, clics, entrada y salida */
+router.get('/habitos', requireAuth, requirePrivileged, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
+    const rango = `created_at >= NOW() - ($1 || ' days')::interval`;
+    const [vivo, mapa, clics, entrada, salida, porVisita, porHora] = await Promise.all([
+      pool.query(`SELECT COUNT(DISTINCT session_id)::int AS n,
+                         COALESCE(json_agg(DISTINCT page) FILTER (WHERE page IS NOT NULL), '[]') AS paginas
+                  FROM analytics.events WHERE created_at >= NOW() - interval '5 minutes'`),
+      pool.query(`SELECT EXTRACT(ISODOW FROM created_at AT TIME ZONE 'America/Lima')::int AS dia,
+                         EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Lima')::int AS hora, COUNT(*)::int AS total
+                  FROM analytics.events WHERE event_type = 'page_view' AND ${rango} GROUP BY 1, 2`, [days]),
+      pool.query(`SELECT label, page, COUNT(*)::int AS total, COUNT(DISTINCT session_id)::int AS visitantes
+                  FROM analytics.events WHERE event_type = 'click' AND label IS NOT NULL AND ${rango}
+                  GROUP BY label, page ORDER BY total DESC LIMIT 15`, [days]),
+      pool.query(`SELECT page, COUNT(*)::int AS total FROM (
+                    SELECT DISTINCT ON (session_id) session_id, page FROM analytics.events
+                    WHERE event_type = 'page_view' AND ${rango} ORDER BY session_id, created_at ASC) t
+                  GROUP BY page ORDER BY total DESC LIMIT 8`, [days]),
+      pool.query(`SELECT page, COUNT(*)::int AS total FROM (
+                    SELECT DISTINCT ON (session_id) session_id, page FROM analytics.events
+                    WHERE event_type = 'page_view' AND ${rango} ORDER BY session_id, created_at DESC) t
+                  GROUP BY page ORDER BY total DESC LIMIT 8`, [days]),
+      pool.query(`SELECT ROUND(AVG(paginas), 1) AS paginas_por_visitante,
+                         ROUND(AVG(dur))::int AS duracion_media_seg,
+                         COUNT(*) FILTER (WHERE paginas = 1 AND interacciones = 0)::int AS rebotes, COUNT(*)::int AS total
+                  FROM (SELECT session_id,
+                          COUNT(*) FILTER (WHERE event_type = 'page_view') AS paginas,
+                          COUNT(*) FILTER (WHERE event_type NOT IN ('page_view', 'scroll_depth', 'time_on_page')) AS interacciones,
+                          LEAST(EXTRACT(EPOCH FROM MAX(created_at) - MIN(created_at)), 3600) AS dur
+                        FROM analytics.events WHERE ${rango} GROUP BY session_id) t`, [days]),
+      pool.query(`SELECT EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Lima')::int AS hora, COUNT(DISTINCT session_id)::int AS visitantes
+                  FROM analytics.events WHERE event_type = 'page_view' AND ${rango} GROUP BY 1 ORDER BY 1`, [days]),
+    ]);
+    const pv = porVisita.rows[0] || {};
+    res.json({
+      days,
+      en_vivo: vivo.rows[0].n, en_vivo_paginas: vivo.rows[0].paginas,
+      mapa_calor: mapa.rows,
+      top_clics: clics.rows,
+      paginas_entrada: entrada.rows,
+      paginas_salida: salida.rows,
+      paginas_por_visitante: Number(pv.paginas_por_visitante || 0),
+      duracion_media_seg: pv.duracion_media_seg || 0,
+      tasa_rebote: pv.total ? Math.round(pv.rebotes / pv.total * 100) : 0,
+      visitantes_por_hora: porHora.rows,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Exclusiones: IPs cuyas visitas no se registran (ej. la laptop de la oficina) */
+router.get('/exclusiones', requireAuth, requirePrivileged, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT x.ip, x.nota, x.creado_en, u.nombre AS creado_por_nombre,
+             (SELECT COUNT(*)::int FROM analytics.events e WHERE e.ip_address = x.ip) AS eventos_previos
+      FROM analytics.exclusiones x LEFT JOIN public.usuarios u ON u.id = x.creado_por ORDER BY x.creado_en DESC`);
+    res.json({ rows, tu_ip: req.ip || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/exclusiones', requireAuth, requirePrivileged, async (req, res) => {
+  try {
+    const ip = String(req.body?.ip || '').trim();
+    if (!/^[0-9a-f:.]{3,45}$/i.test(ip)) return res.status(400).json({ error: 'IP inválida' });
+    await pool.query(`INSERT INTO analytics.exclusiones (ip, nota, creado_por) VALUES ($1, $2, $3)
+                      ON CONFLICT (ip) DO UPDATE SET nota = EXCLUDED.nota`, [ip, clip(req.body?.nota, 200), req.user.id]);
+    let borrados = 0;
+    // Opcional: quitar del historial las visitas que ya se habían registrado desde esa IP
+    if (req.body?.borrar_previas === true) {
+      const r = await pool.query('DELETE FROM analytics.events WHERE ip_address = $1', [ip]);
+      borrados = r.rowCount;
+    }
+    _excluidas.at = 0;
+    res.json({ ok: true, borrados });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/exclusiones/:ip', requireAuth, requirePrivileged, async (req, res) => {
+  try {
+    await pool.query('DELETE FROM analytics.exclusiones WHERE ip = $1', [req.params.ip]);
+    _excluidas.at = 0;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
   try {
     const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
