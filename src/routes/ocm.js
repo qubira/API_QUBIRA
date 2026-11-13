@@ -15,6 +15,7 @@ const crypto = require('crypto');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
+const cloudinary = require('../config/cloudinary');
 
 const router = express.Router();        // /api/ocm          (panel OCM)
 const publico = express.Router();       // /api/public/ocm   (callback y cron)
@@ -54,6 +55,8 @@ function asegurarEsquema() {
         vistas BIGINT, likes BIGINT, comentarios BIGINT, compartidos BIGINT,
         actualizado TIMESTAMPTZ DEFAULT NOW()
       );
+      /* Copia permanente de la portada: las URLs de TikTok vencen a los pocos días */
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS portada_cloud TEXT;
     `).catch(e => { esquemaListo = null; throw e; });
   }
   return esquemaListo;
@@ -125,6 +128,24 @@ async function tokenVigente(cuenta) {
   return t.access_token;
 }
 
+/* Sube a Cloudinary la portada de los videos que aún no tienen copia, mientras
+   la URL de TikTok siga vigente (recién llegada en esta sincronización). */
+async function guardarPortadas(cuentaId) {
+  const { rows } = await pool.query(
+    `SELECT video_id, portada FROM ocm.tiktok_videos WHERE cuenta_id=$1 AND portada IS NOT NULL AND portada_cloud IS NULL`, [cuentaId]);
+  for (const v of rows) {
+    try {
+      const r = await cloudinary.uploader.upload(v.portada, {
+        folder: 'qubira/ocm/tiktok', public_id: v.video_id, overwrite: true, resource_type: 'image',
+        transformation: [{ width: 540, crop: 'limit', quality: 'auto', fetch_format: 'auto' }],
+      });
+      await pool.query('UPDATE ocm.tiktok_videos SET portada_cloud=$1 WHERE video_id=$2', [r.secure_url, v.video_id]);
+    } catch (e) {
+      console.warn('[OCM] No se pudo copiar la portada de', v.video_id, e.message);
+    }
+  }
+}
+
 // Trae perfil, métricas del día y videos; guarda todo en la base
 async function sincronizar(cuenta) {
   try {
@@ -153,6 +174,7 @@ async function sincronizar(cuenta) {
       if (!d.has_more || !d.cursor) break;
       cursor = d.cursor;
     }
+    await guardarPortadas(cuenta.id);
     return { ok: true };
   } catch (e) {
     await pool.query('UPDATE ocm.tiktok_cuentas SET ultimo_error=$1 WHERE id=$2', [String(e.message).slice(0, 500), cuenta.id]).catch(() => {});
@@ -199,7 +221,7 @@ router.get('/tiktok/resumen', async (req, res) => {
     const [{ rows: historial }, { rows: videos }] = await Promise.all([
       pool.query(`SELECT to_char(fecha,'YYYY-MM-DD') AS fecha, seguidores, seguidos, likes, videos FROM ocm.tiktok_metricas_diarias
                   WHERE cuenta_id=$1 AND fecha >= CURRENT_DATE - $2::int ORDER BY fecha`, [cuenta.id, dias]),
-      pool.query(`SELECT video_id, titulo, portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos
+      pool.query(`SELECT video_id, titulo, COALESCE(portada_cloud, portada) AS portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos
                   FROM ocm.tiktok_videos WHERE cuenta_id=$1 ORDER BY publicado_en DESC NULLS LAST`, [cuenta.id]),
     ]);
     res.json({ cuenta, historial, videos });
