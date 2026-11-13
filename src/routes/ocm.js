@@ -16,14 +16,20 @@ const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
 const cloudinary = require('../config/cloudinary');
+const multer = require('multer');
+const os = require('os');
+const fsp = require('fs/promises');
+
+// Videos para publicar: se guardan en disco temporal (no en memoria) y se borran al terminar
+const subida = multer({ dest: os.tmpdir(), limits: { fileSize: 64 * 1024 * 1024 } });
 
 const router = express.Router();        // /api/ocm          (panel OCM)
 const publico = express.Router();       // /api/public/ocm   (callback y cron)
 
 const TT_AUTH = 'https://www.tiktok.com/v2/auth/authorize/';
 const TT_API = 'https://open.tiktokapis.com/v2';
-const CAMPOS_USUARIO = 'open_id,avatar_url,display_name,username,bio_description,profile_deep_link,is_verified,follower_count,following_count,likes_count,video_count';
-const CAMPOS_VIDEO = 'id,title,video_description,create_time,cover_image_url,share_url,duration,view_count,like_count,comment_count,share_count';
+const CAMPOS_USUARIO = 'open_id,avatar_url,display_name,username,bio_description,profile_deep_link,is_verified,follower_count,following_count,likes_count,video_count,avatar_large_url';
+const CAMPOS_VIDEO = 'id,title,video_description,create_time,cover_image_url,share_url,duration,height,width,embed_link,view_count,like_count,comment_count,share_count';
 const PANEL_URL = () => (process.env.OCM_PANEL_URL || 'https://qubiraocm.vercel.app').replace(/\/$/, '');
 
 // ─── Esquema ────────────────────────────────────────────────────────────────
@@ -57,6 +63,19 @@ function asegurarEsquema() {
       );
       /* Copia permanente de la portada: las URLs de TikTok vencen a los pocos días */
       ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS portada_cloud TEXT;
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS descripcion TEXT;
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS alto INTEGER;
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS ancho INTEGER;
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS embed TEXT;
+      ALTER TABLE ocm.tiktok_cuentas ADD COLUMN IF NOT EXISTS avatar_grande TEXT;
+      /* Videos enviados a TikTok desde el panel (borrador o publicación directa) */
+      CREATE TABLE IF NOT EXISTS ocm.tiktok_publicaciones (
+        id SERIAL PRIMARY KEY,
+        cuenta_id INTEGER REFERENCES ocm.tiktok_cuentas(id) ON DELETE CASCADE,
+        publish_id TEXT, modo TEXT NOT NULL, titulo TEXT, archivo TEXT, tamano BIGINT,
+        privacidad TEXT, estado TEXT, error TEXT, video_id TEXT,
+        creado_por INTEGER, creado_en TIMESTAMPTZ DEFAULT NOW(), actualizado TIMESTAMPTZ DEFAULT NOW()
+      );
       /* Foto diaria de cada video para medir su crecimiento día a día */
       CREATE TABLE IF NOT EXISTS ocm.tiktok_video_diario (
         video_id TEXT REFERENCES ocm.tiktok_videos(video_id) ON DELETE CASCADE,
@@ -158,8 +177,8 @@ async function sincronizar(cuenta) {
   try {
     const token = await tokenVigente(cuenta);
     const { user: u = {} } = await tiktok(`/user/info/?fields=${CAMPOS_USUARIO}`, token);
-    await pool.query(`UPDATE ocm.tiktok_cuentas SET username=$1, display_name=$2, avatar_url=$3, bio=$4, perfil_url=$5, verificado=$6, ultima_sync=NOW(), ultimo_error=NULL WHERE id=$7`,
-      [u.username || null, u.display_name || null, u.avatar_url || null, u.bio_description || null, u.profile_deep_link || null, !!u.is_verified, cuenta.id]);
+    await pool.query(`UPDATE ocm.tiktok_cuentas SET username=$1, display_name=$2, avatar_url=$3, bio=$4, perfil_url=$5, verificado=$6, avatar_grande=$8, ultima_sync=NOW(), ultimo_error=NULL WHERE id=$7`,
+      [u.username || null, u.display_name || null, u.avatar_url || null, u.bio_description || null, u.profile_deep_link || null, !!u.is_verified, cuenta.id, u.avatar_large_url || null]);
     await pool.query(`
       INSERT INTO ocm.tiktok_metricas_diarias (cuenta_id, fecha, seguidores, seguidos, likes, videos)
       VALUES ($1, (NOW() AT TIME ZONE 'America/Lima')::date, $2, $3, $4, $5)
@@ -169,24 +188,11 @@ async function sincronizar(cuenta) {
     let cursor = 0;
     for (let pagina = 0; pagina < 10; pagina++) { // hasta 200 videos
       const d = await tiktok(`/video/list/?fields=${CAMPOS_VIDEO}`, token, { metodo: 'POST', cuerpo: { max_count: 20, ...(cursor ? { cursor } : {}) } });
-      for (const v of d.videos || []) {
-        await pool.query(`
-          INSERT INTO ocm.tiktok_videos (video_id, cuenta_id, titulo, portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos, actualizado)
-          VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7),$8,$9,$10,$11,NOW())
-          ON CONFLICT (video_id) DO UPDATE SET titulo=EXCLUDED.titulo, portada=EXCLUDED.portada, enlace=EXCLUDED.enlace,
-            vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos, actualizado=NOW()`,
-          [String(v.id), cuenta.id, v.title || v.video_description || '', v.cover_image_url || null, v.share_url || null, v.duration ?? null,
-            v.create_time || null, v.view_count ?? 0, v.like_count ?? 0, v.comment_count ?? 0, v.share_count ?? 0]);
-      }
+      for (const v of d.videos || []) await guardarVideo(cuenta.id, v);
       if (!d.has_more || !d.cursor) break;
       cursor = d.cursor;
     }
-    await pool.query(`
-      INSERT INTO ocm.tiktok_video_diario (video_id, fecha, vistas, likes, comentarios, compartidos)
-      SELECT video_id, (NOW() AT TIME ZONE 'America/Lima')::date, vistas, likes, comentarios, compartidos
-      FROM ocm.tiktok_videos WHERE cuenta_id = $1
-      ON CONFLICT (video_id, fecha) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes,
-        comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuenta.id]);
+    await fotoDiaria(cuenta.id);
     await guardarPortadas(cuenta.id);
     return { ok: true };
   } catch (e) {
@@ -195,12 +201,43 @@ async function sincronizar(cuenta) {
   }
 }
 
+async function guardarVideo(cuentaId, v) {
+  await pool.query(`
+    INSERT INTO ocm.tiktok_videos (video_id, cuenta_id, titulo, portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos, descripcion, alto, ancho, embed, actualizado)
+    VALUES ($1,$2,$3,$4,$5,$6,to_timestamp($7),$8,$9,$10,$11,$12,$13,$14,$15,NOW())
+    ON CONFLICT (video_id) DO UPDATE SET titulo=EXCLUDED.titulo,
+      portada=COALESCE(EXCLUDED.portada, ocm.tiktok_videos.portada), enlace=COALESCE(EXCLUDED.enlace, ocm.tiktok_videos.enlace),
+      vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos,
+      descripcion=COALESCE(EXCLUDED.descripcion, ocm.tiktok_videos.descripcion),
+      alto=COALESCE(EXCLUDED.alto, ocm.tiktok_videos.alto), ancho=COALESCE(EXCLUDED.ancho, ocm.tiktok_videos.ancho),
+      embed=COALESCE(EXCLUDED.embed, ocm.tiktok_videos.embed), actualizado=NOW()`,
+    [String(v.id), cuentaId, v.title || v.video_description || '', v.cover_image_url || null, v.share_url || null, v.duration ?? null,
+      v.create_time || null, v.view_count ?? 0, v.like_count ?? 0, v.comment_count ?? 0, v.share_count ?? 0,
+      v.video_description || null, v.height ?? null, v.width ?? null, v.embed_link || null]);
+}
+
+// Foto diaria de las métricas (de toda la cuenta o de un solo video)
+async function fotoDiaria(cuentaId, videoId = null) {
+  await pool.query(`
+    INSERT INTO ocm.tiktok_video_diario (video_id, fecha, vistas, likes, comentarios, compartidos)
+    SELECT video_id, (NOW() AT TIME ZONE 'America/Lima')::date, vistas, likes, comentarios, compartidos
+    FROM ocm.tiktok_videos WHERE cuenta_id = $1 AND ($2::text IS NULL OR video_id = $2)
+    ON CONFLICT (video_id, fecha) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes,
+      comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuentaId, videoId]);
+}
+
+const tieneScope = (cuenta, sc) => String(cuenta.scope || '').split(/[,\s]+/).includes(sc);
+async function cuentaPrincipal() {
+  const { rows } = await pool.query('SELECT * FROM ocm.tiktok_cuentas ORDER BY conectado_en LIMIT 1');
+  return rows[0] || null;
+}
+
 // ─── Rutas del panel (requieren sesión y acceso OCM) ───────────────────────
 router.use(requireAuth);
 router.use(requireModuleAccess('OCM', 'ACM'));
 router.use((req, res, next) => asegurarEsquema().then(() => next()).catch(next));
 
-const COLS_PUBLICAS = 'id, open_id, username, display_name, avatar_url, bio, perfil_url, verificado, scope, conectado_en, ultima_sync, ultimo_error, access_expira, refresh_expira';
+const COLS_PUBLICAS = 'id, open_id, username, display_name, avatar_url, avatar_grande, bio, perfil_url, verificado, scope, conectado_en, ultima_sync, ultimo_error, access_expira, refresh_expira';
 
 router.get('/tiktok/config', (req, res) => {
   res.json({
@@ -234,7 +271,8 @@ router.get('/tiktok/resumen', async (req, res) => {
     const [{ rows: historial }, { rows: videos }, { rows: diario }] = await Promise.all([
       pool.query(`SELECT to_char(fecha,'YYYY-MM-DD') AS fecha, seguidores, seguidos, likes, videos FROM ocm.tiktok_metricas_diarias
                   WHERE cuenta_id=$1 AND fecha >= CURRENT_DATE - $2::int ORDER BY fecha`, [cuenta.id, dias]),
-      pool.query(`SELECT video_id, titulo, COALESCE(portada_cloud, portada) AS portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos
+      pool.query(`SELECT video_id, titulo, COALESCE(portada_cloud, portada) AS portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos,
+                         descripcion, alto, ancho, embed, actualizado
                   FROM ocm.tiktok_videos WHERE cuenta_id=$1 ORDER BY publicado_en DESC NULLS LAST`, [cuenta.id]),
       pool.query(`SELECT d.video_id, to_char(d.fecha,'YYYY-MM-DD') AS fecha, d.vistas, d.likes, d.comentarios, d.compartidos
                   FROM ocm.tiktok_video_diario d JOIN ocm.tiktok_videos v ON v.video_id = d.video_id
@@ -252,6 +290,102 @@ router.post('/tiktok/sincronizar', async (req, res) => {
     if (!r.ok) return res.status(502).json({ error: r.error });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Actualiza un solo video al instante (video/query)
+router.post('/tiktok/videos/:id/actualizar', async (req, res) => {
+  try {
+    const cuenta = await cuentaPrincipal();
+    if (!cuenta) return res.status(404).json({ error: 'No hay una cuenta de TikTok conectada' });
+    const token = await tokenVigente(cuenta);
+    const d = await tiktok(`/video/query/?fields=${CAMPOS_VIDEO}`, token, { metodo: 'POST', cuerpo: { filters: { video_ids: [String(req.params.id)] } } });
+    const v = (d.videos || [])[0];
+    if (!v) return res.status(404).json({ error: 'TikTok no devolvió ese video (¿fue eliminado o es privado?)' });
+    await guardarVideo(cuenta.id, v);
+    await fotoDiaria(cuenta.id, String(v.id));
+    res.json({ ok: true, video: v });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Permisos para publicar y datos del creador (privacidad permitida, duración máxima, etc.)
+router.get('/tiktok/creador', async (req, res) => {
+  try {
+    const cuenta = await cuentaPrincipal();
+    if (!cuenta) return res.status(404).json({ error: 'No hay una cuenta de TikTok conectada' });
+    const permisos = { borrador: tieneScope(cuenta, 'video.upload'), directo: tieneScope(cuenta, 'video.publish') };
+    if (!permisos.directo) return res.json({ permisos, creador: null });
+    const token = await tokenVigente(cuenta);
+    const creador = await tiktok('/post/publish/creator_info/query/', token, { metodo: 'POST', cuerpo: {} });
+    res.json({ permisos, creador });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+router.get('/tiktok/publicaciones', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT id, publish_id, modo, titulo, archivo, tamano, privacidad, estado, error, video_id, creado_en, actualizado
+      FROM ocm.tiktok_publicaciones ORDER BY creado_en DESC LIMIT 50`);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* Envía un video a TikTok. modo=borrador → llega a la bandeja de la app (scope video.upload);
+   modo=directo → se publica (scope video.publish; en sandbox o app sin auditar solo como privado). */
+router.post('/tiktok/publicar', subida.single('video'), async (req, res) => {
+  const archivo = req.file;
+  try {
+    if (!archivo) return res.status(400).json({ error: 'Adjunta un video MP4, MOV o WEBM (máx. 64 MB)' });
+    if (!/^video\//.test(archivo.mimetype)) return res.status(400).json({ error: 'El archivo no es un video' });
+    const cuenta = await cuentaPrincipal();
+    if (!cuenta) return res.status(404).json({ error: 'No hay una cuenta de TikTok conectada' });
+    const modo = req.body.modo === 'directo' ? 'directo' : 'borrador';
+    const scope = modo === 'directo' ? 'video.publish' : 'video.upload';
+    if (!tieneScope(cuenta, scope)) return res.status(403).json({ error: `La cuenta no autorizó el permiso ${scope}. Agrégalo en TikTok for Developers y vuelve a conectar.` });
+    const token = await tokenVigente(cuenta);
+    const tamano = archivo.size;
+    const source_info = { source: 'FILE_UPLOAD', video_size: tamano, chunk_size: tamano, total_chunk_count: 1 };
+    const titulo = String(req.body.titulo || '').slice(0, 2200);
+    const privacidad = String(req.body.privacidad || 'SELF_ONLY');
+    const si = k => req.body[k] === 'true';
+    const ruta = modo === 'directo' ? '/post/publish/video/init/' : '/post/publish/inbox/video/init/';
+    const cuerpo = modo === 'directo' ? { source_info, post_info: {
+      title: titulo, privacy_level: privacidad,
+      disable_comment: si('sin_comentarios'), disable_duet: si('sin_duo'), disable_stitch: si('sin_stitch'),
+      video_cover_timestamp_ms: Math.max(0, parseInt(req.body.portada_ms, 10) || 1000),
+      brand_content_toggle: si('marca_terceros'), brand_organic_toggle: si('marca_propia'), is_aigc: si('ia'),
+    } } : { source_info };
+    const init = await tiktok(ruta, token, { metodo: 'POST', cuerpo });
+    const datos = await fsp.readFile(archivo.path);
+    const put = await fetch(init.upload_url, {
+      method: 'PUT',
+      headers: { 'Content-Type': archivo.mimetype, 'Content-Length': String(tamano), 'Content-Range': `bytes 0-${tamano - 1}/${tamano}` },
+      body: datos,
+    });
+    if (!put.ok) throw new Error(`TikTok rechazó la subida (${put.status})`);
+    const { rows } = await pool.query(`INSERT INTO ocm.tiktok_publicaciones (cuenta_id, publish_id, modo, titulo, archivo, tamano, privacidad, estado, creado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'PROCESSING_UPLOAD',$8) RETURNING *`,
+      [cuenta.id, init.publish_id, modo, titulo || null, archivo.originalname, tamano, modo === 'directo' ? privacidad : null, req.user.id]);
+    res.json(rows[0]);
+  } catch (e) {
+    res.status(502).json({ error: e.message });
+  } finally {
+    if (archivo) fsp.unlink(archivo.path).catch(() => {});
+  }
+});
+
+// Consulta en TikTok el estado de un envío (procesando, en bandeja, publicado, falló)
+router.post('/tiktok/publicaciones/:id/estado', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM ocm.tiktok_publicaciones WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Envío no encontrado' });
+    const cuenta = await cuentaPrincipal();
+    if (!cuenta) return res.status(404).json({ error: 'No hay una cuenta de TikTok conectada' });
+    const token = await tokenVigente(cuenta);
+    const d = await tiktok('/post/publish/status/fetch/', token, { metodo: 'POST', cuerpo: { publish_id: rows[0].publish_id } });
+    const ids = d.publicaly_available_post_id || d.publicly_available_post_id || [];
+    const { rows: act } = await pool.query(`UPDATE ocm.tiktok_publicaciones SET estado=$1, error=$2, video_id=COALESCE($3, video_id), actualizado=NOW() WHERE id=$4 RETURNING *`,
+      [d.status || rows[0].estado, d.fail_reason || null, ids[0] ? String(ids[0]) : null, rows[0].id]);
+    res.json({ ...act[0], subido: d.uploaded_bytes ?? null });
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
 router.delete('/tiktok/cuenta/:id', async (req, res) => {
