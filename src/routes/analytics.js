@@ -215,10 +215,22 @@ router.post('/event', async (req, res) => {
 /* ============================================================
    GET /summary — panel QUBIRA_DST, sección Visitas.
    ============================================================ */
+/* Rango de días de las estadísticas. days=0 es "Hoy": desde la medianoche de
+   Lima (UTC-5), expresado como fracción de día para las consultas
+   "NOW() - (N || ' days')::interval". */
+function diasDelRango(req) {
+  if (req.query.days === '0' || req.query.days === 'hoy') {
+    const lima = new Date(Date.now() - 5 * 3600e3);
+    const transcurrido = (lima.getUTCHours() * 3600 + lima.getUTCMinutes() * 60 + lima.getUTCSeconds()) / 86400;
+    return Math.max(transcurrido, 1 / 1440);
+  }
+  return Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
+}
+
 /* Hábitos de los visitantes: en vivo, días y horas, clics, entrada y salida */
 router.get('/habitos', requireAuth, requirePrivileged, async (req, res) => {
   try {
-    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
+    const days = diasDelRango(req);
     const rango = `created_at >= NOW() - ($1 || ' days')::interval`;
     const [vivo, mapa, clics, entrada, salida, porVisita, porHora] = await Promise.all([
       pool.query(`SELECT COUNT(DISTINCT session_id)::int AS n,
@@ -303,7 +315,7 @@ router.delete('/exclusiones/:ip', requireAuth, requirePrivileged, async (req, re
 
 router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
   try {
-    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
+    const days = diasDelRango(req);
 
     const [totals, byDay, byCase, byType, topPages, topReferrers, visitorAge, leads, uaRows,
       avgTimeOnPage, scrollDepth, engagement, channelRows, outboundClicks, navClicks, topCampaigns,
@@ -526,7 +538,7 @@ router.get('/events', requireAuth, requirePrivileged, async (req, res) => {
    ============================================================ */
 router.get('/sessions', requireAuth, requirePrivileged, async (req, res) => {
   try {
-    const days = Math.min(Math.max(parseInt(req.query.days) || 30, 1), 180);
+    const days = diasDelRango(req);
     const { q, only_leads } = req.query;
 
     const params = [days];
