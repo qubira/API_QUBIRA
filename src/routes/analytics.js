@@ -69,14 +69,50 @@ const EVENT_LABEL = {
 
 /* Canal de tráfico, al estilo GA4 — se calcula a partir del referrer
    y (si vino) el utm_source, nunca se guarda como columna fija: así
-   cambiar las reglas de clasificación no exige migrar datos viejos. */
-function classifyChannel(referrer, utmSource) {
-  if (utmSource) return `Campaña (${utmSource})`;
+   cambiar las reglas de clasificación no exige migrar datos viejos.
+   Las apps (TikTok, Instagram, Facebook…) abren los enlaces en su propio
+   navegador interno y casi nunca mandan referrer, así que primero se
+   reconocen por la huella de ese navegador en el user agent. */
+const APPS_UA = [
+  [/musical_ly|bytedance|tiktok|trill_/i, 'TikTok'],
+  [/instagram/i, 'Instagram'],
+  [/\bmessenger\b|FB_IAB\/MESSENGER|Orca-Android/i, 'Messenger'],
+  [/FBAN|FBAV|FB_IAB|FBIOS|FB4A/i, 'Facebook'],
+  [/whatsapp/i, 'WhatsApp'],
+  [/linkedinapp/i, 'LinkedIn'],
+  [/snapchat/i, 'Snapchat'],
+  [/pinterest/i, 'Pinterest'],
+  [/telegram/i, 'Telegram'],
+  [/twitter|twitterandroid/i, 'X (Twitter)'],
+];
+const APPS_HOST = [
+  [/(^|\.)tiktok\.com$/i, 'TikTok'],
+  [/(^|\.)instagram\.com$/i, 'Instagram'],
+  [/(^|\.)messenger\.com$/i, 'Messenger'],
+  [/(^|\.)(facebook\.com|fb\.com|fb\.me)$/i, 'Facebook'],
+  [/(^|\.)(whatsapp\.com|wa\.me)$/i, 'WhatsApp'],
+  [/(^|\.)(linkedin\.com|lnkd\.in)$/i, 'LinkedIn'],
+  [/(^|\.)(youtube\.com|youtu\.be)$/i, 'YouTube'],
+  [/(^|\.)(twitter\.com|x\.com|t\.co)$/i, 'X (Twitter)'],
+  [/(^|\.)t\.me$|telegram/i, 'Telegram'],
+  [/(^|\.)pinterest\./i, 'Pinterest'],
+];
+const BUSCADORES = [[/google\./i, 'Google'], [/bing\./i, 'Bing'], [/yahoo\./i, 'Yahoo'], [/duckduckgo\./i, 'DuckDuckGo']];
+const nombreUtm = s => (APPS_HOST.find(([re]) => re.test(`${s}.com`)) || [])[1]
+  || ({ ig: 'Instagram', fb: 'Facebook', tt: 'TikTok', wa: 'WhatsApp', yt: 'YouTube', li: 'LinkedIn' }[String(s).toLowerCase()]);
+
+function classifyChannel(referrer, utmSource, userAgent) {
+  if (utmSource) { const app = nombreUtm(utmSource); return app ? `${app} · campaña` : `Campaña (${utmSource})`; }
+  const app = (APPS_UA.find(([re]) => re.test(userAgent || '')) || [])[1];
+  if (app) return app;
   if (!referrer) return 'Directo';
   let host = '';
   try { host = new URL(referrer).hostname.replace(/^www\./, ''); } catch { return 'Directo'; }
-  if (/google|bing|yahoo|duckduckgo/i.test(host)) return 'Orgánico (buscadores)';
-  if (/facebook|instagram|twitter|x\.com|linkedin|tiktok|whatsapp|t\.co/i.test(host)) return 'Redes sociales';
+  const red = (APPS_HOST.find(([re]) => re.test(host)) || [])[1];
+  if (red) return red;
+  const buscador = (BUSCADORES.find(([re]) => re.test(host)) || [])[1];
+  if (buscador) return `${buscador} (búsqueda)`;
+  if (/qubira/i.test(host)) return 'Interno (QUBIRA)';
   return `Referido (${host})`;
 }
 
@@ -266,7 +302,7 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
          clasificado en JS con classifyChannel() para no fijar las reglas
          en SQL y poder ajustarlas sin migrar nada. */
       pool.query(`
-        SELECT DISTINCT ON (session_id) session_id, referrer, utm_source
+        SELECT DISTINCT ON (session_id) session_id, referrer, utm_source, user_agent
         FROM analytics.events
         WHERE event_type = 'page_view' AND created_at >= NOW() - ($1 || ' days')::interval
         ORDER BY session_id, created_at ASC`, [days]),
@@ -303,7 +339,7 @@ router.get('/summary', requireAuth, requirePrivileged, async (req, res) => {
 
     const channelCounts = {};
     channelRows.rows.forEach(r => {
-      const ch = classifyChannel(r.referrer, r.utm_source);
+      const ch = classifyChannel(r.referrer, r.utm_source, r.user_agent);
       channelCounts[ch] = (channelCounts[ch] || 0) + 1;
     });
     const channels = Object.entries(channelCounts).map(([channel, total]) => ({ channel, total })).sort((a, b) => b.total - a.total);
@@ -443,7 +479,7 @@ router.get('/sessions', requireAuth, requirePrivileged, async (req, res) => {
       return {
         ...r,
         device, browser, os,
-        channel: classifyChannel(r.referrer, r.utm_source),
+        channel: classifyChannel(r.referrer, r.utm_source, r.user_agent),
         is_lead: r.whatsapp_clicks > 0 || r.chatbot_messages > 0,
       };
     });
