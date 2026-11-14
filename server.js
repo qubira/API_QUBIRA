@@ -24,6 +24,7 @@ const divisasRouter = require('./src/routes/divisas');
 const odaclRouter = require('./src/routes/odacl');
 const casesPublicRouter = require('./src/routes/cases-public');
 const ocmRoutes         = require('./src/routes/ocm');
+const sitiosRoutes      = require('./src/routes/sitios');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -40,6 +41,10 @@ const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(o => o.trim())
   .filter(Boolean);
+
+/* Contador de visitas de los sitios de clientes: va ANTES del CORS global porque
+   recibe eventos desde dominios externos (tiene su propio CORS abierto). */
+app.use('/api/public/sitios', sitiosRoutes.publico);
 
 app.use(cors({
   origin(origin, callback) {
@@ -123,6 +128,7 @@ app.use('/api/public/constancias', constanciasPublicRouter);
 app.use('/api/public/cases',       casesPublicRouter);
 app.use('/api/ocm',               ocmRoutes.router);
 app.use('/api/public/ocm',        ocmRoutes.publico);
+app.use('/api/ocm/sitios',        sitiosRoutes.router);
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });
