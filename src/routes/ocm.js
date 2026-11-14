@@ -77,6 +77,16 @@ function asegurarEsquema() {
         vistas BIGINT, likes BIGINT, comentarios BIGINT, compartidos BIGINT,
         PRIMARY KEY (video_id, hora)
       );
+      ALTER TABLE ocm.tiktok_metricas_hora ADD COLUMN IF NOT EXISTS seguidores_ini INTEGER;
+      ALTER TABLE ocm.tiktok_metricas_hora ADD COLUMN IF NOT EXISTS likes_ini BIGINT;
+      ALTER TABLE ocm.tiktok_metricas_hora ADD COLUMN IF NOT EXISTS vistas_ini BIGINT;
+      ALTER TABLE ocm.tiktok_metricas_hora ADD COLUMN IF NOT EXISTS likes_videos_ini BIGINT;
+      ALTER TABLE ocm.tiktok_metricas_hora ADD COLUMN IF NOT EXISTS comentarios_ini BIGINT;
+      ALTER TABLE ocm.tiktok_metricas_hora ADD COLUMN IF NOT EXISTS compartidos_ini BIGINT;
+      ALTER TABLE ocm.tiktok_video_hora ADD COLUMN IF NOT EXISTS vistas_ini BIGINT;
+      ALTER TABLE ocm.tiktok_video_hora ADD COLUMN IF NOT EXISTS likes_ini BIGINT;
+      ALTER TABLE ocm.tiktok_video_hora ADD COLUMN IF NOT EXISTS comentarios_ini BIGINT;
+      ALTER TABLE ocm.tiktok_video_hora ADD COLUMN IF NOT EXISTS compartidos_ini BIGINT;
     `).catch(e => { esquemaListo = null; throw e; });
   }
   return esquemaListo;
@@ -224,17 +234,24 @@ async function fotoDiaria(cuentaId, videoId = null) {
 // Foto de la hora en curso (se sobrescribe dentro de la misma hora con el último valor)
 async function fotoHora(cuentaId, u) {
   await pool.query(`
-    INSERT INTO ocm.tiktok_metricas_hora (cuenta_id, hora, seguidores, seguidos, likes, videos, vistas, likes_videos, comentarios, compartidos)
-    SELECT $1, date_trunc('hour', NOW()), $2, $3, $4, $5,
-           COALESCE(SUM(vistas),0), COALESCE(SUM(likes),0), COALESCE(SUM(comentarios),0), COALESCE(SUM(compartidos),0)
-    FROM ocm.tiktok_videos WHERE cuenta_id = $1
+    INSERT INTO ocm.tiktok_metricas_hora (cuenta_id, hora, seguidores, seguidos, likes, videos, vistas, likes_videos, comentarios, compartidos,
+                                          seguidores_ini, likes_ini, vistas_ini, likes_videos_ini, comentarios_ini, compartidos_ini)
+    SELECT $1, date_trunc('hour', NOW()), $2, $3, $4, $5, t.v, t.l, t.c, t.s, $2, $4, t.v, t.l, t.c, t.s
+    FROM (SELECT COALESCE(SUM(vistas),0) v, COALESCE(SUM(likes),0) l, COALESCE(SUM(comentarios),0) c, COALESCE(SUM(compartidos),0) s
+          FROM ocm.tiktok_videos WHERE cuenta_id = $1) t
     ON CONFLICT (cuenta_id, hora) DO UPDATE SET seguidores=EXCLUDED.seguidores, seguidos=EXCLUDED.seguidos, likes=EXCLUDED.likes,
-      videos=EXCLUDED.videos, vistas=EXCLUDED.vistas, likes_videos=EXCLUDED.likes_videos, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`,
+      videos=EXCLUDED.videos, vistas=EXCLUDED.vistas, likes_videos=EXCLUDED.likes_videos, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos,
+      seguidores_ini=COALESCE(ocm.tiktok_metricas_hora.seguidores_ini, EXCLUDED.seguidores_ini), likes_ini=COALESCE(ocm.tiktok_metricas_hora.likes_ini, EXCLUDED.likes_ini),
+      vistas_ini=COALESCE(ocm.tiktok_metricas_hora.vistas_ini, EXCLUDED.vistas_ini), likes_videos_ini=COALESCE(ocm.tiktok_metricas_hora.likes_videos_ini, EXCLUDED.likes_videos_ini),
+      comentarios_ini=COALESCE(ocm.tiktok_metricas_hora.comentarios_ini, EXCLUDED.comentarios_ini), compartidos_ini=COALESCE(ocm.tiktok_metricas_hora.compartidos_ini, EXCLUDED.compartidos_ini)`,
     [cuentaId, u.follower_count ?? null, u.following_count ?? null, u.likes_count ?? null, u.video_count ?? null]);
   await pool.query(`
-    INSERT INTO ocm.tiktok_video_hora (video_id, hora, vistas, likes, comentarios, compartidos)
-    SELECT video_id, date_trunc('hour', NOW()), vistas, likes, comentarios, compartidos FROM ocm.tiktok_videos WHERE cuenta_id = $1
-    ON CONFLICT (video_id, hora) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuentaId]);
+    INSERT INTO ocm.tiktok_video_hora (video_id, hora, vistas, likes, comentarios, compartidos, vistas_ini, likes_ini, comentarios_ini, compartidos_ini)
+    SELECT video_id, date_trunc('hour', NOW()), vistas, likes, comentarios, compartidos, vistas, likes, comentarios, compartidos
+    FROM ocm.tiktok_videos WHERE cuenta_id = $1
+    ON CONFLICT (video_id, hora) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos,
+      vistas_ini=COALESCE(ocm.tiktok_video_hora.vistas_ini, EXCLUDED.vistas_ini), likes_ini=COALESCE(ocm.tiktok_video_hora.likes_ini, EXCLUDED.likes_ini),
+      comentarios_ini=COALESCE(ocm.tiktok_video_hora.comentarios_ini, EXCLUDED.comentarios_ini), compartidos_ini=COALESCE(ocm.tiktok_video_hora.compartidos_ini, EXCLUDED.compartidos_ini)`, [cuentaId]);
   // Se guardan 120 días de detalle por hora
   await pool.query(`DELETE FROM ocm.tiktok_video_hora WHERE hora < NOW() - INTERVAL '120 days'`);
   await pool.query(`DELETE FROM ocm.tiktok_metricas_hora WHERE hora < NOW() - INTERVAL '120 days'`);
@@ -304,18 +321,19 @@ router.get('/tiktok/horas', async (req, res) => {
     const cuenta = await cuentaPrincipal();
     if (!cuenta) return res.json({ fecha, base: null, horas: [], videos: [] });
     const desde = `(${'$2'}::date::timestamp AT TIME ZONE 'America/Lima')`, hasta = `((${'$2'}::date + 1)::timestamp AT TIME ZONE 'America/Lima')`;
-    const cols = `to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, seguidores, seguidos, likes, videos, vistas, likes_videos, comentarios, compartidos`;
+    const cols = `to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, seguidores, seguidos, likes, videos, vistas, likes_videos, comentarios, compartidos, seguidores_ini, likes_ini, vistas_ini, likes_videos_ini, comentarios_ini, compartidos_ini`;
     const [{ rows: base }, { rows: horas }, { rows: videos }] = await Promise.all([
       pool.query(`SELECT ${cols} FROM ocm.tiktok_metricas_hora WHERE cuenta_id=$1 AND hora < ${desde} ORDER BY hora DESC LIMIT 1`, [cuenta.id, fecha]),
       pool.query(`SELECT ${cols} FROM ocm.tiktok_metricas_hora WHERE cuenta_id=$1 AND hora >= ${desde} AND hora < ${hasta} ORDER BY hora`, [cuenta.id, fecha]),
       pool.query(`
         WITH dia AS (
-          SELECT h.video_id, h.hora, h.vistas, h.likes, h.comentarios, h.compartidos
+          SELECT h.video_id, h.hora, h.vistas, h.likes, h.comentarios, h.compartidos, h.vistas_ini, h.likes_ini, h.comentarios_ini, h.compartidos_ini
           FROM ocm.tiktok_video_hora h JOIN ocm.tiktok_videos v ON v.video_id = h.video_id
           WHERE v.cuenta_id = $1 AND h.hora < ${hasta}
             AND h.hora >= (SELECT COALESCE(MAX(hora), ${desde}) FROM ocm.tiktok_video_hora x WHERE x.video_id = h.video_id AND x.hora < ${desde})
         )
-        SELECT video_id, to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, vistas, likes, comentarios, compartidos
+        SELECT video_id, to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, vistas, likes, comentarios, compartidos,
+               vistas_ini, likes_ini, comentarios_ini, compartidos_ini
         FROM dia ORDER BY video_id, hora`, [cuenta.id, fecha]),
     ]);
     res.json({ fecha, base: base[0] || null, horas, videos });
