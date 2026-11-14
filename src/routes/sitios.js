@@ -20,6 +20,7 @@ const router = express.Router();    // /api/ocm/sitios   (panel)
 const publico = express.Router();   // /api/public/sitios (script y eventos)
 
 const SITIOS = {
+  'qubira': { nombre: 'QUBIRA', url: 'https://qubira.vercel.app' },
   'huellas-unidas': { nombre: 'Huellas Unidas', url: 'https://huellas-unidas.vercel.app' },
   'express': { nombre: 'Express', url: 'https://express-nine-theta-23.vercel.app' },
   'am-importaciones': { nombre: 'AM Importaciones', url: 'https://am-exportaciones.onrender.com' },
