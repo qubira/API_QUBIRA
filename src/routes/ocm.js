@@ -63,6 +63,20 @@ function asegurarEsquema() {
       ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS ancho INTEGER;
       ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS embed TEXT;
       ALTER TABLE ocm.tiktok_cuentas ADD COLUMN IF NOT EXISTS avatar_grande TEXT;
+      /* Fotos por hora (para los filtros «Hoy» y «Día»): de la cuenta y de cada video */
+      CREATE TABLE IF NOT EXISTS ocm.tiktok_metricas_hora (
+        cuenta_id INTEGER REFERENCES ocm.tiktok_cuentas(id) ON DELETE CASCADE,
+        hora TIMESTAMPTZ NOT NULL,
+        seguidores INTEGER, seguidos INTEGER, likes BIGINT, videos INTEGER,
+        vistas BIGINT, likes_videos BIGINT, comentarios BIGINT, compartidos BIGINT,
+        PRIMARY KEY (cuenta_id, hora)
+      );
+      CREATE TABLE IF NOT EXISTS ocm.tiktok_video_hora (
+        video_id TEXT REFERENCES ocm.tiktok_videos(video_id) ON DELETE CASCADE,
+        hora TIMESTAMPTZ NOT NULL,
+        vistas BIGINT, likes BIGINT, comentarios BIGINT, compartidos BIGINT,
+        PRIMARY KEY (video_id, hora)
+      );
     `).catch(e => { esquemaListo = null; throw e; });
   }
   return esquemaListo;
@@ -173,6 +187,7 @@ async function sincronizar(cuenta) {
       cursor = d.cursor;
     }
     await fotoDiaria(cuenta.id);
+    await fotoHora(cuenta.id, u);
     await guardarPortadas(cuenta.id);
     return { ok: true };
   } catch (e) {
@@ -204,6 +219,25 @@ async function fotoDiaria(cuentaId, videoId = null) {
     FROM ocm.tiktok_videos WHERE cuenta_id = $1 AND ($2::text IS NULL OR video_id = $2)
     ON CONFLICT (video_id, fecha) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes,
       comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuentaId, videoId]);
+}
+
+// Foto de la hora en curso (se sobrescribe dentro de la misma hora con el último valor)
+async function fotoHora(cuentaId, u) {
+  await pool.query(`
+    INSERT INTO ocm.tiktok_metricas_hora (cuenta_id, hora, seguidores, seguidos, likes, videos, vistas, likes_videos, comentarios, compartidos)
+    SELECT $1, date_trunc('hour', NOW()), $2, $3, $4, $5,
+           COALESCE(SUM(vistas),0), COALESCE(SUM(likes),0), COALESCE(SUM(comentarios),0), COALESCE(SUM(compartidos),0)
+    FROM ocm.tiktok_videos WHERE cuenta_id = $1
+    ON CONFLICT (cuenta_id, hora) DO UPDATE SET seguidores=EXCLUDED.seguidores, seguidos=EXCLUDED.seguidos, likes=EXCLUDED.likes,
+      videos=EXCLUDED.videos, vistas=EXCLUDED.vistas, likes_videos=EXCLUDED.likes_videos, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`,
+    [cuentaId, u.follower_count ?? null, u.following_count ?? null, u.likes_count ?? null, u.video_count ?? null]);
+  await pool.query(`
+    INSERT INTO ocm.tiktok_video_hora (video_id, hora, vistas, likes, comentarios, compartidos)
+    SELECT video_id, date_trunc('hour', NOW()), vistas, likes, comentarios, compartidos FROM ocm.tiktok_videos WHERE cuenta_id = $1
+    ON CONFLICT (video_id, hora) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuentaId]);
+  // Se guardan 120 días de detalle por hora
+  await pool.query(`DELETE FROM ocm.tiktok_video_hora WHERE hora < NOW() - INTERVAL '120 days'`);
+  await pool.query(`DELETE FROM ocm.tiktok_metricas_hora WHERE hora < NOW() - INTERVAL '120 days'`);
 }
 
 async function cuentaPrincipal() {
@@ -261,10 +295,39 @@ router.get('/tiktok/resumen', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Un día organizado por horas (hora de Lima). Incluye la última foto del día anterior
+   como punto de partida para calcular lo ganado en la primera hora. */
+router.get('/tiktok/horas', async (req, res) => {
+  try {
+    const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha || '') ? req.query.fecha : null;
+    if (!fecha) return res.status(400).json({ error: 'Fecha inválida (AAAA-MM-DD)' });
+    const cuenta = await cuentaPrincipal();
+    if (!cuenta) return res.json({ fecha, base: null, horas: [], videos: [] });
+    const desde = `(${'$2'}::date::timestamp AT TIME ZONE 'America/Lima')`, hasta = `((${'$2'}::date + 1)::timestamp AT TIME ZONE 'America/Lima')`;
+    const cols = `to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, seguidores, seguidos, likes, videos, vistas, likes_videos, comentarios, compartidos`;
+    const [{ rows: base }, { rows: horas }, { rows: videos }] = await Promise.all([
+      pool.query(`SELECT ${cols} FROM ocm.tiktok_metricas_hora WHERE cuenta_id=$1 AND hora < ${desde} ORDER BY hora DESC LIMIT 1`, [cuenta.id, fecha]),
+      pool.query(`SELECT ${cols} FROM ocm.tiktok_metricas_hora WHERE cuenta_id=$1 AND hora >= ${desde} AND hora < ${hasta} ORDER BY hora`, [cuenta.id, fecha]),
+      pool.query(`
+        WITH dia AS (
+          SELECT h.video_id, h.hora, h.vistas, h.likes, h.comentarios, h.compartidos
+          FROM ocm.tiktok_video_hora h JOIN ocm.tiktok_videos v ON v.video_id = h.video_id
+          WHERE v.cuenta_id = $1 AND h.hora < ${hasta}
+            AND h.hora >= (SELECT COALESCE(MAX(hora), ${desde}) FROM ocm.tiktok_video_hora x WHERE x.video_id = h.video_id AND x.hora < ${desde})
+        )
+        SELECT video_id, to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, vistas, likes, comentarios, compartidos
+        FROM dia ORDER BY video_id, hora`, [cuenta.id, fecha]),
+    ]);
+    res.json({ fecha, base: base[0] || null, horas, videos });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/tiktok/sincronizar', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM ocm.tiktok_cuentas ORDER BY conectado_en');
     if (!rows.length) return res.status(404).json({ error: 'No hay una cuenta de TikTok conectada' });
+    // Si ya se sincronizó hace menos de 50 s (otra pestaña o el servidor), no se vuelve a consultar TikTok
+    if (rows[0].ultima_sync && Date.now() - new Date(rows[0].ultima_sync) < 50000) return res.json({ ok: true, reciente: true });
     const r = await sincronizar(rows[0]);
     if (!r.ok) return res.status(502).json({ error: r.error });
     res.json({ ok: true });
@@ -338,5 +401,18 @@ publico.all('/cron', async (req, res) => {
   for (const c of rows) resultados.push({ cuenta: c.username || c.open_id, ...(await sincronizar(c)) });
   res.json({ ok: true, resultados });
 });
+
+/* Sincronización automática interna: cada 15 min revisa y, si la última fue hace
+   más de 55 min, vuelve a sincronizar. Así hay una foto por hora mientras el servidor
+   esté activo (complementa al panel, que sincroniza cada 5 min cuando está abierto). */
+if (process.env.NODE_ENV !== 'test' && process.env.OCM_AUTO_SYNC !== 'off') {
+  setInterval(async () => {
+    try {
+      await asegurarEsquema();
+      const { rows } = await pool.query(`SELECT * FROM ocm.tiktok_cuentas WHERE ultima_sync IS NULL OR ultima_sync < NOW() - INTERVAL '55 minutes'`);
+      for (const c of rows) await sincronizar(c);
+    } catch (e) { console.warn('[OCM] auto-sync:', e.message); }
+  }, 15 * 60 * 1000).unref();
+}
 
 module.exports = { router, publico };
