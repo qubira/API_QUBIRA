@@ -63,6 +63,9 @@ function asegurarEsquema() {
       ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS ancho INTEGER;
       ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS embed TEXT;
       ALTER TABLE ocm.tiktok_cuentas ADD COLUMN IF NOT EXISTS avatar_grande TEXT;
+      /* Videos fuera de las métricas: ocultos a mano o eliminados en TikTok */
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS oculto BOOLEAN DEFAULT false;
+      ALTER TABLE ocm.tiktok_videos ADD COLUMN IF NOT EXISTS eliminado_en TIMESTAMPTZ;
       /* Fotos por hora (para los filtros «Hoy» y «Día»): de la cuenta y de cada video */
       CREATE TABLE IF NOT EXISTS ocm.tiktok_metricas_hora (
         cuenta_id INTEGER REFERENCES ocm.tiktok_cuentas(id) ON DELETE CASCADE,
@@ -189,12 +192,16 @@ async function sincronizar(cuenta) {
       ON CONFLICT (cuenta_id, fecha) DO UPDATE SET seguidores=EXCLUDED.seguidores, seguidos=EXCLUDED.seguidos, likes=EXCLUDED.likes, videos=EXCLUDED.videos`,
       [cuenta.id, u.follower_count ?? null, u.following_count ?? null, u.likes_count ?? null, u.video_count ?? null]);
 
-    let cursor = 0;
+    let cursor = 0, completa = false;
+    const vistos = [];
     for (let pagina = 0; pagina < 10; pagina++) { // hasta 200 videos
       const d = await tiktok(`/video/list/?fields=${CAMPOS_VIDEO}`, token, { metodo: 'POST', cuerpo: { max_count: 20, ...(cursor ? { cursor } : {}) } });
-      for (const v of d.videos || []) await guardarVideo(cuenta.id, v);
-      if (!d.has_more || !d.cursor) break;
+      for (const v of d.videos || []) { await guardarVideo(cuenta.id, v); vistos.push(String(v.id)); }
+      if (!d.has_more || !d.cursor) { completa = true; break; }
       cursor = d.cursor;
+    }
+    if (completa && vistos.length) {
+      await pool.query(`UPDATE ocm.tiktok_videos SET eliminado_en = NOW() WHERE cuenta_id = $1 AND eliminado_en IS NULL AND NOT (video_id = ANY($2::text[]))`, [cuenta.id, vistos]);
     }
     await fotoDiaria(cuenta.id);
     await fotoHora(cuenta.id, u);
@@ -215,7 +222,7 @@ async function guardarVideo(cuentaId, v) {
       vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos,
       descripcion=COALESCE(EXCLUDED.descripcion, ocm.tiktok_videos.descripcion),
       alto=COALESCE(EXCLUDED.alto, ocm.tiktok_videos.alto), ancho=COALESCE(EXCLUDED.ancho, ocm.tiktok_videos.ancho),
-      embed=COALESCE(EXCLUDED.embed, ocm.tiktok_videos.embed), actualizado=NOW()`,
+      embed=COALESCE(EXCLUDED.embed, ocm.tiktok_videos.embed), eliminado_en=NULL, actualizado=NOW()`,
     [String(v.id), cuentaId, v.title || v.video_description || '', v.cover_image_url || null, v.share_url || null, v.duration ?? null,
       v.create_time || null, v.view_count ?? 0, v.like_count ?? 0, v.comment_count ?? 0, v.share_count ?? 0,
       v.video_description || null, v.height ?? null, v.width ?? null, v.embed_link || null]);
@@ -226,7 +233,7 @@ async function fotoDiaria(cuentaId, videoId = null) {
   await pool.query(`
     INSERT INTO ocm.tiktok_video_diario (video_id, fecha, vistas, likes, comentarios, compartidos)
     SELECT video_id, (NOW() AT TIME ZONE 'America/Lima')::date, vistas, likes, comentarios, compartidos
-    FROM ocm.tiktok_videos WHERE cuenta_id = $1 AND ($2::text IS NULL OR video_id = $2)
+    FROM ocm.tiktok_videos WHERE cuenta_id = $1 AND COALESCE(oculto, false) = false AND eliminado_en IS NULL AND ($2::text IS NULL OR video_id = $2)
     ON CONFLICT (video_id, fecha) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes,
       comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos`, [cuentaId, videoId]);
 }
@@ -238,7 +245,7 @@ async function fotoHora(cuentaId, u) {
                                           seguidores_ini, likes_ini, vistas_ini, likes_videos_ini, comentarios_ini, compartidos_ini)
     SELECT $1, date_trunc('hour', NOW()), $2, $3, $4, $5, t.v, t.l, t.c, t.s, $2, $4, t.v, t.l, t.c, t.s
     FROM (SELECT COALESCE(SUM(vistas),0) v, COALESCE(SUM(likes),0) l, COALESCE(SUM(comentarios),0) c, COALESCE(SUM(compartidos),0) s
-          FROM ocm.tiktok_videos WHERE cuenta_id = $1) t
+          FROM ocm.tiktok_videos WHERE cuenta_id = $1 AND COALESCE(oculto, false) = false AND eliminado_en IS NULL) t
     ON CONFLICT (cuenta_id, hora) DO UPDATE SET seguidores=EXCLUDED.seguidores, seguidos=EXCLUDED.seguidos, likes=EXCLUDED.likes,
       videos=EXCLUDED.videos, vistas=EXCLUDED.vistas, likes_videos=EXCLUDED.likes_videos, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos,
       seguidores_ini=COALESCE(ocm.tiktok_metricas_hora.seguidores_ini, EXCLUDED.seguidores_ini), likes_ini=COALESCE(ocm.tiktok_metricas_hora.likes_ini, EXCLUDED.likes_ini),
@@ -248,7 +255,7 @@ async function fotoHora(cuentaId, u) {
   await pool.query(`
     INSERT INTO ocm.tiktok_video_hora (video_id, hora, vistas, likes, comentarios, compartidos, vistas_ini, likes_ini, comentarios_ini, compartidos_ini)
     SELECT video_id, date_trunc('hour', NOW()), vistas, likes, comentarios, compartidos, vistas, likes, comentarios, compartidos
-    FROM ocm.tiktok_videos WHERE cuenta_id = $1
+    FROM ocm.tiktok_videos WHERE cuenta_id = $1 AND COALESCE(oculto, false) = false AND eliminado_en IS NULL
     ON CONFLICT (video_id, hora) DO UPDATE SET vistas=EXCLUDED.vistas, likes=EXCLUDED.likes, comentarios=EXCLUDED.comentarios, compartidos=EXCLUDED.compartidos,
       vistas_ini=COALESCE(ocm.tiktok_video_hora.vistas_ini, EXCLUDED.vistas_ini), likes_ini=COALESCE(ocm.tiktok_video_hora.likes_ini, EXCLUDED.likes_ini),
       comentarios_ini=COALESCE(ocm.tiktok_video_hora.comentarios_ini, EXCLUDED.comentarios_ini), compartidos_ini=COALESCE(ocm.tiktok_video_hora.compartidos_ini, EXCLUDED.compartidos_ini)`, [cuentaId]);
@@ -303,10 +310,10 @@ router.get('/tiktok/resumen', async (req, res) => {
                   WHERE cuenta_id=$1 AND fecha >= CURRENT_DATE - $2::int ORDER BY fecha`, [cuenta.id, dias]),
       pool.query(`SELECT video_id, titulo, COALESCE(portada_cloud, portada) AS portada, enlace, duracion, publicado_en, vistas, likes, comentarios, compartidos,
                          descripcion, alto, ancho, embed, actualizado
-                  FROM ocm.tiktok_videos WHERE cuenta_id=$1 ORDER BY publicado_en DESC NULLS LAST`, [cuenta.id]),
+                  FROM ocm.tiktok_videos WHERE cuenta_id=$1 AND COALESCE(oculto, false) = false AND eliminado_en IS NULL ORDER BY publicado_en DESC NULLS LAST`, [cuenta.id]),
       pool.query(`SELECT d.video_id, to_char(d.fecha,'YYYY-MM-DD') AS fecha, d.vistas, d.likes, d.comentarios, d.compartidos
                   FROM ocm.tiktok_video_diario d JOIN ocm.tiktok_videos v ON v.video_id = d.video_id
-                  WHERE v.cuenta_id=$1 AND d.fecha >= CURRENT_DATE - $2::int ORDER BY d.fecha`, [cuenta.id, dias]),
+                  WHERE v.cuenta_id=$1 AND COALESCE(v.oculto, false) = false AND v.eliminado_en IS NULL AND d.fecha >= CURRENT_DATE - $2::int ORDER BY d.fecha`, [cuenta.id, dias]),
     ]);
     res.json({ cuenta, historial, videos, diario });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -329,7 +336,7 @@ router.get('/tiktok/horas', async (req, res) => {
         WITH dia AS (
           SELECT h.video_id, h.hora, h.vistas, h.likes, h.comentarios, h.compartidos, h.vistas_ini, h.likes_ini, h.comentarios_ini, h.compartidos_ini
           FROM ocm.tiktok_video_hora h JOIN ocm.tiktok_videos v ON v.video_id = h.video_id
-          WHERE v.cuenta_id = $1 AND h.hora < ${hasta}
+          WHERE v.cuenta_id = $1 AND COALESCE(v.oculto, false) = false AND v.eliminado_en IS NULL AND h.hora < ${hasta}
             AND h.hora >= (SELECT COALESCE(MAX(hora), ${desde}) FROM ocm.tiktok_video_hora x WHERE x.video_id = h.video_id AND x.hora < ${desde})
         )
         SELECT video_id, to_char(hora AT TIME ZONE 'America/Lima', 'YYYY-MM-DD"T"HH24:00') AS hora, vistas, likes, comentarios, compartidos,
@@ -353,6 +360,24 @@ router.post('/tiktok/sincronizar', async (req, res) => {
 });
 
 // Actualiza un solo video al instante (video/query)
+// Videos fuera de las métricas (ocultos a mano o eliminados en TikTok)
+router.get('/tiktok/videos/excluidos', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT video_id, titulo, COALESCE(portada_cloud, portada) AS portada, publicado_en, vistas, oculto, eliminado_en
+      FROM ocm.tiktok_videos WHERE COALESCE(oculto, false) OR eliminado_en IS NOT NULL ORDER BY publicado_en DESC NULLS LAST`);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+router.post('/tiktok/videos/:id/ocultar', async (req, res) => {
+  try {
+    const ocultar = req.body?.oculto !== false;
+    // Al restaurar también se limpia la marca de eliminado (si sigue sin venir de TikTok, la próxima sincronización la vuelve a poner)
+    const { rowCount } = await pool.query(`UPDATE ocm.tiktok_videos SET oculto = $1${ocultar ? '' : ', eliminado_en = NULL'} WHERE video_id = $2`, [ocultar, String(req.params.id)]);
+    if (!rowCount) return res.status(404).json({ error: 'Video no encontrado' });
+    res.json({ ok: true, oculto: ocultar });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.post('/tiktok/videos/:id/actualizar', async (req, res) => {
   try {
     const cuenta = await cuentaPrincipal();
