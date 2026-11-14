@@ -86,7 +86,7 @@ function navegadorDe(ua = '') {
   return 'Otro';
 }
 const corta = (v, n) => (v == null ? null : String(v).slice(0, n));
-const esBot = ua => /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|uptime/i.test(ua || '');
+const esBot = ua => /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|uptime|facebookexternalhit|whatsapp|telegram|discord|slack|embedly|vercel|google-inspection|chrome-lighthouse|gtmetrix/i.test(ua || '');
 
 // ─── Público: script y recepción de eventos (CORS abierto solo aquí) ────────
 publico.use((req, res, next) => {
@@ -165,19 +165,34 @@ router.get('/resumen', async (req, res) => {
     const rango = String(req.query.rango || '30');
     const fecha = /^\d{4}-\d{2}-\d{2}$/.test(req.query.fecha || '') ? req.query.fecha : null;
     const L = `(creado_en AT TIME ZONE 'America/Lima')`;
-    let filtro, grupo, formato;
+    let filtro, grupo, formato, filtroPrev;
     if (rango === 'hoy' || rango === 'dia') {
-      filtro = `${L}::date = ${rango === 'dia' && fecha ? `$2::date` : `(NOW() AT TIME ZONE 'America/Lima')::date`}`;
+      const dia = rango === 'dia' && fecha ? `$2::date` : `(NOW() AT TIME ZONE 'America/Lima')::date`;
+      filtro = `${L}::date = ${dia}`;
+      // Hoy: ayer hasta la misma hora · Día: el día anterior completo
+      filtroPrev = rango === 'hoy'
+        ? `${L}::date = ${dia} - 1 AND ${L}::time <= (NOW() AT TIME ZONE 'America/Lima')::time`
+        : `${L}::date = ${dia} - 1`;
       grupo = `date_trunc('hour', ${L})`; formato = 'HH24:00';
     } else {
       const dias = Math.min(Math.max(parseInt(rango, 10) || 30, 1), 366);
       filtro = `creado_en >= NOW() - INTERVAL '${dias} days'`;
+      filtroPrev = `creado_en >= NOW() - INTERVAL '${dias * 2} days' AND creado_en < NOW() - INTERVAL '${dias} days'`;
       grupo = dias > 120 ? `date_trunc('month', ${L})` : `date_trunc('day', ${L})`;
       formato = dias > 120 ? 'YYYY-MM' : 'YYYY-MM-DD';
     }
     const params = [sitio]; if (rango === 'dia' && fecha) params.push(fecha);
     const W = `WHERE ($1::text IS NULL OR sitio = $1) AND ${filtro}`;
     const q = (sql) => pool.query(sql, params).then(r => r.rows);
+    const WP = `WHERE ($1::text IS NULL OR sitio = $1) AND ${filtroPrev}`;
+    // Una fila por visita: entrada, salida, páginas, duración, origen, país, dispositivo y si el visitante es recurrente
+    const SES = `WITH ses AS (
+      SELECT sesion, MIN(sitio) sitio, MIN(visitante) visitante, MIN(creado_en) inicio, MAX(creado_en) fin,
+             COUNT(*) FILTER (WHERE tipo='vista') paginas, COALESCE(SUM(segundos),0) seg, COUNT(*) FILTER (WHERE tipo='clic') clics,
+             (ARRAY_AGG(ruta ORDER BY creado_en) FILTER (WHERE tipo='vista'))[1] entrada,
+             (ARRAY_AGG(ruta ORDER BY creado_en DESC) FILTER (WHERE tipo='vista'))[1] salida,
+             (ARRAY_AGG(referrer ORDER BY creado_en))[1] referrer, MIN(pais) pais, MIN(dispositivo) dispositivo, MIN(navegador) navegador
+      FROM analytics.sitios_eventos ${W} GROUP BY sesion)`;
     const [tot, serie, paginas, origen, paises, dispositivos, navegadores, clics, porSitio, enVivo, sesiones, horas] = await Promise.all([
       q(`SELECT COUNT(*) FILTER (WHERE tipo='vista') vistas, COUNT(DISTINCT visitante) visitantes, COUNT(DISTINCT sesion) sesiones,
            COALESCE(SUM(segundos),0) segundos, COUNT(*) FILTER (WHERE tipo='clic') clics FROM analytics.sitios_eventos ${W}`),
@@ -207,7 +222,44 @@ router.get('/resumen', async (req, res) => {
       // Horas del día en que más se conectan (en el periodo)
       q(`SELECT EXTRACT(HOUR FROM ${L})::int h, COUNT(DISTINCT sesion) sesiones FROM analytics.sitios_eventos ${W} GROUP BY 1 ORDER BY 1`),
     ]);
-    res.json({ sitios: SITIOS, sitio, rango, fecha, total: tot[0], sesion: sesiones[0], serie, paginas, origen, paises, dispositivos, navegadores, clics, porSitio, enVivo, horas });
+    const [prev, entradas, salidas, flujos, duraciones, profundidad, recurrentes, calor, recientes, idiomas] = await Promise.all([
+      q(`SELECT COUNT(*) FILTER (WHERE tipo='vista') vistas, COUNT(DISTINCT visitante) visitantes, COUNT(DISTINCT sesion) sesiones,
+           COALESCE(SUM(segundos),0) segundos, COUNT(*) FILTER (WHERE tipo='clic') clics FROM analytics.sitios_eventos ${WP}`),
+      // Páginas por donde entran y por donde se van (con % de salida sobre sus vistas)
+      q(`${SES} SELECT entrada ruta, COUNT(*) visitas, ROUND(100.0 * COUNT(*) FILTER (WHERE paginas <= 1 AND seg < 10) / COUNT(*)) rebote
+           FROM ses WHERE entrada IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 8`),
+      q(`${SES}, vis AS (SELECT ruta, COUNT(*) vistas FROM analytics.sitios_eventos ${W} AND tipo='vista' GROUP BY ruta)
+         SELECT s.salida ruta, COUNT(*) salidas, ROUND(100.0 * COUNT(*) / MAX(v.vistas)) tasa FROM ses s JOIN vis v ON v.ruta = s.salida
+         WHERE s.salida IS NOT NULL GROUP BY 1 ORDER BY 2 DESC LIMIT 8`),
+      // Recorridos: de qué página pasan a cuál
+      q(`SELECT desde, hacia, COUNT(*) veces FROM (
+           SELECT ruta hacia, LAG(ruta) OVER (PARTITION BY sesion ORDER BY creado_en) desde
+           FROM analytics.sitios_eventos ${W} AND tipo='vista') t
+         WHERE desde IS NOT NULL AND desde <> hacia GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 10`),
+      q(`${SES} SELECT CASE WHEN seg < 10 THEN '0–10 s' WHEN seg < 30 THEN '10–30 s' WHEN seg < 60 THEN '30–60 s'
+                              WHEN seg < 180 THEN '1–3 min' WHEN seg < 600 THEN '3–10 min' ELSE '+10 min' END rango,
+                         MIN(seg) orden, COUNT(*) visitas FROM ses GROUP BY 1 ORDER BY 2`),
+      q(`${SES} SELECT LEAST(paginas, 6) paginas, COUNT(*) visitas FROM ses GROUP BY 1 ORDER BY 1`),
+      // Nuevos vs. que regresan (visitaron antes del periodo o en otra sesión)
+      q(`${SES}, porV AS (SELECT visitante, COUNT(*) visitas FROM ses GROUP BY visitante),
+           antes AS (SELECT DISTINCT visitante FROM analytics.sitios_eventos WHERE ($1::text IS NULL OR sitio = $1)
+                     AND creado_en < (SELECT MIN(inicio) FROM ses) AND visitante IN (SELECT visitante FROM porV))
+         SELECT COUNT(*) FILTER (WHERE p.visitas = 1 AND a.visitante IS NULL) nuevos,
+                COUNT(*) FILTER (WHERE p.visitas > 1 OR a.visitante IS NOT NULL) recurrentes,
+                ROUND(AVG(p.visitas), 2) visitas_por_visitante
+         FROM porV p LEFT JOIN antes a ON a.visitante = p.visitante`),
+      // Mapa de calor: día de la semana × hora (Lima)
+      q(`SELECT EXTRACT(ISODOW FROM ${L})::int d, EXTRACT(HOUR FROM ${L})::int h, COUNT(DISTINCT sesion) n
+         FROM analytics.sitios_eventos ${W} GROUP BY 1, 2`),
+      // Últimas visitas (detalle)
+      q(`${SES} SELECT sitio, to_char(inicio AT TIME ZONE 'America/Lima', 'DD/MM HH24:MI') hora, entrada, salida, paginas, seg, clics, pais, dispositivo, navegador,
+           CASE WHEN COALESCE(referrer,'') = '' THEN 'Directo' ELSE substring(referrer from '://(?:www\\.)?([^/]+)') END origen,
+           (fin > NOW() - INTERVAL '5 minutes') en_linea
+         FROM ses ORDER BY inicio DESC LIMIT 25`),
+      q(`SELECT split_part(COALESCE(idioma, '?'), '-', 1) idioma, COUNT(DISTINCT visitante) visitantes FROM analytics.sitios_eventos ${W} GROUP BY 1 ORDER BY 2 DESC LIMIT 6`),
+    ]);
+    res.json({ prev: prev[0], entradas, salidas, flujos, duraciones, profundidad, recurrentes: recurrentes[0], calor, recientes, idiomas,
+      sitios: SITIOS, sitio, rango, fecha, total: tot[0], sesion: sesiones[0], serie, paginas, origen, paises, dispositivos, navegadores, clics, porSitio, enVivo, horas });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
