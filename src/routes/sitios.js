@@ -132,9 +132,10 @@ var ultimaRuta=location.pathname;function vista(){env('vista');ultimaRuta=locati
 function cambio(){if(location.pathname!==ultimaRuta){sale();vista()}}
 ['pushState','replaceState'].forEach(function(m){var o=history[m];history[m]=function(){var r=o.apply(this,arguments);setTimeout(cambio,0);return r}});
 addEventListener('popstate',cambio);
-document.addEventListener('click',function(e){var el=e.target&&e.target.closest&&e.target.closest('a,button,[role=button],input[type=submit]');if(!el)return;
+document.addEventListener('click',function(e){var el=e.target&&e.target.closest&&e.target.closest('a,button,[role=button],input[type=submit]');if(!el||el.closest('.mx-modal'))return;
 var t=(el.getAttribute('aria-label')||el.innerText||el.value||el.getAttribute('href')||'').replace(/\\s+/g,' ').trim().slice(0,80);if(t)env('clic',{etiqueta:t})},true);
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',vista);else vista();
+window.qbEvento=function(t){if(t)env('clic',{etiqueta:String(t).slice(0,80),auto:1})};
 }
 }catch(e){}})();`;
 publico.get('/t.js', (req, res) => {
@@ -236,7 +237,7 @@ router.get('/resumen', async (req, res) => {
       // Horas del día en que más se conectan (en el periodo)
       q(`SELECT EXTRACT(HOUR FROM ${L})::int h, COUNT(DISTINCT sesion) sesiones FROM analytics.sitios_eventos ${W} GROUP BY 1 ORDER BY 1`),
     ]);
-    const [prev, entradas, salidas, flujos, duraciones, profundidad, recurrentes, calor, recientes, idiomas] = await Promise.all([
+    const [prev, entradas, salidas, flujos, duraciones, profundidad, recurrentes, calor, recientes, idiomas, cotizador] = await Promise.all([
       q(`SELECT COUNT(*) FILTER (WHERE tipo='vista') vistas, COUNT(DISTINCT visitante) visitantes, COUNT(DISTINCT sesion) sesiones,
            COALESCE(SUM(segundos),0) segundos, COUNT(*) FILTER (WHERE tipo='clic') clics FROM analytics.sitios_eventos ${WP}`),
       // Páginas por donde entran y por donde se van (con % de salida sobre sus vistas)
@@ -271,8 +272,10 @@ router.get('/resumen', async (req, res) => {
            (fin > NOW() - INTERVAL '5 minutes') en_linea
          FROM ses ORDER BY inicio DESC LIMIT 25`),
       q(`SELECT split_part(COALESCE(idioma, '?'), '-', 1) idioma, COUNT(DISTINCT visitante) visitantes FROM analytics.sitios_eventos ${W} GROUP BY 1 ORDER BY 2 DESC LIMIT 6`),
+      // Embudo del cotizador (eventos «Cotizador · …»): visitas distintas por paso
+      q(`SELECT etiqueta, COUNT(DISTINCT sesion) visitas FROM analytics.sitios_eventos ${W} AND tipo='clic' AND etiqueta LIKE 'Cotizador · %' GROUP BY 1 ORDER BY 1`),
     ]);
-    res.json({ prev: prev[0], entradas, salidas, flujos, duraciones, profundidad, recurrentes: recurrentes[0], calor, recientes, idiomas,
+    res.json({ cotizador, prev: prev[0], entradas, salidas, flujos, duraciones, profundidad, recurrentes: recurrentes[0], calor, recientes, idiomas,
       sitios: SITIOS, sitio, rango, fecha, total: tot[0], sesion: sesiones[0], serie, paginas, origen, paises, dispositivos, navegadores, clics, porSitio, enVivo, horas });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
