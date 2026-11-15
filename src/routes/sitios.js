@@ -89,6 +89,8 @@ function navegadorDe(ua = '') {
   if (/safari/i.test(ua)) return 'Safari';
   return 'Otro';
 }
+// IP anonimizada: se guarda sin el último tramo (IPv4 a.b.c.0, IPv6 solo los 3 primeros grupos)
+const anonimizarIp = ip => { if (!ip) return null; const v = String(ip).replace(/^::ffff:/, ''); if (v.includes('.')) return v.split('.').slice(0, 3).join('.') + '.0'; return v.split(':').slice(0, 3).join(':') + '::'; };
 const corta = (v, n) => (v == null ? null : String(v).slice(0, n));
 const esBot = ua => /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|uptime|facebookexternalhit|whatsapp|telegram|discord|slack|embedly|vercel|google-inspection|chrome-lighthouse|gtmetrix/i.test(ua || '');
 
@@ -103,6 +105,10 @@ publico.use((req, res, next) => {
 const SCRIPT = `(function(){try{
 var s=document.currentScript||document.querySelector('script[src*="/api/public/sitios/t.js"]');if(!s||window.__qbSitio)return;window.__qbSitio=1;
 var sitio=s.getAttribute('data-sitio')||(s.src.match(/[?&]s=([a-z0-9-]+)/)||[])[1];if(!sitio)return;
+var claveC=s.getAttribute('data-consentimiento');
+function okC(){try{return !claveC||!!localStorage.getItem(claveC)}catch(e){return false}}
+if(okC())arrancar();else addEventListener('qubira-consent',function(){if(okC())arrancar()});
+function arrancar(){if(window.__qbArr)return;window.__qbArr=1;
 var api=s.src.replace(/\\/t\\.js.*$/,'')+'/e';
 function id(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
 var ls={};try{ls=window.localStorage}catch(e){}
@@ -126,6 +132,7 @@ addEventListener('popstate',cambio);
 document.addEventListener('click',function(e){var el=e.target&&e.target.closest&&e.target.closest('a,button,[role=button],input[type=submit]');if(!el)return;
 var t=(el.getAttribute('aria-label')||el.innerText||el.value||el.getAttribute('href')||'').replace(/\\s+/g,' ').trim().slice(0,80);if(t)env('clic',{etiqueta:t})},true);
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',vista);else vista();
+}
 }catch(e){}})();`;
 publico.get('/t.js', (req, res) => {
   res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600' });
@@ -150,7 +157,7 @@ publico.post('/e', express.text({ type: '*/*', limit: '8kb' }), async (req, res)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [d.sitio, d.tipo, corta(d.ruta, 300), corta(d.titulo, 200), corta(d.etiqueta, 120), corta(d.sesion, 60), corta(d.visitante, 60),
         Math.max(0, Math.min(parseInt(d.segundos, 10) || 0, 120)), corta(d.ref, 400), paisDe(d.tz, d.idioma), corta(d.idioma, 20),
-        dispositivoDe(ua, +d.ancho || 0), navegadorDe(ua), ip]);
+        dispositivoDe(ua, +d.ancho || 0), navegadorDe(ua), anonimizarIp(ip)]);
   } catch (e) { console.warn('[sitios] evento:', e.message); }
 });
 
