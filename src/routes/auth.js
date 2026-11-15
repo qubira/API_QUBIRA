@@ -468,8 +468,10 @@ router.get('/sessions', requireAuth, async (req, res) => {
       `SELECT id, ip_address, user_agent, created_at, expires_at
        FROM sesiones
        WHERE usuario_id = $1 AND expires_at > NOW()
+         -- La app QUBIRA Reporte (canal movil) no cuenta como «otra sesión»
+         AND (COALESCE(canal, 'web') <> 'movil' OR id = $2)
        ORDER BY created_at DESC`,
-      [req.user.id]
+      [req.user.id, req.user.sessionId]
     );
     const sessions = rows.map(s => ({ ...s, current: s.id === req.user.sessionId }));
     res.json({ ok: true, sessions });
@@ -488,7 +490,7 @@ router.post('/sessions/close-others', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `UPDATE sesiones SET expires_at = NOW(), revoked_reason = 'user_closed'
-       WHERE usuario_id = $1 AND id != $2 AND expires_at > NOW()
+       WHERE usuario_id = $1 AND id != $2 AND expires_at > NOW() AND COALESCE(canal, 'web') <> 'movil'
        RETURNING id`,
       [req.user.id, req.user.sessionId]
     );
