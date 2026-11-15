@@ -161,5 +161,24 @@ app.use((err, req, res, next) => {
     console.log(`[SERVER] QUBIRA API corriendo en http://localhost:${PORT}`);
     console.log(`[SERVER] Entorno: ${process.env.NODE_ENV || 'development'}`);
     console.log(`[SERVER] Orígenes permitidos: ${allowedOrigins.join(', ') || '(todos en dev)'}`);
+    mantenerDespierto();
   });
 })();
+
+/* ============================================================
+   MANTENER DESPIERTO (Render, plan gratuito)
+   Render apaga el servicio tras 15 min sin tráfico entrante. Cada 10 min
+   el API llama a su propia dirección pública (pasa por el proxy de Render,
+   que lo cuenta como tráfico), así queda siempre activo y la sincronización
+   horaria de TikTok corre sola. Solo actúa en Render (RENDER_EXTERNAL_URL
+   la define Render); se desactiva con KEEPALIVE=off.
+   ============================================================ */
+function mantenerDespierto() {
+  const base = process.env.RENDER_EXTERNAL_URL;
+  if (!base || process.env.KEEPALIVE === 'off') return;
+  const url = base.replace(/\/$/, '') + '/api/health';
+  setInterval(() => {
+    fetch(url, { headers: { 'User-Agent': 'qubira-keepalive' } }).catch(e => console.warn('[KEEPALIVE]', e.message));
+  }, 10 * 60 * 1000);
+  console.log('[KEEPALIVE] activo: ping cada 10 min a', url);
+}
