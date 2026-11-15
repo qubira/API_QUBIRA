@@ -68,8 +68,12 @@ function paisDe(tz, idioma) {
   if (ZONAS[tz]) return ZONAS[tz];
   if (/^America\/(New_York|Chicago|Denver|Los_Angeles|Phoenix|Anchorage|Detroit)/.test(tz || '')) return 'Estados Unidos';
   if (/^America\/(Toronto|Vancouver|Edmonton|Winnipeg|Halifax)/.test(tz || '')) return 'Canadá';
+  // Zona UTC/Etc: típica de servidores y programas automáticos
+  if (!tz || /^(UTC|Etc\/|GMT)/i.test(tz)) return 'Sin ubicación (posible bot)';
+  // Si no, el país del idioma del navegador (aproximado)
   const reg = String(idioma || '').split('-')[1];
-  return reg ? `Otro (${reg.toUpperCase()})` : 'Desconocido';
+  if (reg) { try { return new Intl.DisplayNames(['es'], { type: 'region' }).of(reg.toUpperCase()) + ' (por idioma)'; } catch (_) { return `Otro (${reg.toUpperCase()})`; } }
+  return 'Desconocido';
 }
 function dispositivoDe(ua = '', ancho = 0) {
   if (/ipad|tablet/i.test(ua) || (ancho >= 600 && ancho < 1024 && /mobile|android/i.test(ua))) return 'Tablet';
