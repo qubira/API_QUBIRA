@@ -201,7 +201,7 @@ router.post('/event', async (req, res) => {
         clip(page, 300),
         clip(referrer, 500),
         clip(session_id, 100),
-        req.ip || null,
+        req.body?.anonimo ? null : (req.ip || null), // «Solo necesarias»: sin IP
         clip(req.headers['user-agent'], 300),
         clip(utm_source, 100),
         clip(utm_medium, 100),

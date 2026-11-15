@@ -109,14 +109,17 @@ var claveC=s.getAttribute('data-consentimiento');
 function okC(){try{return !claveC||!!localStorage.getItem(claveC)}catch(e){return false}}
 if(okC())arrancar();else addEventListener('qubira-consent',function(){if(okC())arrancar()});
 function arrancar(){if(window.__qbArr)return;window.__qbArr=1;
+var anon=false;try{if(claveC){var dc=JSON.parse(localStorage.getItem(claveC)||'null');anon=!!(dc&&dc.tipo==='necesarias')}}catch(e){}
 var api=s.src.replace(/\\/t\\.js.*$/,'')+'/e';
 function id(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
+var vis=null,ses,ss;
+if(anon){ses=id()}else{
 var ls={};try{ls=window.localStorage}catch(e){}
-var vis;try{vis=ls.getItem('qb_v')||'';if(!vis){vis=id();ls.setItem('qb_v',vis)}}catch(e){vis=id()}
-var ses,ss;try{ss=window.sessionStorage;ses=ss.getItem('qb_s');var ult=+ss.getItem('qb_t')||0;if(!ses||Date.now()-ult>18e5){ses=id();ss.setItem('qb_s',ses)}}catch(e){ses=ses||id()}
-function toca(){try{ss.setItem('qb_t',Date.now())}catch(e){}}
+try{vis=ls.getItem('qb_v')||'';if(!vis){vis=id();ls.setItem('qb_v',vis)}}catch(e){vis=id()}
+try{ss=window.sessionStorage;ses=ss.getItem('qb_s');var ult=+ss.getItem('qb_t')||0;if(!ses||Date.now()-ult>18e5){ses=id();ss.setItem('qb_s',ses)}}catch(e){ses=ses||id()}}
+function toca(){if(anon)return;try{ss.setItem('qb_t',Date.now())}catch(e){}}
 var tz='';try{tz=Intl.DateTimeFormat().resolvedOptions().timeZone}catch(e){}
-function env(tipo,x){x=x||{};var d={sitio:sitio,tipo:tipo,ruta:location.pathname,titulo:document.title,sesion:ses,visitante:vis,ref:document.referrer,tz:tz,idioma:navigator.language,ancho:screen.width};for(var k in x)d[k]=x[k];var b=JSON.stringify(d);toca();
+function env(tipo,x){x=x||{};var d={sitio:sitio,tipo:tipo,ruta:location.pathname,titulo:document.title,sesion:ses,visitante:vis,anonimo:anon,ref:document.referrer,tz:tz,idioma:navigator.language,ancho:screen.width};for(var k in x)d[k]=x[k];var b=JSON.stringify(d);toca();
 try{if(navigator.sendBeacon&&navigator.sendBeacon(api,new Blob([b],{type:'text/plain'})))return}catch(e){}
 try{fetch(api,{method:'POST',body:b,keepalive:true,mode:'no-cors',headers:{'Content-Type':'text/plain'}})}catch(e){}}
 var activo=0,ultimaAct=Date.now(),pend=0;
@@ -155,9 +158,9 @@ publico.post('/e', express.text({ type: '*/*', limit: '8kb' }), async (req, res)
     }
     await pool.query(`INSERT INTO analytics.sitios_eventos (sitio, tipo, ruta, titulo, etiqueta, sesion, visitante, segundos, referrer, pais, idioma, dispositivo, navegador, ip)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-      [d.sitio, d.tipo, corta(d.ruta, 300), corta(d.titulo, 200), corta(d.etiqueta, 120), corta(d.sesion, 60), corta(d.visitante, 60),
+      [d.sitio, d.tipo, corta(d.ruta, 300), corta(d.titulo, 200), corta(d.etiqueta, 120), corta(d.sesion, 60), d.anonimo ? null : corta(d.visitante, 60),
         Math.max(0, Math.min(parseInt(d.segundos, 10) || 0, 120)), corta(d.ref, 400), paisDe(d.tz, d.idioma), corta(d.idioma, 20),
-        dispositivoDe(ua, +d.ancho || 0), navegadorDe(ua), anonimizarIp(ip)]);
+        dispositivoDe(ua, +d.ancho || 0), navegadorDe(ua), d.anonimo ? null : anonimizarIp(ip)]);
   } catch (e) { console.warn('[sitios] evento:', e.message); }
 });
 
