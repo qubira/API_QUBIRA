@@ -25,6 +25,7 @@ const odaclRouter = require('./src/routes/odacl');
 const casesPublicRouter = require('./src/routes/cases-public');
 const ocmRoutes         = require('./src/routes/ocm');
 const sitiosRoutes      = require('./src/routes/sitios');
+const estadoRoutes      = require('./src/routes/estado');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -129,6 +130,7 @@ app.use('/api/public/cases',       casesPublicRouter);
 app.use('/api/ocm',               ocmRoutes.router);
 app.use('/api/public/ocm',        ocmRoutes.publico);
 app.use('/api/ocm/sitios',        sitiosRoutes.router);
+app.use('/api/public',            estadoRoutes.publico); // /estado y /estado.js (horas de Render)
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });
@@ -162,6 +164,7 @@ app.use((err, req, res, next) => {
     console.log(`[SERVER] Entorno: ${process.env.NODE_ENV || 'development'}`);
     console.log(`[SERVER] Orígenes permitidos: ${allowedOrigins.join(', ') || '(todos en dev)'}`);
     mantenerDespierto();
+    estadoRoutes.iniciarMedicion();
   });
 })();
 
