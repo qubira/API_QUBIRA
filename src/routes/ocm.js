@@ -445,17 +445,20 @@ publico.all('/cron', async (req, res) => {
   res.json({ ok: true, resultados });
 });
 
-/* Sincronización automática interna: cada 15 min revisa y, si la última fue hace
-   más de 55 min, vuelve a sincronizar. Así hay una foto por hora mientras el servidor
-   esté activo (complementa al panel, que sincroniza cada 5 min cuando está abierto). */
+/* Sincronización automática interna: cada 5 min revisa si la hora en curso ya tiene
+   foto; si no, sincroniza. Antes (cada 15 min con umbral de 55 min) podía saltarse una
+   hora entera, p. ej. última a las 06:50 -> siguiente a las 08:05 y 07h quedaba vacía.
+   Ahora toda hora con el servidor activo queda registrada en sus primeros ~5 min. */
+async function autoSync() {
+  try {
+    await asegurarEsquema();
+    const { rows } = await pool.query(`SELECT * FROM ocm.tiktok_cuentas WHERE ultima_sync IS NULL OR ultima_sync < date_trunc('hour', NOW())`);
+    for (const c of rows) await sincronizar(c);
+  } catch (e) { console.warn('[OCM] auto-sync:', e.message); }
+}
 if (process.env.NODE_ENV !== 'test' && process.env.OCM_AUTO_SYNC !== 'off') {
-  setInterval(async () => {
-    try {
-      await asegurarEsquema();
-      const { rows } = await pool.query(`SELECT * FROM ocm.tiktok_cuentas WHERE ultima_sync IS NULL OR ultima_sync < NOW() - INTERVAL '55 minutes'`);
-      for (const c of rows) await sincronizar(c);
-    } catch (e) { console.warn('[OCM] auto-sync:', e.message); }
-  }, 15 * 60 * 1000).unref();
+  setTimeout(autoSync, 30 * 1000).unref();            // al arrancar (tras un reinicio o deploy)
+  setInterval(autoSync, 5 * 60 * 1000).unref();
 }
 
 module.exports = { router, publico };
