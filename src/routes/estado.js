@@ -116,7 +116,9 @@ det.innerHTML='<b>Servidor QUBIRA (Render)</b>'+
 '<div class="fila"><span>Se reinicia el contador</span><b>en '+dias+' día(s)</b></div>'+
 '<div class="fila"><span>Si sigue encendido</span><b style="color:'+(datos.proyeccion_fin_mes>datos.limite?'#ef4444':'#059669')+'">'+hrs(datos.proyeccion_fin_mes)+' a fin de mes</b></div>'+
 '<small>Mide solo el API de QUBIRA'+(datos.medido_desde?', desde el '+new Date(datos.medido_desde).toLocaleDateString('es-PE'):'')+'. Clic derecho en la etiqueta para minimizarla.</small>'}
-function carga(){fetch(api,{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){if(d.error)throw 0;datos=d;base=d.encendido_segundos;t0=Date.now();pinta()}).catch(function(){el.className=(mini?'min ':'')+'caido';el.querySelector('.txt').textContent='Servidor despertando…'})}
+var fallos=0,reintento=null;
+function carga(){clearTimeout(reintento);if(!navigator.onLine){el.className=(mini?'min ':'')+'caido';el.querySelector('.txt').textContent='Sin internet';return}fetch(api,{cache:'no-store'}).then(function(r){return r.json()}).then(function(d){if(d.error)throw 0;fallos=0;datos=d;base=d.encendido_segundos;t0=Date.now();pinta()}).catch(function(){fallos++;if(fallos>=3){el.className=(mini?'min ':'')+'caido';el.querySelector('.txt').textContent='Reconectando con el servidor…'}reintento=setTimeout(carga,10000)})}
+document.addEventListener('visibilitychange',function(){if(!document.hidden)carga()});addEventListener('online',carga);addEventListener('offline',carga);
 el.addEventListener('click',function(){det.style.display=det.style.display==='block'?'none':'block'});
 el.addEventListener('contextmenu',function(e){e.preventDefault();mini=!mini;el.classList.toggle('min',mini);try{localStorage.setItem('qb_estado_min',mini?'1':'0')}catch(x){}});
 document.addEventListener('click',function(e){if(!el.contains(e.target)&&!det.contains(e.target))det.style.display='none'});
