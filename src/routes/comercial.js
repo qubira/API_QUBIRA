@@ -173,21 +173,9 @@ function ensureSchema() {
 }
 router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); });
 
-/* Reintenta una vez si el id auto-generado choca con uno ya insertado
-   por otra petición concurrente (colisión de PK, código 23505). Con
-   el volumen de uso de este panel es un caso raro, pero así queda
-   cubierto sin necesitar un lock explícito. */
-async function withIdRetry(genId, insert) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const id = await genId();
-    try {
-      return await insert(id);
-    } catch (e) {
-      if (e.code === '23505' && attempt === 0) continue;
-      throw e;
-    }
-  }
-}
+/* Los ids de clientes, proformas y contratos son su código del registro de
+   documentos (ODN-CLI / ODN-PRF / ODN-CTR), asignado de forma atómica: ya no
+   hace falta reintentar por choques de numeración. */
 
 /* ============================================================
    MI PERFIL — representante de QUBIRA que firma los contratos

@@ -1,6 +1,6 @@
 # Codificación de documentos internos — QUBIRA S.A.C.
 
-Versión 1.0 · 18/11/2026 · Estado: **borrador para aprobación** (no implementado)
+Versión 1.1 · 18/11/2026 · Estado: **implementado** (fases 1 a 5 en producción; migración ejecutada el 18/11/2026)
 
 Este documento define cómo se codifican, emiten, aprueban, anulan y archivan los documentos y registros de todas las áreas de QUBIRA. Reemplaza los esquemas actuales de cada módulo (`CLI-006`, `PRF-2026-001`, `CT-2026-0022`, `PROJ-2026-042`, `AUD-SEC-2026-001`, `QS-0001`, `QB-FR-01`).
 

@@ -1325,21 +1325,9 @@ async function datosPdfConstancia(constancia) {
   return { ...constancia, firmaUrl, selloUrl, empresa };
 }
 
-/* Piso inicial por año — ya se emitieron constancias 0001-0021 de 2026
-   fuera de este sistema (en papel/manual), así que acá se arranca en
-   0022 para no duplicar números ya usados. Años sin piso explícito
-   empiezan normal desde 0001. */
+/* Las constancias 0001-0021 de 2026 se emitieron en papel: el correlativo
+   ORH-CST-2026 nunca baja de 21 (la próxima libre es la 022 o mayor). */
 const CONSTANCIA_NUMERO_FLOOR = { 2026: 22 };
-
-async function generateConstanciaNumero() {
-  const year = new Date().getFullYear();
-  const { rows } = await pool.query(
-    "SELECT COALESCE(MAX(SUBSTRING(numero FROM 9)::int), 0) AS max_n FROM rrhh.constancias WHERE numero LIKE $1",
-    [`CT-${year}-%`]
-  );
-  const next = Math.max(rows[0].max_n + 1, CONSTANCIA_NUMERO_FLOOR[year] || 1);
-  return `CT-${year}-${String(next).padStart(4, '0')}`;
-}
 
 function generateCodigoVerificacion() {
   const grupo = () => crypto.randomBytes(2).toString('hex').toUpperCase();
@@ -1458,10 +1446,12 @@ router.post('/constancias', async (req, res) => {
     let fila;
     try {
       await cli.query('BEGIN');
-      // Piso: no repetir números ya usados con el formato anterior (CT-AAAA-NNNN) ni los emitidos en papel
+      // Piso: no repetir los números emitidos en papel ni los del formato anterior (CT-AAAA-NNNN), migrados o no
       const anio = Codif.anioLima();
       const { rows: [{ max_n }] } = await cli.query(
-        "SELECT COALESCE(MAX(SUBSTRING(numero FROM 9)::int), 0) AS max_n FROM rrhh.constancias WHERE numero LIKE $1", [`CT-${anio}-%`]);
+        `SELECT COALESCE(MAX(SUBSTRING(n FROM 9)::int), 0) AS max_n
+           FROM (SELECT numero AS n FROM rrhh.constancias UNION ALL SELECT numero_anterior FROM rrhh.constancias) x
+          WHERE n LIKE $1`, [`CT-${anio}-%`]);
       await Codif.pisoCorrelativo(cli, 'ORH', 'CST', anio, Math.max(max_n, (CONSTANCIA_NUMERO_FLOOR[anio] || 1) - 1));
       const { doc } = await servicio.crearBorrador(cli, quien, {
         tipo: 'CST', area: 'ORH', titulo: `Constancia de trabajo – ${nombreCompleto}`, modulo: 'RRHH', id_origen: id,
