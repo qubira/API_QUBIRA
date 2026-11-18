@@ -8,6 +8,7 @@ const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
 const { getEmployeeArea } = require('../lib/employeeArea');
 const { requireModuleAccess } = require('../lib/moduleAccess');
+const DM = require('../lib/docModulo'); // códigos del registro de documentos (CODIFICACION.md)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -51,6 +52,8 @@ function ensureSchema() {
         status TEXT DEFAULT 'draft', file_path TEXT, file_name TEXT, notes TEXT, signed_date TEXT,
         created_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Código del registro de documentos (ODN-CTR / ODN-PRF): ODN gestiona los contratos con clientes
+      ALTER TABLE ti.contracts ADD COLUMN IF NOT EXISTS codigo TEXT;
 
       CREATE TABLE IF NOT EXISTS ti.documents (
         id TEXT PRIMARY KEY, project_id TEXT REFERENCES ti.projects(id) ON DELETE CASCADE,
@@ -569,11 +572,6 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
 
     const id = uid();
-    const year = new Date().getFullYear();
-    const { rows: seqRows } = await pool.query(
-      "SELECT COUNT(*)+1 AS n FROM ti.projects WHERE code LIKE $1", [`PROJ-${year}-%`]
-    );
-    const code = `PROJ-${year}-${String(parseInt(seqRows[0].n)).padStart(3, '0')}`;
 
     let company_logo = null;
     if (req.file) {
@@ -583,7 +581,11 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
       company_logo = company_logo_url.trim();
     }
 
-    await pool.query(`
+    // Código OTI-PRY-NNNN del registro de documentos (antes PROJ-AAAA-NNN contado con COUNT)
+    let code;
+    await DM.enTransaccion(null, async cx => {
+    code = (await DM.emitirRegistro(req.user, { tipo: 'PRY', area: 'OTI', titulo: name, detalle: client, modulo: 'TI', id_origen: id }, { cli: cx })).codigo;
+    await cx.query(`
       INSERT INTO ti.projects (id,code,name,client,description,status,progress,budget,currency,start_date,end_date,responsible_id,priority,created_by,company_name,company_logo,id_document_type,id_document_number,project_type,github_url,website_url,family,
         show_to_comercial,commercial_offer_type,commercial_price,commercial_price_currency,commercial_notes,
         show_on_web,web_metric,web_tagline,web_description,web_order)
@@ -596,9 +598,10 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
         show_to_comercial_val, commercial_offer_type || null, commercial_price_val, commercial_price_currency || null, commercial_notes || null,
         show_on_web_val, web_metric || '100%', web_tagline || null, web_description || null, web_order_val]
     );
-    await logActivity(id, req.user.id, 'created', `Proyecto "${name}" creado por ${req.user.nombre || req.user.username}`);
+    });
+    await logActivity(id, req.user.id, 'created', `Proyecto "${name}" (${code}) creado por ${req.user.nombre || req.user.username}`);
     res.status(201).json({ id, code, name });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[TI] crear proyecto:'); }
 });
 
 router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
@@ -733,6 +736,8 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     if (changes.length > 0) {
       await logActivity(req.params.id, req.user.id, 'updated', `${req.user.nombre || req.user.username} actualizó — ${changes.join(' · ')}`);
     }
+    // Registro: un proyecto cancelado queda INACTIVO (conserva su código); si se reactiva, ACTIVO
+    if (status && status !== old.status) await DM.estadoRegistro(req.user, 'TI', req.params.id, status === 'cancelled' ? 'INACTIVO' : 'ACTIVO').catch(() => {});
     res.json({ message: 'Proyecto actualizado' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -754,11 +759,16 @@ router.post('/projects/:id/claim', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Un proyecto no se elimina: se desactiva (estado «cancelado») y conserva su código,
+   sus requerimientos, actas y contratos. Se puede reactivar editando su estado. */
 router.delete('/projects/:id', async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
-    await pool.query('DELETE FROM ti.projects WHERE id = $1', [req.params.id]);
-    res.json({ message: 'Proyecto eliminado' });
+    const { rows } = await pool.query("UPDATE ti.projects SET status = 'cancelled', updated_at = NOW() WHERE id = $1 RETURNING code, name", [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    await DM.estadoRegistro(req.user, 'TI', req.params.id, 'INACTIVO', (req.body || {}).motivo).catch(() => {});
+    await logActivity(req.params.id, req.user.id, 'updated', `${req.user.nombre || req.user.username} desactivó el proyecto ${rows[0].code} (no se elimina: conserva su código)`);
+    res.json({ message: `Proyecto ${rows[0].code} desactivado (conserva su código)`, desactivado: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -817,16 +827,24 @@ router.post('/contracts', upload.single('file'), async (req, res) => {
     }
 
     const id = uid();
-    await pool.query(`
-      INSERT INTO ti.contracts (id,project_id,type,title,amount,currency,status,file_path,file_name,notes,signed_date,created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [id, project_id || null, type || 'contract', title, amount || 0, currency || 'USD',
-        status || 'draft', file_path, file_name, notes || null, signed_date || null, req.user.id]
-    );
+    // ODN gestiona todos los contratos con clientes: ODN-CTR (detalle «Proyecto») u ODN-PRF
+    const esProforma = String(type || '').toLowerCase() === 'proforma';
+    let codigo;
+    await DM.enTransaccion(null, async cx => {
+      codigo = (await DM.emitirRegistro(req.user, {
+        tipo: esProforma ? 'PRF' : 'CTR', area: 'ODN', titulo: title, detalle: esProforma ? null : 'Proyecto', modulo: 'TI-CONTRATOS', id_origen: id,
+      }, { cli: cx })).codigo;
+      await cx.query(`
+        INSERT INTO ti.contracts (id,project_id,type,title,amount,currency,status,file_path,file_name,notes,signed_date,created_by,codigo)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [id, project_id || null, type || 'contract', title, amount || 0, currency || 'USD',
+          status || 'draft', file_path, file_name, notes || null, signed_date || null, req.user.id, codigo]
+      );
+    });
     await logActivity(project_id, req.user.id, 'contract_uploaded',
-      `Contrato/Proforma "${title}" agregado por ${req.user.nombre || req.user.username}`);
-    res.status(201).json({ id });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+      `Contrato/Proforma ${codigo} "${title}" agregado por ${req.user.nombre || req.user.username}`);
+    res.status(201).json({ id, codigo });
+  } catch (e) { DM.responder(res, e, '[TI] contrato:'); }
 });
 
 router.put('/contracts/:id', upload.single('file'), async (req, res) => {
@@ -850,12 +868,20 @@ router.put('/contracts/:id', upload.single('file'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Lo emitido no se elimina: se anula con motivo. Los contratos subidos antes de la
+   codificación (sin código) se anulan igual, marcándolos «anulado». */
 router.delete('/contracts/:id', async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
-    await pool.query('DELETE FROM ti.contracts WHERE id=$1', [req.params.id]);
-    res.json({ message: 'Eliminado' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const { rows } = await pool.query('SELECT id, codigo, title, project_id FROM ti.contracts WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Contrato no encontrado' });
+    const motivo = (req.body || {}).motivo || req.query.motivo;
+    if (!String(motivo || '').trim()) return res.status(400).json({ error: 'Un contrato no se elimina: se anula. Escribe el motivo de la anulación.' });
+    await DM.anular(req.user, 'TI-CONTRATOS', req.params.id, motivo);
+    await pool.query("UPDATE ti.contracts SET status='anulado', notes = concat_ws(E'\\n', notes, $2::text), updated_at=NOW() WHERE id=$1", [req.params.id, `Anulado: ${String(motivo).trim()}`]);
+    await logActivity(rows[0].project_id, req.user.id, 'updated', `${req.user.nombre || req.user.username} anuló el contrato ${rows[0].codigo || rows[0].title}: ${String(motivo).trim()}`);
+    res.json({ message: 'Anulado', anulado: true });
+  } catch (e) { DM.responder(res, e, '[TI] anular contrato:'); }
 });
 
 /* ============================================================
@@ -2036,15 +2062,13 @@ router.post('/calidad/actas', async (req, res) => {
     const { tipo, project_id, datos } = req.body || {};
     if (!TIPOS_ACTA[tipo]) return res.status(400).json({ error: 'Tipo de acta inválido' });
     if (project_id && !(await canAccessProject(req, project_id))) return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
-    const anio = new Date().getFullYear();
-    const pref = `AUD-${TIPOS_ACTA[tipo]}-${anio}-`;
+    /* El borrador no lleva código: se guarda con uno provisional «BORRADOR-…» y recibe
+       el suyo (OTI-ACT / DST-ACT) al enviarse a revisión. */
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('ti.auditorias_calidad'))");
-      const { rows: n } = await client.query(`SELECT COALESCE(MAX(substring(codigo from '([0-9]+)$')::int), 0) + 1 AS n FROM ti.auditorias_calidad WHERE codigo LIKE $1`, [pref + '%']);
-      const codigo = pref + String(n[0].n).padStart(3, '0');
       const id = uid();
+      const codigo = 'BORRADOR-' + id.slice(0, 8).toUpperCase();
       const d = datos && typeof datos === 'object' ? datos : {};
       await client.query(`INSERT INTO ti.auditorias_calidad (id, codigo, tipo, project_id, datos, resumen, fecha_emision, created_by, updated_by)
         VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$8)`, [id, codigo, tipo, project_id || null, JSON.stringify(d), JSON.stringify(resumenActa(d)), d.fecha_emision || new Date().toISOString().slice(0, 10), req.user.id]);
@@ -2064,33 +2088,59 @@ router.put('/calidad/actas/:id', async (req, res) => {
     if (!(await puedeVerActa(req, acta))) return res.status(403).json({ error: 'No tienes acceso a esta acta' });
     const b = req.body || {};
     const datos = b.datos && typeof b.datos === 'object' ? b.datos : acta.datos;
-    const estado = ESTADOS_ACTA.includes(b.estado) ? b.estado : acta.estado;
+    const estado = ESTADOS_ACTA.includes(b.estado) ? b.estado : acta.estado; // «anulada» solo por Anular (con motivo)
     let projectId = b.project_id !== undefined ? (b.project_id || null) : acta.project_id;
     if (projectId && projectId !== acta.project_id && !(await canAccessProject(req, projectId))) return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
     const version = String(b.version || acta.version || '1.0').slice(0, 10);
     const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(datos.fecha_emision || '')) ? datos.fecha_emision : acta.fecha_emision;
+    if (acta.estado === 'anulada') return res.status(409).json({ error: `El acta ${acta.codigo} está anulada.` });
+    // Al salir de borrador recibe su código (seguridad → DST, calidad y reglas → OTI) y entra en ruta
+    let codigo = acta.codigo;
+    const esBorrador = /^BORRADOR-/.test(acta.codigo);
+    const yaEmitida = esBorrador ? await DM.docDe('TI-ACTAS', acta.id) : null; // reintento tras un error: no emitir dos veces
+    if (yaEmitida) codigo = yaEmitida.codigo;
+    else if (esBorrador && estado !== 'borrador') {
+      const seg = acta.tipo === 'seguridad';
+      codigo = (await DM.emitirRegistro(req.user, {
+        tipo: 'ACT', area: seg ? 'DST' : 'OTI', titulo: `Acta de auditoría de ${seg ? 'seguridad' : acta.tipo === 'calidad' ? 'calidad' : 'reglas de negocio'}${projectId ? ' – ' + ((await pool.query('SELECT name FROM ti.projects WHERE id=$1', [projectId])).rows[0] || {}).name : ''}`,
+        detalle: seg ? 'Seguridad' : acta.tipo === 'calidad' ? 'Calidad' : 'Reglas de negocio', modulo: 'TI-ACTAS', id_origen: acta.id,
+      })).codigo;
+    }
+    // Emitida o cerrada solo cuando el acta terminó su ruta (la aprueba el N3 de su área)
+    if (['emitida', 'cerrada'].includes(estado) && estado !== acta.estado) await DM.exigirAprobado('TI-ACTAS', acta.id, 'emítela');
     const { rows: out } = await pool.query(`UPDATE ti.auditorias_calidad SET datos=$2::jsonb, resumen=$3::jsonb, estado=$4, project_id=$5, version=$6, fecha_emision=$7,
-      updated_by=$8, updated_at=NOW() WHERE id=$1 RETURNING id, codigo, estado, resumen, updated_at`,
-      [req.params.id, JSON.stringify(datos), JSON.stringify(resumenActa(datos)), estado, projectId, version, fecha, req.user.id]);
+      updated_by=$8, codigo=$9, updated_at=NOW() WHERE id=$1 RETURNING id, codigo, estado, resumen, updated_at`,
+      [req.params.id, JSON.stringify(datos), JSON.stringify(resumenActa(datos)), estado, projectId, version, fecha, req.user.id, codigo]);
+    if (codigo !== acta.codigo && projectId) await logActivity(projectId, req.user.id, 'audit_status', `${req.user.nombre || req.user.username} envió a revisión el acta ${codigo}`);
     if (projectId && estado !== acta.estado) {
       await logActivity(projectId, req.user.id, 'audit_status', `${req.user.nombre || req.user.username} cambió el acta ${acta.codigo} a «${estado.replace('_', ' ')}»`);
     }
     res.json(out[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[TI] actualizar acta:'); }
 });
 
+/* Eliminar: solo un borrador (sin código) y solo quien lo creó.
+   Un acta con código se anula con motivo (su número no se reutiliza). */
 router.delete('/calidad/actas/:id', async (req, res) => {
   try {
     await ensureCalidad();
     const { rows } = await pool.query('SELECT * FROM ti.auditorias_calidad WHERE id=$1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Acta no encontrada' });
     const acta = rows[0];
-    if (!(await isPrivilegedViewer(req)) && String(acta.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Solo quien creó el acta o ADG puede eliminarla' });
-    if (['emitida', 'cerrada'].includes(acta.estado) && !(await isPrivilegedViewer(req))) return res.status(403).json({ error: 'Un acta emitida solo la puede eliminar ADG' });
-    await pool.query('DELETE FROM ti.auditorias_calidad WHERE id=$1', [req.params.id]);
-    if (acta.project_id) await logActivity(acta.project_id, req.user.id, 'audit_deleted', `${req.user.nombre || req.user.username} eliminó el acta de auditoría ${acta.codigo}`);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const esBorrador = /^BORRADOR-/.test(acta.codigo);
+    if (esBorrador) {
+      if (String(acta.created_by) !== String(req.user.id)) return res.status(403).json({ error: 'Solo quien creó el borrador puede eliminarlo' });
+      await pool.query('DELETE FROM ti.auditorias_calidad WHERE id=$1', [req.params.id]);
+      if (acta.project_id) await logActivity(acta.project_id, req.user.id, 'audit_deleted', `${req.user.nombre || req.user.username} eliminó un borrador de acta de auditoría`);
+      return res.json({ ok: true });
+    }
+    const motivo = (req.body || {}).motivo || req.query.motivo;
+    if (!String(motivo || '').trim()) return res.status(400).json({ error: `El acta ${acta.codigo} ya tiene código: no se elimina, se anula. Escribe el motivo.` });
+    await DM.anular(req.user, 'TI-ACTAS', acta.id, motivo);
+    await pool.query("UPDATE ti.auditorias_calidad SET estado='anulada', updated_by=$2, updated_at=NOW() WHERE id=$1", [acta.id, req.user.id]);
+    if (acta.project_id) await logActivity(acta.project_id, req.user.id, 'audit_deleted', `${req.user.nombre || req.user.username} anuló el acta de auditoría ${acta.codigo}: ${String(motivo).trim()}`);
+    res.json({ ok: true, anulada: true });
+  } catch (e) { DM.responder(res, e, '[TI] anular acta:'); }
 });
 
 router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds, logActivity, ensureSchema };

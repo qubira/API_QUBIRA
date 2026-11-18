@@ -61,7 +61,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Elevation-Token'],
 }));
 
-app.use(express.json({ limit: '1mb' }));
+// Los casos de soporte llevan sus capturas (imágenes) dentro: un poco más de margen solo ahí
+const jsonCasos = express.json({ limit: '8mb' }), jsonNormal = express.json({ limit: '1mb' });
+app.use((req, res, next) => (req.path.startsWith('/api/soporte/casos') ? jsonCasos : jsonNormal)(req, res, next));
 app.use(express.urlencoded({ extended: true }));
 
 /* ============================================================

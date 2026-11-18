@@ -259,10 +259,38 @@ async function tipoPorSigla(sigla) {
   const { rows } = await pool.query('SELECT * FROM doc.tipos WHERE sigla = $1', [String(sigla || '').trim().toUpperCase()]);
   return rows.length ? { ...rows[0], sigla: rows[0].sigla.trim() } : null;
 }
+/* Datos de la empresa. Razón social y RUC tienen una sola fuente: la ficha societaria
+   de ODACL (odacl.info_societaria), la misma que usan los contratos de ODN. Si ODACL
+   aún no la editó, valen los de doc.empresa. */
 async function datosEmpresa() {
   await asegurarCodificacion();
   const { rows } = await pool.query('SELECT clave, valor FROM doc.empresa');
-  return Object.fromEntries(rows.map(r => [r.clave, r.valor]));
+  const e = Object.fromEntries(rows.map(r => [r.clave, r.valor]));
+  try {
+    const { rows: s } = await pool.query('SELECT datos FROM odacl.info_societaria WHERE id = 1');
+    const d = (s[0] && s[0].datos) || {};
+    if (d.razon_social) e.razon_social = d.razon_social;
+    if (d.ruc) e.ruc = d.ruc;
+  } catch { /* ODACL aún no creó su ficha */ }
+  return e;
+}
+/* Guarda razón social y RUC en la ficha societaria (fuente única) y el resto en doc.empresa */
+async function guardarEmpresa(datos, autor) {
+  await asegurarCodificacion();
+  const soc = {};
+  for (const [k, v] of Object.entries(datos)) {
+    if (!/^[a-z_]{2,40}$/.test(k) || v === undefined || v === null || String(v).trim() === '') continue;
+    const val = String(v).trim().slice(0, 300);
+    if (k === 'razon_social' || k === 'ruc') soc[k] = val;
+    await pool.query('INSERT INTO doc.empresa (clave, valor) VALUES ($1,$2) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor', [k, val]);
+  }
+  if (Object.keys(soc).length) {
+    await pool.query(`
+      INSERT INTO odacl.info_societaria (id, datos, actualizado_por, updated_at) VALUES (1, $1::jsonb, $2, NOW())
+      ON CONFLICT (id) DO UPDATE SET datos = odacl.info_societaria.datos || EXCLUDED.datos, actualizado_por = EXCLUDED.actualizado_por, updated_at = NOW()`,
+      [JSON.stringify(soc), autor || 'Registro de documentos']).catch(() => {});
+  }
+  return datosEmpresa();
 }
 /* Siglas de área que ya se usaron en algún código (quedan bloqueadas) */
 async function siglasUsadas() {
@@ -368,6 +396,6 @@ function estadoFinal(tipo) {
 
 module.exports = {
   CLASES, ACCIONES, AREA_DUENA_FIJA, asegurarCodificacion, anioLima, formatearCodigo, validarCodigo, siguienteNumero,
-  listarTipos, tipoPorSigla, datosEmpresa, siglasUsadas, rutaPara, quienEs, puedeActuar, puedeEmitir, estadoFinal,
+  listarTipos, tipoPorSigla, datosEmpresa, guardarEmpresa, siglasUsadas, rutaPara, quienEs, puedeActuar, puedeEmitir, estadoFinal,
   personasDelArea, areaPorNombre, pisoCorrelativo, datosMembrete, formatoSistema, TIPOS_EXTERNOS,
 };

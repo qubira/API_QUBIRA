@@ -7,6 +7,7 @@ const { pool } = require('../db');
 const cloudinary = require('../config/cloudinary');
 const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
+const DM = require('../lib/docModulo'); // códigos del registro de documentos (CODIFICACION.md)
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -42,6 +43,9 @@ function ensureOdaclSchema() {
         updated_at TIMESTAMPTZ DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_odacl_docs_tipo ON odacl.legal_documents (tipo_documento);
+      -- Código del registro de documentos al emitir (ODN-CTR, ODACL-CTR u ODACL-FMT según la contraparte)
+      ALTER TABLE odacl.legal_documents ADD COLUMN IF NOT EXISTS codigo TEXT;
+      ALTER TABLE odacl.legal_documents ADD COLUMN IF NOT EXISTS creado_por TEXT;
       CREATE INDEX IF NOT EXISTS idx_odacl_docs_updated ON odacl.legal_documents (updated_at DESC);
 
       -- Plantillas oficiales del Catálogo reemplazadas por un documento editado
@@ -78,6 +82,8 @@ function ensureOdaclSchema() {
         fecha_inicio DATE, fecha_fin DATE, estado TEXT DEFAULT 'vigente', notas TEXT,
         creado_por TEXT, created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Número propio de la contraparte (el código del sistema es ODACL-CTR-AAAA-NNN)
+      ALTER TABLE odacl.contratos_externos ADD COLUMN IF NOT EXISTS referencia_externa TEXT;
       -- Bandeja de asesoría legal: consultas de las áreas y dictámenes de ODACL
       CREATE TABLE IF NOT EXISTS odacl.consultas (
         id SERIAL PRIMARY KEY,
@@ -137,7 +143,7 @@ function uploadBufferToCloudinary(buffer, folder, resourceType, filename) {
 router.get('/documents', async (req, res) => {
   try {
     const { tipo, q } = req.query;
-    let query = `SELECT id, titulo, tipo_documento, cloudinary_url, cloudinary_public_id, archivo_nombre, autor, estado, version, created_at, updated_at FROM odacl.legal_documents WHERE 1=1`;
+    let query = `SELECT id, codigo, creado_por, titulo, tipo_documento, cloudinary_url, cloudinary_public_id, archivo_nombre, autor, estado, version, created_at, updated_at FROM odacl.legal_documents WHERE 1=1`;
     const params = [];
 
     if (tipo) {
@@ -208,9 +214,9 @@ router.post('/documents', async (req, res) => {
     const publicId = cloudResult?.public_id || null;
 
     const insertResult = await pool.query(
-      `INSERT INTO odacl.legal_documents 
-       (id, titulo, tipo_documento, contenido_html, cloudinary_url, cloudinary_public_id, archivo_nombre, autor, estado, version)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Guardado en Nube', 1)
+      `INSERT INTO odacl.legal_documents
+       (id, titulo, tipo_documento, contenido_html, cloudinary_url, cloudinary_public_id, archivo_nombre, autor, estado, version, creado_por)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Guardado en Nube', 1, $9)
        RETURNING *`,
       [
         docId,
@@ -220,7 +226,8 @@ router.post('/documents', async (req, res) => {
         cloudUrl,
         publicId,
         filename,
-        autor || req.user?.username || 'ODACL Legal'
+        autor || req.user?.username || 'ODACL Legal',
+        req.user?.username || null
       ]
     );
 
@@ -249,6 +256,16 @@ router.put('/documents/:id', async (req, res) => {
     }
 
     const prev = existing.rows[0];
+    /* Emitido: un contrato no se edita (se anula y se emite otro que lo reemplace);
+       un formato sí, como versión nueva con el mismo código, que el texto debe contener. */
+    let reg = null;
+    if (prev.codigo) {
+      reg = await DM.docDe('ODACL', id);
+      if (reg && String(reg.tipo).trim() !== 'FMT') {
+        return res.status(409).json({ ok: false, error: `${prev.codigo} ya fue emitido: no se edita. Anúlalo y emite uno nuevo que lo reemplace.` });
+      }
+      if (contenido_html) req.body.contenido_html = DM.ponerCodigo(contenido_html, prev.codigo);
+    }
     const newVersion = (prev.version || 1) + 1;
     const filename = `${(titulo || prev.titulo).replace(/[^a-zA-Z0-9_-]/g, '_')}_v${newVersion}.html`;
 
@@ -288,7 +305,7 @@ router.put('/documents/:id', async (req, res) => {
       [
         titulo || prev.titulo,
         tipo_documento || prev.tipo_documento,
-        contenido_html || prev.contenido_html,
+        req.body.contenido_html || prev.contenido_html,
         cloudUrl,
         publicId,
         filename,
@@ -298,6 +315,7 @@ router.put('/documents/:id', async (req, res) => {
       ]
     );
 
+    if (reg) await DM.nuevaVersion(req.user, 'ODACL', id, newVersion, 'Editado en ODACL').catch(() => {});
     res.json({
       ok: true,
       message: `Documento v${newVersion} actualizado y guardado en Cloudinary`,
@@ -309,12 +327,58 @@ router.put('/documents/:id', async (req, res) => {
   }
 });
 
+/* Emitir un documento del editor: recibe su código según la contraparte
+   (cliente → ODN-CTR, proveedor/tercero → ODACL-CTR «Externo», modelo → ODACL-FMT)
+   y el servidor lo escribe en el texto. */
+const CLASE_DOC = {
+  cliente: { tipo: 'CTR', area: 'ODN', detalle: 'Cliente' },
+  externo: { tipo: 'CTR', area: 'ODACL', detalle: 'Externo' },
+  formato: { tipo: 'FMT', area: 'ODACL', detalle: null },
+};
+router.post('/documents/:id/emitir', async (req, res) => {
+  try {
+    const clase = CLASE_DOC[(req.body || {}).contraparte];
+    if (!clase) return res.status(400).json({ ok: false, error: 'Elige la contraparte: cliente, proveedor/tercero o formato (modelo).' });
+    const { rows } = await pool.query('SELECT * FROM odacl.legal_documents WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Documento no encontrado' });
+    const d = rows[0];
+    if (d.codigo) return res.status(409).json({ ok: false, error: `Este documento ya fue emitido como ${d.codigo}.` });
+    const out = await DM.enTransaccion(null, async cx => {
+      const doc = await DM.emitirRegistro(req.user, { tipo: clase.tipo, area: clase.area, titulo: d.titulo, detalle: clase.detalle || d.tipo_documento, modulo: 'ODACL', id_origen: d.id }, { cli: cx });
+      const html = DM.ponerCodigo(d.contenido_html, doc.codigo);
+      const { rows: [act] } = await cx.query("UPDATE odacl.legal_documents SET codigo = $2, contenido_html = $3, estado = 'Emitido', updated_at = NOW() WHERE id = $1 RETURNING *", [d.id, doc.codigo, html]);
+      return act;
+    });
+    res.json({ ok: true, document: out });
+  } catch (e) { DM.responder(res, e, '[ODACL] emitir documento:'); }
+});
+
+router.post('/documents/:id/anular', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, codigo FROM odacl.legal_documents WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Documento no encontrado' });
+    if (!rows[0].codigo) return res.status(409).json({ ok: false, error: 'Este documento aún no tiene código: es un borrador.' });
+    await DM.anular(req.user, 'ODACL', req.params.id, (req.body || {}).motivo);
+    const { rows: [act] } = await pool.query("UPDATE odacl.legal_documents SET estado = 'Anulado', updated_at = NOW() WHERE id = $1 RETURNING *", [req.params.id]);
+    res.json({ ok: true, document: act });
+  } catch (e) { DM.responder(res, e, '[ODACL] anular documento:'); }
+});
+
 /* ============================================================
    5. ELIMINAR DOCUMENTO
    ============================================================ */
 router.delete('/documents/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    /* Solo un borrador (sin código) y solo quien lo creó. Lo emitido se anula. Los documentos
+       anteriores a la codificación esperan su clasificación (fase 4) y no se eliminan. */
+    const { rows: act } = await pool.query('SELECT codigo, creado_por FROM odacl.legal_documents WHERE id = $1', [id]);
+    if (!act.length) return res.status(404).json({ ok: false, error: 'Documento no encontrado' });
+    if (act[0].codigo) return res.status(409).json({ ok: false, error: `${act[0].codigo} ya fue emitido: no se elimina, se anula con su motivo.` });
+    if (!act[0].creado_por) return res.status(409).json({ ok: false, error: 'Este documento es anterior a la codificación: se clasificará y recibirá su código en la migración. No se elimina.' });
+    if (String(act[0].creado_por).toLowerCase() !== String(req.user?.username || '').toLowerCase()) {
+      return res.status(403).json({ ok: false, error: 'Solo quien creó el borrador puede eliminarlo.' });
+    }
     const del = await pool.query(`DELETE FROM odacl.legal_documents WHERE id = $1 RETURNING id, cloudinary_public_id`, [id]);
     if (!del.rows.length) {
       return res.status(404).json({ ok: false, error: 'Documento no encontrado' });
@@ -424,44 +488,56 @@ router.get('/contratos/:id/documento', async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo leer el contrato.' }); }
 });
 
-async function siguienteId(tabla, campo, prefijo) {
-  const anio = new Date().getFullYear();
-  const { rows } = await pool.query(
-    `SELECT COALESCE(MAX((regexp_match(${campo}, '^${prefijo}-${anio}-(\\d+)$'))[1]::int), 0) + 1 AS n FROM ${tabla}`);
-  return `${prefijo}-${anio}-${String(rows[0].n).padStart(3, '0')}`;
-}
+// (Los códigos EXT-/ODACL- ya no se calculan aquí: los asigna el registro de documentos)
 
+/* Contratos con proveedores o terceros = ODACL-CTR «Externo» (ruta: ODACL crea → ADG aprueba).
+   El código lo asigna el servidor; el número propio de la contraparte va aparte. */
 router.post('/contratos-externos', async (req, res) => {
   try {
     const b = req.body || {};
     if (!txt(b.contraparte)) return res.status(400).json({ ok: false, error: 'La contraparte es obligatoria.' });
-    const id = await siguienteId('odacl.contratos_externos', 'id', 'EXT');
-    const { rows } = await pool.query(`
-      INSERT INTO odacl.contratos_externos (id, codigo, contraparte, tipo, moneda, monto, forma_pago, fecha_inicio, fecha_fin, estado, notas, creado_por)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
-      [id, txt(b.codigo, 80) || id, txt(b.contraparte, 200), txt(b.tipo, 160), txt(b.moneda, 5) || 'PEN', Number(b.monto) || 0,
-       txt(b.forma_pago, 200), fecha(b.fecha_inicio), fecha(b.fecha_fin), txt(b.estado, 30) || 'vigente', txt(b.notas, 2000), autorDe(req)]);
-    res.status(201).json({ ok: true, contrato: { ...rows[0], origen: 'odacl' } });
-  } catch (e) { console.error('[ODACL] contrato externo:', e.message); res.status(500).json({ ok: false, error: 'No se pudo registrar el contrato.' }); }
+    const fila = await DM.enTransaccion(null, async cx => {
+      const doc = await DM.emitirRegistro(req.user, { tipo: 'CTR', area: 'ODACL', titulo: `Contrato – ${txt(b.contraparte, 200)}`, detalle: 'Externo', modulo: 'ODACL-CTR' }, { cli: cx, idOrigenEsCodigo: true });
+      const id = doc.codigo;
+      const { rows } = await cx.query(`
+        INSERT INTO odacl.contratos_externos (id, codigo, referencia_externa, contraparte, tipo, moneda, monto, forma_pago, fecha_inicio, fecha_fin, estado, notas, creado_por)
+        VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+        [id, txt(b.referencia_externa || b.codigo, 80), txt(b.contraparte, 200), txt(b.tipo, 160), txt(b.moneda, 5) || 'PEN', Number(b.monto) || 0,
+         txt(b.forma_pago, 200), fecha(b.fecha_inicio), fecha(b.fecha_fin), txt(b.estado, 30) || 'vigente', txt(b.notas, 2000), autorDe(req)]);
+      return rows[0];
+    });
+    res.status(201).json({ ok: true, contrato: { ...fila, origen: 'odacl' } });
+  } catch (e) { DM.responder(res, e, '[ODACL] contrato externo:'); }
 });
 
 router.put('/contratos-externos/:id', async (req, res) => {
   try {
     const b = req.body || {};
     if (!txt(b.contraparte)) return res.status(400).json({ ok: false, error: 'La contraparte es obligatoria.' });
+    if (b.estado === 'anulado') return res.status(400).json({ ok: false, error: 'Para anular usa «Anular» (pide el motivo).' });
+    // El código del sistema no se cambia; solo los datos del registro y el número de la contraparte
     const { rows } = await pool.query(`
-      UPDATE odacl.contratos_externos SET codigo=$2, contraparte=$3, tipo=$4, moneda=$5, monto=$6, forma_pago=$7,
+      UPDATE odacl.contratos_externos SET referencia_externa=$2, contraparte=$3, tipo=$4, moneda=$5, monto=$6, forma_pago=$7,
         fecha_inicio=$8, fecha_fin=$9, estado=$10, notas=$11, updated_at=NOW() WHERE id=$1 RETURNING *`,
-      [req.params.id, txt(b.codigo, 80) || req.params.id, txt(b.contraparte, 200), txt(b.tipo, 160), txt(b.moneda, 5) || 'PEN', Number(b.monto) || 0,
+      [req.params.id, txt(b.referencia_externa ?? (b.codigo !== req.params.id ? b.codigo : null), 80), txt(b.contraparte, 200), txt(b.tipo, 160), txt(b.moneda, 5) || 'PEN', Number(b.monto) || 0,
        txt(b.forma_pago, 200), fecha(b.fecha_inicio), fecha(b.fecha_fin), txt(b.estado, 30) || 'vigente', txt(b.notas, 2000)]);
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Contrato no encontrado' });
     res.json({ ok: true, contrato: { ...rows[0], origen: 'odacl' } });
   } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo actualizar el contrato.' }); }
 });
 
-router.delete('/contratos-externos/:id', async (req, res) => {
-  try { await pool.query('DELETE FROM odacl.contratos_externos WHERE id=$1', [req.params.id]); res.json({ ok: true }); }
-  catch (e) { res.status(500).json({ ok: false, error: 'No se pudo eliminar el contrato.' }); }
+// No se elimina: se anula con motivo (el número no se reutiliza)
+router.delete('/contratos-externos/:id', (req, res) => {
+  res.status(409).json({ ok: false, error: 'Un contrato no se elimina: se anula con su motivo.' });
+});
+router.post('/contratos-externos/:id/anular', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id FROM odacl.contratos_externos WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Contrato no encontrado' });
+    await DM.anular(req.user, 'ODACL-CTR', req.params.id, (req.body || {}).motivo);
+    const { rows: [act] } = await pool.query("UPDATE odacl.contratos_externos SET estado='anulado', updated_at=NOW() WHERE id=$1 RETURNING *", [req.params.id]);
+    res.json({ ok: true, contrato: { ...act, origen: 'odacl' } });
+  } catch (e) { DM.responder(res, e, '[ODACL] anular contrato:'); }
 });
 
 // Asesoría legal
@@ -476,13 +552,17 @@ router.post('/consultas', async (req, res) => {
   try {
     const b = req.body || {};
     if (!txt(b.asunto)) return res.status(400).json({ ok: false, error: 'El asunto es obligatorio.' });
-    const radicado = await siguienteId('odacl.consultas', 'radicado', 'ODACL');
-    const { rows } = await pool.query(`
-      INSERT INTO odacl.consultas (radicado, asunto, detalle, area, urgencia, estado, solicitante)
-      VALUES ($1,$2,$3,$4,$5,'pendiente',$6) RETURNING *`,
-      [radicado, txt(b.asunto, 300), txt(b.detalle, 5000), txt(b.area, 60), txt(b.urgencia, 20) || 'Media', autorDe(req)]);
-    res.status(201).json({ ok: true, consulta: rows[0] });
-  } catch (e) { console.error('[ODACL] consulta:', e.message); res.status(500).json({ ok: false, error: 'No se pudo registrar la consulta.' }); }
+    // Radicado = código ODACL-CLG-AAAA-NNN del registro de documentos (ruta: ODACL revisa → ODACL aprueba)
+    const consulta = await DM.enTransaccion(null, async cx => {
+      const doc = await DM.emitirRegistro(req.user, { tipo: 'CLG', area: 'ODACL', titulo: txt(b.asunto, 300), detalle: txt(b.area, 60) ? `Solicitada por ${txt(b.area, 60)}` : null, modulo: 'ODACL-CLG' }, { cli: cx, idOrigenEsCodigo: true });
+      const { rows } = await cx.query(`
+        INSERT INTO odacl.consultas (radicado, asunto, detalle, area, urgencia, estado, solicitante)
+        VALUES ($1,$2,$3,$4,$5,'pendiente',$6) RETURNING *`,
+        [doc.codigo, txt(b.asunto, 300), txt(b.detalle, 5000), txt(b.area, 60), txt(b.urgencia, 20) || 'Media', autorDe(req)]);
+      return rows[0];
+    });
+    res.status(201).json({ ok: true, consulta });
+  } catch (e) { DM.responder(res, e, '[ODACL] consulta:'); }
 });
 
 router.put('/consultas/:id', async (req, res) => {

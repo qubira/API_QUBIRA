@@ -103,11 +103,7 @@ router.put('/tipos/:sigla', manejar(async (req, res) => {
 router.put('/empresa', manejar(async (req, res) => {
   const quien = await C.quienEs(req.user);
   if (!(quien.superadmin || (quien.esADG && quien.nivel <= 2))) throw new Rechazo(403, 'Solo la Alta Dirección puede cambiar los datos de la empresa.');
-  for (const [k, v] of Object.entries(req.body || {})) {
-    if (!/^[a-z_]{2,40}$/.test(k) || limpio(v) === null) continue;
-    await pool.query('INSERT INTO doc.empresa (clave, valor) VALUES ($1,$2) ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor', [k, limpio(v)]);
-  }
-  res.json({ ok: true, data: await C.datosEmpresa() });
+  res.json({ ok: true, data: await C.guardarEmpresa(req.body || {}, quien.nombre) });
 }));
 
 router.get('/validar/:codigo', manejar(async (req, res) => res.json(await C.validarCodigo(req.params.codigo))));
@@ -460,4 +456,4 @@ router.get('/membrete/:codigo', manejar(async (req, res) => {
 
 module.exports = router;
 // Para que los módulos (ORH, ODN, OTI…) emitan sus documentos dentro de su propia transacción
-module.exports.servicio = { crearBorrador, emitir, docPorCodigo, Rechazo };
+module.exports.servicio = { crearBorrador, emitir, docPorCodigo, docPorId, rutaDe, anotar, anularPorReemplazo, Rechazo };

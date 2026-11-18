@@ -280,6 +280,9 @@ function ensureSchema() {
       ALTER TABLE rrhh.constancias ADD COLUMN IF NOT EXISTS numero_anterior TEXT;
       ALTER TABLE rrhh.constancias ADD COLUMN IF NOT EXISTS emisor_nombre TEXT;
       ALTER TABLE rrhh.constancias ADD COLUMN IF NOT EXISTS formato TEXT;
+      -- Contratos laborales: código ORH-CTR (detalle «Laboral») y anulación en vez de borrado
+      ALTER TABLE rrhh.contratos ADD COLUMN IF NOT EXISTS codigo TEXT;
+      ALTER TABLE rrhh.contratos ADD COLUMN IF NOT EXISTS estado_registro TEXT;
     `).catch(err => { ready = null; throw err; });
   }
   return ready;
@@ -419,6 +422,7 @@ const MAPS = {
   contratos: { table: 'rrhh.contratos', cols: {
     id:'id', employeeId:'employee_id', tipo:'tipo', fechaInicio:'fecha_inicio', fechaFin:'fecha_fin',
     salario:'salario', jornada:'jornada', finalizadoManual:'finalizado_manual', observaciones:'observaciones',
+    codigo:'codigo', estadoRegistro:'estado_registro',
   }},
   documentos: { table: 'rrhh.documentos', cols: {
     id:'id', employeeId:'employee_id', categoria:'categoria', nombreArchivo:'nombre_archivo',
@@ -517,14 +521,14 @@ function toCamel(mapKey, row) {
   return obj;
 }
 
-async function insertRow(mapKey, data) {
+async function insertRow(mapKey, data, { cli = pool, id = null } = {}) {
   const { table } = MAPS[mapKey];
   const row = toRow(mapKey, data);
-  row.id = uid();
+  row.id = id || uid();
   const keys = Object.keys(row);
   const params = keys.map(k => row[k]);
   const placeholders = keys.map((_, i) => `$${i + 1}`);
-  const { rows } = await pool.query(
+  const { rows } = await cli.query(
     `INSERT INTO ${table} (${keys.join(',')}) VALUES (${placeholders.join(',')}) RETURNING *`,
     params
   );
@@ -874,6 +878,43 @@ router.put('/vacantes/:id/preguntas', async (req, res) => {
 });
 
 crud('departamentos', 'departamentos');
+
+/* Contratos laborales = ORH-CTR «Laboral» (ruta: ORH crea → ODACL revisa → GG aprueba).
+   El código lo asigna el servidor; un contrato emitido no se elimina: se anula con motivo. */
+router.post('/contratos', async (req, res) => {
+  try {
+    const DM = require('../lib/docModulo');
+    const b = { ...(req.body || {}) };
+    delete b.codigo; delete b.estadoRegistro;
+    const { rows: emp } = await pool.query('SELECT primer_nombre, primer_apellido, nombre, apellido FROM rrhh.empleados WHERE id = $1', [b.employeeId]);
+    const nombre = emp.length ? composeFullName(toCamel('empleados', emp[0])) : '';
+    const id = uid();
+    const creado = await DM.enTransaccion(null, async cx => {
+      const doc = await DM.emitirRegistro(req.user, { tipo: 'CTR', area: 'ORH', titulo: `Contrato laboral${nombre ? ' – ' + nombre : ''}`, detalle: 'Laboral', modulo: 'RRHH-CTR', id_origen: id }, { cli: cx });
+      return insertRow('contratos', { ...b, codigo: doc.codigo }, { cli: cx, id });
+    });
+    return res.status(201).json({ ok: true, data: creado });
+  } catch (err) {
+    if (err && err.status) return res.status(err.status).json({ ok: false, error: err.message });
+    console.error('[RRHH] POST /contratos error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al crear el contrato' });
+  }
+});
+router.delete('/contratos/:id', async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT id, codigo FROM rrhh.contratos WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'No encontrado' });
+    const motivo = (req.body || {}).motivo || req.query.motivo;
+    if (!String(motivo || '').trim()) return res.status(400).json({ ok: false, error: 'Un contrato no se elimina: se anula. Escribe el motivo.' });
+    await require('../lib/docModulo').anular(req.user, 'RRHH-CTR', req.params.id, motivo);
+    const { rows: [act] } = await pool.query("UPDATE rrhh.contratos SET estado_registro = 'ANULADO', observaciones = concat_ws(E'\\n', observaciones, $2::text) WHERE id = $1 RETURNING *", [req.params.id, `Anulado: ${String(motivo).trim()}`]);
+    return res.json({ ok: true, anulado: true, data: toCamel('contratos', act) });
+  } catch (err) {
+    if (err && err.status) return res.status(err.status).json({ ok: false, error: err.message });
+    console.error('[RRHH] anular contrato:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error al anular el contrato' });
+  }
+});
 crud('contratos', 'contratos');
 crud('vacantes', 'vacantes');
 crud('candidatos', 'candidatos');

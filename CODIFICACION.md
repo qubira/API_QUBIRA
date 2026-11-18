@@ -378,6 +378,23 @@ En todos los casos el código antiguo queda en `codigo_anterior`. «IT000026 - P
 
 ---
 
+## 14.1 Cómo quedó cada módulo (fase 3)
+
+| Módulo | Qué emite | Al «eliminar» |
+|---|---|---|
+| ODN Comercial | Clientes `ODN-CLI-NNNN`, proformas `ODN-PRF-AAAA-NNN` (versiones con el mismo código), contratos `ODN-CTR` (Proyecto/Servicio, «Basado en» la proforma aceptada) | Cliente → se desactiva · Proforma y contrato → se anulan con motivo |
+| OTI / ADG | Proyectos `OTI-PRY-NNNN`, contratos de proyecto subidos por ADG → `ODN-CTR` (Proyecto), actas de calidad/reglas → `OTI-ACT`, actas de seguridad → `DST-ACT` | Proyecto → se desactiva (cancelado) · Contrato y acta → se anulan con motivo |
+| ODACL | Contratos con proveedores → `ODACL-CTR` (Externo; el número de la contraparte va aparte), consultas → `ODACL-CLG`, documentos del editor al **Emitir**: cliente → `ODN-CTR`, proveedor → `ODACL-CTR`, modelo → `ODACL-FMT` | Lo emitido se anula · los 23 documentos anteriores esperan la migración |
+| ORH | Constancias `ORH-CST` (fase 2), contratos laborales `ORH-CTR` (Laboral) | Se anulan con motivo |
+| OCOS | Casos `OCOS-CAS-AAAA-NNN`, guardados en el servidor (antes solo en cada navegador) | Un caso se cierra (solucionado/cerrado) y se puede reabrir |
+
+Reglas comunes:
+- El navegador ya no calcula códigos: muestra `…-[SE ASIGNA AL EMITIR]` y el servidor escribe el código real en el texto del documento.
+- Una proforma solo se acepta, y un contrato solo pasa a firma o vigencia, cuando terminó su ruta en el Registro de documentos.
+- **Actas:** el borrador lleva un código provisional `BORRADOR-…` (las pantallas de Calidad lo usan como identificador). Recibe su código real al enviarse a revisión y solo se emite cuando su área lo aprobó.
+- **Soporte:** «Enviar mis casos al sistema central» sube los casos guardados en cada navegador, numerados por fecha de creación; el `QS-…` queda como código anterior. Los casos de demostración `QS-0001` a `QS-0004` no se envían. El texto de los casos se guarda sin caracteres que abran etiquetas HTML, porque ahora lo ve todo el equipo.
+- **Empresa:** la razón social y el RUC tienen una sola fuente, la ficha societaria de ODACL. La Configuración del Registro de documentos y ODACL editan el mismo dato.
+
 ## 15. Pruebas de aceptación
 
 1. **Concurrencia:** 20 emisiones simultáneas del mismo área + tipo dan 20 números distintos y seguidos.

@@ -7,6 +7,8 @@ const { requireAuth } = require('../middleware/auth');
 const { requireModuleAccess } = require('../lib/moduleAccess');
 const { getApprovedTemplates, getApprovedTemplateByKey } = require('../lib/legalTemplates');
 const { decrypt: descifrar } = require('../lib/crypto');
+const DM = require('../lib/docModulo'); // códigos del registro de documentos (CODIFICACION.md)
+const MOD = 'COMERCIAL';
 
 function uid() { return crypto.randomUUID(); }
 
@@ -58,6 +60,7 @@ function ensureSchema() {
       ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS distrito TEXT;
       -- Varios representantes legales por cliente (el principal = contacto_*)
       ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS representantes JSONB DEFAULT '[]'::jsonb;
+      ALTER TABLE comercial.clientes ADD COLUMN IF NOT EXISTS correo_empresa TEXT;
 
       CREATE TABLE IF NOT EXISTS comercial.contratos (
         id TEXT PRIMARY KEY,
@@ -251,20 +254,18 @@ router.get('/trabajadores-activos', async (req, res) => {
 /* ============================================================
    CLIENTES
    ============================================================ */
+// Estado de cada registro en el registro de documentos (código, ruta pendiente…)
+async function conRegistro(filas) {
+  const reg = await DM.estadosDe(MOD, filas.map(f => f.id));
+  return filas.map(f => ({ ...f, registro: reg[f.id] || null }));
+}
+
 router.get('/clients', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM comercial.clientes ORDER BY created_at DESC');
-    res.json({ clients: rows });
+    res.json({ clients: await conRegistro(rows) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-async function nextClientId() {
-  const { rows } = await pool.query(`
-    SELECT COALESCE(MAX((regexp_match(id, '^CLI-(\\d+)$'))[1]::int), 0) + 1 AS n
-    FROM comercial.clientes
-  `);
-  return `CLI-${String(rows[0].n).padStart(3, '0')}`;
-}
 
 // Representantes legales del cliente: el principal va primero y coincide con contacto_*
 function limpiarRepresentantes(lista, principal) {
@@ -298,7 +299,11 @@ router.post('/clients', async (req, res) => {
     const { rows: dupe } = await pool.query('SELECT razon_social FROM comercial.clientes WHERE ruc = $1', [b.ruc]);
     if (dupe.length) return res.status(409).json({ error: `El cliente con RUC ${b.ruc} ya existe como ${dupe[0].razon_social}.` });
 
-    const client = await withIdRetry(nextClientId, (id) => pool.query(`
+    // El código (ODN-CLI-NNNN) lo asigna el registro de documentos y es el id del cliente
+    const client = await DM.enTransaccion(null, async cx => {
+      const doc = await DM.emitirRegistro(req.user, { tipo: 'CLI', area: 'ODN', titulo: b.razon_social, detalle: `RUC ${b.ruc}`, modulo: MOD }, { cli: cx, idOrigenEsCodigo: true });
+      const id = doc.codigo;
+      return cx.query(`
       INSERT INTO comercial.clientes
         (id, razon_social, ruc, sector, direccion, pais, provincia, distrito, contacto_nombre, contacto_cargo, telefono, email, tipo, estado, origen, notas, created_by, representantes, correo_empresa)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
@@ -310,10 +315,11 @@ router.post('/clients', async (req, res) => {
       b.tipo || 'pyme', b.estado || 'activo', b.origen || 'Prospección Directa', b.notas || null, req.user.id,
       JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })),
       (b.correo_empresa || b.email_empresa) ? String(b.correo_empresa || b.email_empresa).trim() : null,
-    ]).then(r => r.rows[0]));
+    ]).then(r => r.rows[0]);
+    });
 
     res.status(201).json({ client });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] crear cliente:'); }
 });
 
 /* Agrega un representante legal a un cliente (p. ej. desde el contrato) */
@@ -372,6 +378,7 @@ router.put('/clients/:id', async (req, res) => {
         Array.isArray(b.representantes) ? JSON.stringify(limpiarRepresentantes(b.representantes, { nombre: b.contacto_nombre, cargo: b.contacto_cargo || '', dni: '', telefono: b.telefono, email: b.email })) : null,
         correoEmpresaVal]);
     if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
+    await DM.estadoRegistro(req.user, MOD, req.params.id, rows[0].estado === 'inactivo' ? 'INACTIVO' : 'ACTIVO').catch(() => {});
 
     // Las copias "foto" en contratos/proformas ya emitidos se mantienen tal cual (historial),
     // salvo los que sigan en borrador — ahí sí conviene reflejar la corrección.
@@ -391,16 +398,14 @@ router.patch('/clients/:id/toggle-status', async (req, res) => {
       WHERE id=$1 RETURNING *
     `, [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
+    await DM.estadoRegistro(req.user, MOD, req.params.id, rows[0].estado === 'activo' ? 'ACTIVO' : 'INACTIVO').catch(() => {});
     res.json({ client: rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/clients/:id', async (req, res) => {
-  try {
-    const { rows } = await pool.query('DELETE FROM comercial.clientes WHERE id=$1 RETURNING id', [req.params.id]);
-    if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+// Un cliente no se elimina: se desactiva (conserva su código para siempre)
+router.delete('/clients/:id', (req, res) => {
+  res.status(409).json({ error: 'Un cliente no se elimina: se desactiva. Conserva su código y su historial.' });
 });
 
 /* ============================================================
@@ -437,7 +442,7 @@ router.get('/contract-templates/:clave', async (req, res) => {
 router.get('/contracts', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM comercial.contratos ORDER BY created_at DESC');
-    res.json({ contracts: rows });
+    res.json({ contracts: await conRegistro(rows) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -449,15 +454,6 @@ router.get('/contracts/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-async function nextContractId() {
-  const year = new Date().getFullYear();
-  const { rows } = await pool.query(`
-    SELECT COALESCE(MAX((regexp_match(id, '^CTR-' || $1 || '-(\\d+)$'))[1]::int), 0) + 1 AS n
-    FROM comercial.contratos
-  `, [year]);
-  return `CTR-${year}-${String(rows[0].n).padStart(3, '0')}`;
-}
-
 router.post('/contracts', async (req, res) => {
   try {
     const b = req.body || {};
@@ -467,8 +463,24 @@ router.post('/contracts', async (req, res) => {
     const { rows: cliRows } = await pool.query('SELECT * FROM comercial.clientes WHERE id=$1', [b.cliente_id]);
     if (!cliRows.length) return res.status(400).json({ error: 'El cliente seleccionado no existe.' });
     const cli = cliRows[0];
+    let proformaVersion = Number(b.proforma_version) > 0 ? Number(b.proforma_version) : null;
 
-    const contract = await withIdRetry(nextContractId, (id) => pool.query(`
+    /* Contrato con cliente = ODN-CTR (ruta: ODN crea → ODACL revisa → ADG aprueba).
+       Si viene de una proforma, la proforma debe estar aprobada: queda ACEPTADA y el
+       contrato guarda su código y versión («Basado en ODN-PRF-… vN»). */
+    const contract = await DM.enTransaccion(null, async cx => {
+      if (b.proforma_id) {
+        const acep = await DM.aceptar(req.user, MOD, b.proforma_id, { cli: cx });
+        if (acep && acep.version_aceptada) proformaVersion = acep.version_aceptada;
+      }
+      const doc = await DM.emitirRegistro(req.user, {
+        tipo: 'CTR', area: 'ODN', titulo: `Contrato – ${cli.razon_social}`, detalle: b.proforma_id ? 'Proyecto' : 'Servicio', modulo: MOD,
+        referencia: b.proforma_id && /^[A-Z]{2,5}-PRF-/.test(b.proforma_id) ? b.proforma_id : null, referencia_version: proformaVersion,
+      }, { cli: cx, idOrigenEsCodigo: true });
+      const id = doc.codigo;
+      // El servidor pone el código en el texto del contrato (el navegador solo mostraba uno provisional)
+      b.contenido_html = DM.ponerCodigo(b.contenido_html, id, b.codigo_provisional);
+      return cx.query(`
       INSERT INTO comercial.contratos
         (id, cliente_id, cliente_nombre, cliente_ruc, cliente_contacto, cliente_cargo, cliente_direccion,
          tipo, producto_nombre, moneda, monto, modalidad_pago, fecha_inicio, fecha_fin, garantia, objeto,
@@ -487,37 +499,45 @@ router.post('/contracts', async (req, res) => {
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
       b.proforma_id || null,
-      Number(b.proforma_version) > 0 ? Number(b.proforma_version) : null,
-    ]).then(r => r.rows[0]));
-
-    // La proforma de origen queda como "convertida" recién cuando el contrato existe
-    if (b.proforma_id) {
-      await pool.query("UPDATE comercial.proformas SET estado='convertida', updated_at=NOW() WHERE id=$1", [b.proforma_id]);
-    }
+      proformaVersion,
+    ]).then(r => r.rows[0]).then(async fila => {
+      // La proforma de origen queda como "convertida" recién cuando el contrato existe
+      if (b.proforma_id) await cx.query("UPDATE comercial.proformas SET estado='convertida', updated_at=NOW() WHERE id=$1", [b.proforma_id]);
+      return fila;
+    });
+    });
 
     res.status(201).json({ contract });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] crear contrato:'); }
 });
 
 router.patch('/contracts/:id/status', async (req, res) => {
   try {
     const { estado } = req.body || {};
     if (!estado) return res.status(400).json({ error: 'Falta el nuevo estado.' });
+    // A firma o vigencia solo cuando el contrato terminó su ruta (ODACL revisó, ADG aprobó)
+    if (['pendiente_firma', 'vigente', 'finalizado'].includes(estado)) await DM.exigirAprobado(MOD, req.params.id, 'pásalo a firma o vigencia');
     const { rows } = await pool.query(
       'UPDATE comercial.contratos SET estado=$1, updated_at=NOW() WHERE id=$2 RETURNING *',
       [estado, req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Contrato no encontrado' });
     res.json({ contract: rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] estado contrato:'); }
 });
 
-router.delete('/contracts/:id', async (req, res) => {
+// Lo emitido no se elimina: se anula con motivo (el número no se reutiliza)
+router.delete('/contracts/:id', (req, res) => {
+  res.status(409).json({ error: 'Un contrato emitido no se elimina: se anula con su motivo.' });
+});
+router.post('/contracts/:id/anular', async (req, res) => {
   try {
-    const { rows } = await pool.query('DELETE FROM comercial.contratos WHERE id=$1 RETURNING id', [req.params.id]);
+    const { rows } = await pool.query('SELECT id FROM comercial.contratos WHERE id=$1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Contrato no encontrado' });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    await DM.anular(req.user, MOD, req.params.id, (req.body || {}).motivo);
+    const { rows: out } = await pool.query("UPDATE comercial.contratos SET estado='cancelado', updated_at=NOW() WHERE id=$1 RETURNING *", [req.params.id]);
+    res.json({ contract: out[0] });
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] anular contrato:'); }
 });
 
 /* ============================================================
@@ -526,18 +546,9 @@ router.delete('/contracts/:id', async (req, res) => {
 router.get('/proformas', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM comercial.proformas ORDER BY created_at DESC');
-    res.json({ proformas: rows });
+    res.json({ proformas: await conRegistro(rows) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
-async function nextProformaId() {
-  const year = new Date().getFullYear();
-  const { rows } = await pool.query(`
-    SELECT COALESCE(MAX((regexp_match(id, '^PRF-' || $1 || '-(\\d+)$'))[1]::int), 0) + 1 AS n
-    FROM comercial.proformas
-  `, [year]);
-  return `PRF-${year}-${String(rows[0].n).padStart(3, '0')}`;
-}
 
 // Ítems y totales de una proforma, calculados en el servidor. Los ítems de
 // tecnología conservan sus datos de Tech Stack para poder reeditarlos.
@@ -586,7 +597,14 @@ router.post('/proformas', async (req, res) => {
 
     const { items, subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total } = calcularProforma(b);
 
-    const proforma = await withIdRetry(nextProformaId, (id) => pool.query(`
+    /* Proforma = ODN-PRF-AAAA-NNN (ruta: ODN crea → OPP revisa → ODN aprueba). Mismo código
+       para toda la negociación; cada versión nueva no gasta número. */
+    const proforma = await DM.enTransaccion(null, async cx => {
+      const doc = await DM.emitirRegistro(req.user, {
+        tipo: 'PRF', area: 'ODN', titulo: `Proforma – ${cli.razon_social}`, detalle: b.producto_nombre || b.tipo || null, modulo: MOD,
+      }, { cli: cx, idOrigenEsCodigo: true });
+      const id = doc.codigo;
+      return cx.query(`
       INSERT INTO comercial.proformas
         (id, cliente_id, cliente_nombre, cliente_ruc, cliente_contacto, cliente_cargo, cliente_email, cliente_telefono, cliente_direccion,
          tipo, producto_nombre, moneda, items, subtotal, descuento_pct, descuento_monto, subtotal_neto, igv_tipo, igv_monto, total,
@@ -613,10 +631,11 @@ router.post('/proformas', async (req, res) => {
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
       JSON.stringify(limpiarRequerimientos(b.requerimientos)),
-    ]).then(r => r.rows[0]));
+    ]).then(r => r.rows[0]);
+    });
 
     res.status(201).json({ proforma });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] crear proforma:'); }
 });
 
 router.put('/proformas/:id', async (req, res) => {
@@ -627,6 +646,7 @@ router.put('/proformas/:id', async (req, res) => {
     }
     const { rows: existe } = await pool.query('SELECT id FROM comercial.proformas WHERE id=$1', [req.params.id]);
     if (!existe.length) return res.status(404).json({ error: 'Proforma no encontrada' });
+    await DM.puedeVersionar(MOD, req.params.id); // aceptada = bloqueada
     const { rows: cliRows } = await pool.query('SELECT * FROM comercial.clientes WHERE id=$1', [b.cliente_id]);
     if (!cliRows.length) return res.status(400).json({ error: 'El cliente seleccionado no existe.' });
     const cli = cliRows[0];
@@ -660,11 +680,11 @@ router.put('/proformas/:id', async (req, res) => {
     const { rows: ult } = await pool.query('SELECT items, requerimientos, extras FROM comercial.proforma_versiones WHERE proforma_id=$1 ORDER BY version DESC LIMIT 1', [proforma.id]);
     const cambioExtras = ult.length && ult[0].extras && JSON.stringify(ult[0].extras) !== JSON.stringify(extrasDe(proforma));
     if (ult.length && (cambioExtras || JSON.stringify(ult[0].items) !== JSON.stringify(proforma.items) || JSON.stringify(ult[0].requerimientos) !== JSON.stringify(proforma.requerimientos))) {
-      const r = await crearVersionProforma(proforma.id, { items: proforma.items, requerimientos: proforma.requerimientos, descuento_pct: proforma.descuento_pct, extras: extrasDe(proforma) }, 'Editada en Proformas', autorDe(req));
+      const r = await crearVersionProforma(proforma.id, { items: proforma.items, requerimientos: proforma.requerimientos, descuento_pct: proforma.descuento_pct, extras: extrasDe(proforma) }, 'Editada en Proformas', autorDe(req), req.user);
       if (r.proforma) proforma = r.proforma;
     }
     res.json({ proforma });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] editar proforma:'); }
 });
 
 /* ============================================================
@@ -703,13 +723,14 @@ async function listarVersiones(db, id) {
 }
 
 // Guarda {items, requerimientos, descuento_pct} como versión nueva y la deja activa
-async function crearVersionProforma(id, datos, nota, autor) {
+async function crearVersionProforma(id, datos, nota, autor, user) {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
     const { rows: pr } = await db.query('SELECT * FROM comercial.proformas WHERE id=$1 FOR UPDATE', [id]);
     if (!pr.length) { await db.query('ROLLBACK'); return { status: 404, error: 'Proforma no encontrada' }; }
     const p = pr[0];
+    await DM.puedeVersionar(MOD, id); // una proforma aceptada ya no tiene versiones nuevas
     await asegurarVersionInicial(db, p);
     const calc = calcularProforma({
       items: datos.items,
@@ -733,6 +754,7 @@ async function crearVersionProforma(id, datos, nota, autor) {
       WHERE id=$1 RETURNING *`,
       [id, JSON.stringify(calc.items), JSON.stringify(reqs), calc.subtotal, calc.descuentoPct, calc.descuentoMonto,
        calc.subtotalNeto, calc.igvMonto, calc.total, n, ...CAMPOS_EXTRA_VERSION.map(k => extras[k])]);
+    if (user) await DM.nuevaVersion(user, MOD, id, n, nota, { cli: db }); // mismo código, versión n
     await db.query('COMMIT');
     return { proforma: act[0], versiones: await listarVersiones(pool, id) };
   } catch (e) {
@@ -765,10 +787,10 @@ router.post('/proformas/:id/versiones', async (req, res) => {
   try {
     const b = req.body || {};
     if (!Array.isArray(b.items) || !b.items.length) return res.status(400).json({ error: 'La versión debe tener al menos un ítem cotizado.' });
-    const r = await crearVersionProforma(req.params.id, b, b.nota || 'Editada desde el contrato', autorDe(req));
+    const r = await crearVersionProforma(req.params.id, b, b.nota || 'Editada desde el contrato', autorDe(req), req.user);
     if (r.error) return res.status(r.status).json({ error: r.error });
     res.status(201).json(r);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] versión proforma:'); }
 });
 
 // Recuperar una versión anterior: se copia como versión nueva (el historial no se pierde)
@@ -778,31 +800,38 @@ router.post('/proformas/:id/versiones/:version/restaurar', async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Versión no encontrada' });
     const v = rows[0];
     const r = await crearVersionProforma(req.params.id, { items: v.items, requerimientos: v.requerimientos, descuento_pct: v.descuento_pct, extras: v.extras || undefined },
-      `Recuperada de la versión ${v.version}`, autorDe(req));
+      `Recuperada de la versión ${v.version}`, autorDe(req), req.user);
     if (r.error) return res.status(r.status).json({ error: r.error });
     res.status(201).json(r);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] restaurar versión:'); }
 });
 
 router.patch('/proformas/:id', async (req, res) => {
   try {
     const { estado } = req.body || {};
     if (!estado) return res.status(400).json({ error: 'Falta el nuevo estado.' });
-    const { rows } = await pool.query(
-      'UPDATE comercial.proformas SET estado=$1, updated_at=NOW() WHERE id=$2 RETURNING *',
-      [estado, req.params.id]
-    );
+    if (estado === 'anulada') return res.status(400).json({ error: 'Para anular usa «Anular» (pide el motivo).' });
+    const { rows } = await DM.enTransaccion(null, async cx => {
+      // «Aprobada» o «Convertida» = el cliente la aceptó: la versión queda bloqueada (exige que esté aprobada internamente)
+      if (['aprobada', 'convertida'].includes(estado)) await DM.aceptar(req.user, MOD, req.params.id, { cli: cx });
+      return cx.query('UPDATE comercial.proformas SET estado=$1, updated_at=NOW() WHERE id=$2 RETURNING *', [estado, req.params.id]);
+    });
     if (!rows.length) return res.status(404).json({ error: 'Proforma no encontrada' });
     res.json({ proforma: rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] estado proforma:'); }
 });
 
-router.delete('/proformas/:id', async (req, res) => {
+router.delete('/proformas/:id', (req, res) => {
+  res.status(409).json({ error: 'Una proforma emitida no se elimina: se anula con su motivo.' });
+});
+router.post('/proformas/:id/anular', async (req, res) => {
   try {
-    const { rows } = await pool.query('DELETE FROM comercial.proformas WHERE id=$1 RETURNING id', [req.params.id]);
+    const { rows } = await pool.query('SELECT id FROM comercial.proformas WHERE id=$1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Proforma no encontrada' });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    await DM.anular(req.user, MOD, req.params.id, (req.body || {}).motivo);
+    const { rows: out } = await pool.query("UPDATE comercial.proformas SET estado='anulada', updated_at=NOW() WHERE id=$1 RETURNING *", [req.params.id]);
+    res.json({ proforma: out[0] });
+  } catch (e) { DM.responder(res, e, '[COMERCIAL] anular proforma:'); }
 });
 
 /* ============================================================

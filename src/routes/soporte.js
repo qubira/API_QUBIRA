@@ -143,4 +143,7 @@ router.patch('/trabajadores/:id/password', requireElevatedAccess, async (req, re
   }
 });
 
+// Casos de soporte en el servidor, con código OCOS-CAS (CODIFICACION.md)
+require('./soporteCasos')(router);
+
 module.exports = router;
