@@ -180,6 +180,74 @@ async function siguienteNumero(cliente, area, tipo, anio) {
   return rows[0].ultimo;
 }
 
+/* Piso del correlativo: el próximo número será mayor que `n` (para no chocar
+   con números ya usados fuera del sistema, p. ej. constancias en papel). */
+async function pisoCorrelativo(cliente, area, tipo, anio, n) {
+  if (!(n > 0)) return;
+  await cliente.query(`
+    INSERT INTO doc.correlativos (area, tipo, anio, ultimo) VALUES ($1, $2, $3, $4)
+    ON CONFLICT (area, tipo, anio) DO UPDATE SET ultimo = GREATEST(doc.correlativos.ultimo, EXCLUDED.ultimo)`, [area, tipo, anio, n]);
+}
+
+/* ─── Membrete, línea de ruta y firmas (plantilla común) ───────────── */
+const TIPOS_EXTERNOS = ['CST', 'CTR', 'PRF']; // se entregan a personas de fuera: sin línea de ruta
+const VERBO = { CREA: 'crea', REVISA: 'revisa', APRUEBA: 'aprueba', OBSERVA: 'observa', RECHAZA: 'rechaza', ARCHIVA: 'archiva', ANULA: 'anula' };
+
+function datosMembrete(doc, ruta, tipo, empresa) {
+  const area = areaPorNombre(doc.area) || { sigla: doc.area, nombre: doc.area };
+  const ronda = Math.max(1, ...ruta.map(p => p.ronda || 1));
+  const pasos = ruta.filter(p => p.ronda === ronda && (p.planificado || p.accion === 'CREA') && p.orden < 900).sort((a, b) => a.orden - b.orden || a.id - b.id);
+  const unicos = []; // la línea de ruta muestra cada paso una vez (el reenvío no repite «crea»)
+  for (const p of pasos) if (!unicos.some(u => u.orden === p.orden && u.accion === p.accion)) unicos.push(p);
+  const lineaRuta = TIPOS_EXTERNOS.includes(tipo.sigla) ? null
+    : 'Ruta: ' + unicos.map(p => `${p.area} ${VERBO[p.accion] || p.accion.toLowerCase()}`).join(' → ');
+  const firmas = unicos.filter(p => p.fecha && p.usuario && ['CREA', 'REVISA', 'APRUEBA'].includes(p.accion))
+    .map(p => ({ accion: p.accion, area: p.area, nombre: p.usuario_nombre || p.usuario, cargo: p.usuario_cargo || '', fecha: p.fecha, motivo: p.motivo || null }));
+  const leyendas = [];
+  if (doc.estado === 'ANULADO') leyendas.push(doc.reemplazado_por ? `Anulado – reemplazado por ${doc.reemplazado_por}` : `Anulado${doc.motivo_anulacion ? ': ' + doc.motivo_anulacion : ''}`);
+  if (doc.reemplaza_a) leyendas.push(`Reemplaza a ${doc.reemplaza_a}`);
+  if (doc.referencia) leyendas.push(String(doc.detalle || '').toLowerCase() === 'adenda' ? `Adenda de ${doc.referencia}` : `Basado en ${doc.referencia}${doc.referencia_version ? ' v' + doc.referencia_version : ''}`);
+  if (doc.formato_codigo) leyendas.push(`Formato ${doc.formato_codigo}${doc.formato_version ? ' v' + doc.formato_version : ''}`);
+  if (doc.codigo_anterior) leyendas.push(`Código anterior: ${doc.codigo_anterior}`);
+  return {
+    codigo: doc.codigo, version: tipo.clase === 'VERSIONADO' ? doc.version : null, titulo: doc.titulo, detalle: doc.detalle,
+    tipo: { sigla: tipo.sigla, nombre: tipo.nombre }, estado: doc.estado,
+    area: { sigla: area.sigla, nombre: area.nombre },
+    empresa: { razonSocial: empresa.razon_social, ruc: empresa.ruc, direccion: empresa.direccion },
+    encabezado: `${doc.codigo || 'BORRADOR'}${tipo.clase === 'VERSIONADO' ? ' v' + doc.version : ''} · ${area.nombre}`,
+    lineaRuta, firmas, leyendas, emitido: doc.emitido_en,
+  };
+}
+
+/* Formato base de un modelo del sistema (p. ej. el modelo de constancia = ORH-FMT-01).
+   Se registra una sola vez y devuelve su código y versión vigente. */
+const FORMATOS_SISTEMA = { 'constancia-trabajo': { area: 'ORH', titulo: 'Modelo de constancia de trabajo' } };
+async function formatoSistema(clave) {
+  const def = FORMATOS_SISTEMA[clave];
+  if (!def) return null;
+  await asegurarCodificacion();
+  const buscar = async cli => (await cli.query("SELECT codigo, version FROM doc.documentos WHERE modulo = 'SISTEMA' AND id_origen = $1", [clave])).rows[0];
+  const ya = await buscar(pool);
+  if (ya) return ya;
+  const cli = await pool.connect();
+  try {
+    await cli.query('BEGIN');
+    await cli.query("SELECT pg_advisory_xact_lock(hashtext('formato-sistema'))");
+    const otra = await buscar(cli);
+    if (otra) { await cli.query('COMMIT'); return otra; }
+    const tipo = await tipoPorSigla('FMT');
+    const numero = await siguienteNumero(cli, def.area, 'FMT', 0);
+    const codigo = formatearCodigo(def.area, tipo, 0, numero);
+    const { rows: [d] } = await cli.query(`INSERT INTO doc.documentos (codigo, area, tipo, anio, numero, version, titulo, estado, modulo, id_origen, creado_por, emitido_en)
+      VALUES ($1,$2,'FMT',NULL,$3,1,$4,'VIGENTE','SISTEMA',$5,'sistema',now()) RETURNING id, codigo, version`, [codigo, def.area, numero, def.titulo, clave]);
+    await cli.query("INSERT INTO doc.versiones (documento_id, version, estado, creado_por) VALUES ($1, 1, 'VIGENTE', 'sistema')", [d.id]);
+    await cli.query("INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, usuario, usuario_nombre, comentario, fecha) VALUES ($1,1,0,$2,'CREA','sistema','Sistema','Modelo registrado al implementar la codificación',now())", [d.id, def.area]);
+    await cli.query('COMMIT');
+    return { codigo: d.codigo, version: d.version };
+  } catch (e) { await cli.query('ROLLBACK').catch(() => {}); throw e; }
+  finally { cli.release(); }
+}
+
 /* ─── Catálogos ────────────────────────────────────────────────────── */
 async function listarTipos() {
   await asegurarCodificacion();
@@ -301,5 +369,5 @@ function estadoFinal(tipo) {
 module.exports = {
   CLASES, ACCIONES, AREA_DUENA_FIJA, asegurarCodificacion, anioLima, formatearCodigo, validarCodigo, siguienteNumero,
   listarTipos, tipoPorSigla, datosEmpresa, siglasUsadas, rutaPara, quienEs, puedeActuar, puedeEmitir, estadoFinal,
-  personasDelArea, areaPorNombre,
+  personasDelArea, areaPorNombre, pisoCorrelativo, datosMembrete, formatoSistema, TIPOS_EXTERNOS,
 };

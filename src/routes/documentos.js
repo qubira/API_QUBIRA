@@ -165,6 +165,7 @@ async function crearBorrador(cli, quien, b) {
   const permiso = C.puedeEmitir(quien, area, tipo);
   if (!permiso.ok) throw new Rechazo(403, permiso.error);
   if (!limpio(b.titulo)) throw new Rechazo(400, 'Escribe el título del documento');
+  if (limpio(b.enlace_externo) && !/^https:\/\/\S+$/i.test(b.enlace_externo.trim())) throw new Rechazo(400, 'El enlace debe empezar con https://');
   const destino = limpio(b.area_destino) ? b.area_destino.trim().toUpperCase() : null;
   if (destino && !areas.some(a => a.sigla === destino)) throw new Rechazo(400, `El área destino ${destino} no existe`);
   if (tipo.sigla === 'SOL' && !destino) throw new Rechazo(400, 'Una solicitud necesita el área destino');
@@ -446,4 +447,17 @@ router.post('/externo', manejar(async (req, res) => {
   res.status(201).json({ ok: true, data: salida(out) });
 }));
 
+/* Membrete, línea de ruta, firmas y leyendas para imprimir (plantilla común) */
+router.get('/membrete/:codigo', manejar(async (req, res) => {
+  const quien = await C.quienEs(req.user);
+  const d = await docPorCodigo(req.params.codigo);
+  if (!d) throw new Rechazo(404, 'Documento no encontrado');
+  const ruta = await rutaDe(d.id);
+  if (!puedeVer(quien, d, ruta)) throw new Rechazo(403, 'No tienes acceso a este documento');
+  const [tipo, empresa] = await Promise.all([C.tipoPorSigla(d.tipo), C.datosEmpresa()]);
+  res.json({ ok: true, data: C.datosMembrete(d, ruta, tipo, empresa) });
+}));
+
 module.exports = router;
+// Para que los módulos (ORH, ODN, OTI…) emitan sus documentos dentro de su propia transacción
+module.exports.servicio = { crearBorrador, emitir, docPorCodigo, Rechazo };

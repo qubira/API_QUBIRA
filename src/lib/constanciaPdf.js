@@ -94,6 +94,15 @@ function decorativeDots(doc, x, y) {
    en Cloudinary) y `selloUrl` (sello redondo de la empresa, compartido) —
    ambos opcionales y resueltos por el caller antes de llamar acá. */
 async function buildConstanciaPdf(constancia, verifyUrl) {
+  /* Las constancias codificadas (ORH-CST-…) usan el modelo ORH-FMT-01: razón social y
+     RUC de la configuración de la empresa, aviso de verificación bajo el QR y el
+     formato al pie. Las anteriores (CT-…) se regeneran exactamente como se entregaron. */
+  const codificada = /^[A-Z]{2,5}-CST-/.test(constancia.numero || '');
+  const empresa = constancia.empresa || {};
+  const RAZON = codificada ? (empresa.razon_social || 'QUBIRA') : 'QUBIRA';
+  const RUC = codificada ? (empresa.ruc || RUC_EMPRESA) : RUC_EMPRESA;
+  const LUGAR_EMPRESA = codificada ? (empresa.direccion || 'Lima, Perú') : 'Lima, Perú';
+  const SITIO_VERIF = empresa.sitio_verificacion || 'qubira.vercel.app/verificar';
   const doc = new PDFDocument({ size: 'A4', margin: 50 });
   doc.registerFont('Inter', FONT_REGULAR);
   doc.registerFont('Inter-Bold', FONT_BOLD);
@@ -123,13 +132,13 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   }
   y += logo ? 42 : 0;
   doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(17)
-    .text('QUBIRA', left, y, { width: pageW, align: 'center', characterSpacing: 1.5, link: COMPANY_SITE_URL });
+    .text(RAZON, left, y, { width: pageW, align: 'center', characterSpacing: 1.5, link: COMPANY_SITE_URL });
   y += 20;
   doc.fillColor(COLOR_MUTED).font('Inter').fontSize(8.5)
     .text('Desarrollo de Software · Soluciones Tecnológicas', left, y, { width: pageW, align: 'center' });
   y += 13;
   doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(7.5)
-    .text(`RUC ${RUC_EMPRESA}`, left, y, { width: pageW, align: 'center' });
+    .text(`RUC ${RUC}`, left, y, { width: pageW, align: 'center' });
   y += 20;
 
   doc.moveTo(left, y).lineTo(left + pageW, y).strokeColor(COLOR_RULE).lineWidth(1).stroke();
@@ -145,7 +154,7 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
 
   // ── Párrafo de apertura ──
   doc.fillColor(COLOR_TEXT).font('Inter').fontSize(10.5).text(
-    `QUBIRA, con RUC N.° ${RUC_EMPRESA}, hace constar que ${constancia.tratamiento || ''} ${constancia.nombreCompleto} ` +
+    `${RAZON}, con RUC N.° ${RUC}, hace constar que ${constancia.tratamiento || ''} ${constancia.nombreCompleto} ` +
     `ha formado parte de nuestro equipo de trabajo, desempeñándose conforme al siguiente detalle:`,
     left, y, { width: pageW, align: 'justify', lineGap: 2 }
   );
@@ -187,7 +196,12 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
     doc.image(qrBuf, left, footY, { width: 56, height: 56 });
     doc.link(left, footY, 56, 56, verifyUrl);
   } catch (_) { /* no debería fallar */ }
-  const codeY = footY + 64;
+  let codeY = footY + 64;
+  if (codificada) {
+    doc.fillColor(COLOR_MUTED).font('Inter').fontSize(7)
+      .text(`Verifique esta constancia en ${SITIO_VERIF}`, left, footY + 60, { width: colW, link: 'https://' + SITIO_VERIF.replace(/^https?:\/\//, '') });
+    codeY += 12;
+  }
   doc.fillColor(COLOR_LABEL).font('Inter-Bold').fontSize(7.5).text('CÓDIGO DE VERIFICACIÓN', left, codeY, { width: colW });
   doc.fillColor(COLOR_TEXT).font('Inter-Bold').fontSize(9.5)
     .text(constancia.codigoVerificacion || '', left, codeY + 11, { width: colW, link: verifyUrl });
@@ -210,22 +224,29 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   const stampW = colW - 20;
   const stampX = signX + 10;
   doc.moveTo(signX, stampY - 4).lineTo(stampX + stampW, stampY - 4).strokeColor(COLOR_SIGNER).lineWidth(0.75).stroke();
+  // Recuadro con alto suficiente para nombre, cargo y empresa (antes «QUBIRA» salía cortado)
+  const stampH = 42;
   doc.save();
-  doc.roundedRect(stampX, stampY, stampW, 34, 3).lineWidth(1).strokeColor(COLOR_SIGNER).stroke();
-  doc.roundedRect(stampX + 2, stampY + 2, stampW - 4, 30, 2).lineWidth(0.5).strokeColor(COLOR_SIGNER).stroke();
+  doc.roundedRect(stampX, stampY, stampW, stampH, 3).lineWidth(1).strokeColor(COLOR_SIGNER).stroke();
+  doc.roundedRect(stampX + 2, stampY + 2, stampW - 4, stampH - 4, 2).lineWidth(0.5).strokeColor(COLOR_SIGNER).stroke();
   doc.restore();
   doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(9.5)
-    .text((constancia.firmanteNombre || '').toUpperCase(), stampX, stampY + 5, { width: stampW, align: 'center' });
+    .text((constancia.firmanteNombre || '').toUpperCase(), stampX + 4, stampY + 6, { width: stampW - 8, align: 'center', lineBreak: false, ellipsis: true });
   doc.fillColor(COLOR_TEXT).font('Inter-Bold').fontSize(7)
-    .text((constancia.firmanteCargo || '').toUpperCase(), stampX, stampY + 17, { width: stampW, align: 'center' });
+    .text((constancia.firmanteCargo || '').toUpperCase(), stampX + 4, stampY + 19, { width: stampW - 8, align: 'center', lineBreak: false, ellipsis: true });
   doc.fillColor(COLOR_MUTED).font('Inter').fontSize(6.5)
-    .text('QUBIRA', stampX, stampY + 26, { width: stampW, align: 'center' });
+    .text(RAZON, stampX + 4, stampY + 29, { width: stampW - 8, align: 'center', lineBreak: false });
 
   // ── Pie de página, centrado al fondo (dentro del área imprimible,
   //    nunca más abajo del margen inferior — si no, pdfkit crea una
   //    segunda página vacía solo para esta línea). ──
+  const pieY = doc.page.height - doc.page.margins.bottom - 16;
   doc.fillColor(COLOR_SIGNER).font('Inter-Bold').fontSize(7.5)
-    .text(`QUBIRA   RUC ${RUC_EMPRESA}   ·   Lima, Perú`, left, doc.page.height - doc.page.margins.bottom - 16, { width: pageW, align: 'center', link: COMPANY_SITE_URL });
+    .text(`${RAZON}   RUC ${RUC}   ·   ${LUGAR_EMPRESA}`, left, pieY, { width: pageW, align: 'center', link: COMPANY_SITE_URL, lineBreak: false });
+  if (codificada && constancia.formato) {
+    doc.fillColor(COLOR_MUTED).font('Inter').fontSize(6)
+      .text(`Formato ${constancia.formato}`, left, pieY - 11, { width: pageW, align: 'right', lineBreak: false }); // encima del pie: más abajo pdfkit abriría otra página
+  }
 
   doc.end();
   return done;

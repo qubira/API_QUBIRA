@@ -2,7 +2,8 @@
 
 const express    = require('express');
 const { canonArea, asegurarAreas, refrescarAreas } = require('../lib/employeeArea');
-const { siglasUsadas } = require('../lib/codificacion');
+const Codif = require('../lib/codificacion');
+const { siglasUsadas } = Codif;
 const { asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia, validarJerarquiaEmpleado } = require('../lib/jerarquia');
 const crypto     = require('crypto');
 const multer     = require('multer');
@@ -275,6 +276,10 @@ function ensureSchema() {
         firmante_nombre TEXT, firmante_cargo TEXT,
         issued_by INTEGER, created_at TIMESTAMPTZ DEFAULT NOW()
       );
+      -- Codificación (CODIFICACION.md): número anterior (CT-…), quién la emitió y formato usado
+      ALTER TABLE rrhh.constancias ADD COLUMN IF NOT EXISTS numero_anterior TEXT;
+      ALTER TABLE rrhh.constancias ADD COLUMN IF NOT EXISTS emisor_nombre TEXT;
+      ALTER TABLE rrhh.constancias ADD COLUMN IF NOT EXISTS formato TEXT;
     `).catch(err => { ready = null; throw err; });
   }
   return ready;
@@ -1266,7 +1271,17 @@ function constanciaToCamel(row) {
     lugar: row.lugar, fechaEmision: row.fecha_emision,
     firmanteNombre: row.firmante_nombre, firmanteCargo: row.firmante_cargo,
     issuedBy: row.issued_by, createdAt: row.created_at,
+    numeroAnterior: row.numero_anterior || null, emisorNombre: row.emisor_nombre || null, formato: row.formato || null,
+    codificada: /^[A-Z]{2,5}-CST-/.test(row.numero || ''),
   };
+}
+
+/* Datos que el PDF necesita además de la fila: empresa, firma y sello */
+async function datosPdfConstancia(constancia) {
+  const [firmaUrl, selloUrl, empresa] = await Promise.all([
+    getFirmaUrlForSigner(constancia.firmanteNombre), getSelloEmpresaUrl(), Codif.datosEmpresa().catch(() => ({})),
+  ]);
+  return { ...constancia, firmaUrl, selloUrl, empresa };
 }
 
 /* Piso inicial por año — ya se emitieron constancias 0001-0021 de 2026
@@ -1376,37 +1391,69 @@ router.post('/constancias', async (req, res) => {
       resolveIssuerCargo(req.user.username),
     ]);
 
-    let numero, codigoVerificacion, attempts = 0;
-    while (attempts < 5) {
-      numero = await generateConstanciaNumero();
+    /* Código del sistema de codificación (ORH-CST-AAAA-NNN): lo asigna el servidor al emitir.
+       Emite solo personal de ORH con nivel N3 o superior (o ADG). */
+    await Codif.asegurarCodificacion();
+    const { servicio } = require('./documentos');
+    const quien = await Codif.quienEs(req.user);
+    const tipoCst = await Codif.tipoPorSigla('CST');
+    const permiso = Codif.puedeEmitir(quien, 'ORH', tipoCst);
+    if (!permiso.ok) return res.status(403).json({ ok: false, error: permiso.error });
+    const formato = await Codif.formatoSistema('constancia-trabajo').catch(() => null);
+    const ar = Codif.areaPorNombre(areaNombre);
+    const emisor = `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim() || quien.nombre || req.user.username;
+    const firmante = tipoCst.firmante && tipoCst.firmante.nombre ? tipoCst.firmante : { nombre: emisor, cargo: firmanteCargo || req.user.rol || '' };
+    const id = uid();
+    const nombreCompleto = composeFullName(emp);
+
+    let codigoVerificacion;
+    for (let i = 0; i < 5; i++) {
       codigoVerificacion = generateCodigoVerificacion();
-      const { rows: dupe } = await pool.query(
-        'SELECT 1 FROM rrhh.constancias WHERE numero=$1 OR codigo_verificacion=$2', [numero, codigoVerificacion]
-      );
+      const { rows: dupe } = await pool.query('SELECT 1 FROM rrhh.constancias WHERE codigo_verificacion=$1', [codigoVerificacion]);
       if (!dupe.length) break;
-      attempts++;
     }
 
-    const row = {
-      id: uid(), numero, codigo_verificacion: codigoVerificacion, employee_id: employeeId,
-      tratamiento: tratamiento || '', nombre_completo: composeFullName(emp),
-      tipo_documento: tipoDocumentoNombre || '', numero_documento: emp.numeroDocumento || '',
-      area: areaNombre || '', cargo: cargoNombre || '',
-      fecha_inicio: fechaInicio || emp.fechaIngreso || '',
-      fecha_fin: fechaFin || (emp.estado === 'activo' ? 'Actualidad' : ''),
-      funcion_principal: funcionPrincipal,
-      lugar: lugar || 'Lima, Perú',
-      fecha_emision: new Date().toISOString().slice(0, 10),
-      firmante_nombre: `${req.user.nombre || ''} ${req.user.apellidos || ''}`.trim() || req.user.username,
-      firmante_cargo: firmanteCargo || req.user.rol || '',
-      issued_by: req.user.id,
-    };
-    const keys = Object.keys(row);
-    const { rows } = await pool.query(
-      `INSERT INTO rrhh.constancias (${keys.join(',')}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')}) RETURNING *`,
-      keys.map(k => row[k])
-    );
-    res.status(201).json({ ok: true, data: constanciaToCamel(rows[0]) });
+    const cli = await pool.connect();
+    let fila;
+    try {
+      await cli.query('BEGIN');
+      // Piso: no repetir números ya usados con el formato anterior (CT-AAAA-NNNN) ni los emitidos en papel
+      const anio = Codif.anioLima();
+      const { rows: [{ max_n }] } = await cli.query(
+        "SELECT COALESCE(MAX(SUBSTRING(numero FROM 9)::int), 0) AS max_n FROM rrhh.constancias WHERE numero LIKE $1", [`CT-${anio}-%`]);
+      await Codif.pisoCorrelativo(cli, 'ORH', 'CST', anio, Math.max(max_n, (CONSTANCIA_NUMERO_FLOOR[anio] || 1) - 1));
+      const { doc } = await servicio.crearBorrador(cli, quien, {
+        tipo: 'CST', area: 'ORH', titulo: `Constancia de trabajo – ${nombreCompleto}`, modulo: 'RRHH', id_origen: id,
+        formato_codigo: formato && formato.codigo, formato_version: formato && formato.version,
+      });
+      const emitido = await servicio.emitir(cli, quien, doc.id);
+      const row = {
+        id, numero: emitido.codigo, codigo_verificacion: codigoVerificacion, employee_id: employeeId,
+        tratamiento: tratamiento || '', nombre_completo: nombreCompleto,
+        tipo_documento: tipoDocumentoNombre || '', numero_documento: emp.numeroDocumento || '',
+        // Área con su nombre oficial y sigla del catálogo de ORH (no el nombre interno)
+        area: ar ? `${ar.nombre} (${ar.sigla})` : (areaNombre || ''), cargo: cargoNombre || '',
+        fecha_inicio: fechaInicio || emp.fechaIngreso || '',
+        fecha_fin: fechaFin || (emp.estado === 'activo' ? 'Actualidad' : ''),
+        funcion_principal: funcionPrincipal,
+        lugar: lugar || 'Lima, Perú',
+        fecha_emision: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date()),
+        firmante_nombre: firmante.nombre, firmante_cargo: firmante.cargo || '',
+        issued_by: req.user.id, emisor_nombre: emisor,
+        formato: formato ? `${formato.codigo} v${formato.version}` : null,
+      };
+      const keys = Object.keys(row);
+      ({ rows: [fila] } = await cli.query(
+        `INSERT INTO rrhh.constancias (${keys.join(',')}) VALUES (${keys.map((_, i) => '$' + (i + 1)).join(',')}) RETURNING *`,
+        keys.map(k => row[k])
+      ));
+      await cli.query('COMMIT');
+    } catch (e) {
+      await cli.query('ROLLBACK').catch(() => {});
+      if (e instanceof servicio.Rechazo) return res.status(e.status).json({ ok: false, error: e.message });
+      throw e;
+    } finally { cli.release(); }
+    res.status(201).json({ ok: true, data: constanciaToCamel(fila) });
   } catch (err) {
     console.error('[RRHH] POST /constancias error:', err.message);
     res.status(500).json({ ok: false, error: 'Error al emitir la constancia' });
@@ -1422,6 +1469,9 @@ router.put('/constancias/:id', async (req, res) => {
   try {
     const { rows: oldRows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
+    if (constanciaToCamel(oldRows[0]).codificada) {
+      return res.status(409).json({ ok: false, error: 'Una constancia emitida no se edita: anúlala y emite una nueva que la reemplace (Registro de documentos).' });
+    }
 
     if (req.body.numero !== undefined && req.body.numero !== oldRows[0].numero) {
       const { rows: dupe } = await pool.query('SELECT 1 FROM rrhh.constancias WHERE numero=$1 AND id<>$2', [req.body.numero, req.params.id]);
@@ -1459,6 +1509,10 @@ router.put('/constancias/:id', async (req, res) => {
 
 router.delete('/constancias/:id', async (req, res) => {
   try {
+    const { rows: cRows } = await pool.query('SELECT numero FROM rrhh.constancias WHERE id=$1', [req.params.id]);
+    if (cRows.length && constanciaToCamel(cRows[0]).codificada) {
+      return res.status(409).json({ ok: false, error: 'Una constancia emitida no se elimina: se anula (Registro de documentos). Su número no se reutiliza.' });
+    }
     const { rowCount } = await pool.query('DELETE FROM rrhh.constancias WHERE id=$1', [req.params.id]);
     if (!rowCount) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
     res.json({ ok: true });
@@ -1473,11 +1527,7 @@ router.get('/constancias/:id/pdf', async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM rrhh.constancias WHERE id=$1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Constancia no encontrada' });
     const constancia = constanciaToCamel(rows[0]);
-    const [firmaUrl, selloUrl] = await Promise.all([
-      getFirmaUrlForSigner(constancia.firmanteNombre),
-      getSelloEmpresaUrl(),
-    ]);
-    const pdf = await buildConstanciaPdf({ ...constancia, firmaUrl, selloUrl }, verifyUrlFor(constancia.codigoVerificacion));
+    const pdf = await buildConstanciaPdf(await datosPdfConstancia(constancia), verifyUrlFor(constancia.codigoVerificacion));
     res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${constancia.numero}.pdf"` });
     res.send(pdf);
   } catch (err) {
@@ -1536,3 +1586,5 @@ module.exports.ensureSchema = ensureSchema;
 module.exports.subirCvACloudinary = subirCvACloudinary;
 module.exports.getFirmaUrlForSigner = getFirmaUrlForSigner;
 module.exports.getSelloEmpresaUrl = getSelloEmpresaUrl;
+module.exports.datosPdfConstancia = datosPdfConstancia;
+module.exports.constanciaToCamel = constanciaToCamel;
