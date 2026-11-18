@@ -97,7 +97,9 @@ async function buildConstanciaPdf(constancia, verifyUrl) {
   /* Las constancias codificadas (ORH-CST-…) usan el modelo ORH-FMT-01: razón social y
      RUC de la configuración de la empresa, aviso de verificación bajo el QR y el
      formato al pie. Las anteriores (CT-…) se regeneran exactamente como se entregaron. */
-  const codificada = /^[A-Z]{2,5}-CST-/.test(constancia.numero || '');
+  // Una constancia migrada (tiene número anterior) se regenera tal como se entregó, con su número original
+  const codificada = /^[A-Z]{2,5}-CST-/.test(constancia.numero || '') && !constancia.numeroAnterior;
+  if (constancia.numeroAnterior) constancia = { ...constancia, numero: constancia.numeroAnterior };
   const empresa = constancia.empresa || {};
   const RAZON = codificada ? (empresa.razon_social || 'QUBIRA') : 'QUBIRA';
   const RUC = codificada ? (empresa.ruc || RUC_EMPRESA) : RUC_EMPRESA;

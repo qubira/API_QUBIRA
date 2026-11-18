@@ -395,6 +395,19 @@ Reglas comunes:
 - **Soporte:** «Enviar mis casos al sistema central» sube los casos guardados en cada navegador, numerados por fecha de creación; el `QS-…` queda como código anterior. Los casos de demostración `QS-0001` a `QS-0004` no se envían. El texto de los casos se guarda sin caracteres que abran etiquetas HTML, porque ahora lo ve todo el equipo.
 - **Empresa:** la razón social y el RUC tienen una sola fuente, la ficha societaria de ODACL. La Configuración del Registro de documentos y ODACL editan el mismo dato.
 
+## 14.2 Migración (fase 4)
+
+Se ejecuta una sola vez al arrancar la API (`src/lib/migracionCodificacion.js`), en una única transacción, y queda registrada en `doc.migraciones`. Respaldo previo: rama de Neon `respaldo-codificacion-2026-11-18` del proyecto `bd_qubira`. Decisiones aplicadas:
+
+- Cada registro conserva su número; el código antiguo queda en `codigo_anterior`. No hubo renumeraciones.
+- `AUD-CAL-2026-001` era un borrador: quedó sin código (`BORRADOR-…`).
+- Los 23 documentos del editor de ODACL eran modelos, no contratos: 6 formatos con sus versiones (`ODACL-FMT-01` a `06`); las versiones anteriores quedan «Obsoleto».
+- `CLI-003` «Sin especificar» se migró desactivado.
+- Contratos laborales: año de inicio del contrato (`ORH-CTR-2023-001` y `002`, `ORH-CTR-2026-001`).
+- Modelos del sistema registrados: `ORH-FMT-01` (constancia) y `DST-FMT-01` (acta de seguridad).
+- Dentro de las actas se actualizaron las referencias a otras actas y a los proyectos auditados. El historial (actividad, auditoría, motivos de reuniones) conserva los códigos de su momento.
+- Una constancia migrada se regenera con el número que se entregó (`CT-2026-0022`); la verificación muestra los dos.
+
 ## 15. Pruebas de aceptación
 
 1. **Concurrencia:** 20 emisiones simultáneas del mismo área + tipo dan 20 números distintos y seguidos.

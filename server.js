@@ -174,7 +174,11 @@ app.use((err, req, res, next) => {
     require('./src/lib/jerarquia').asegurarJerarquia().then(() => console.log('[JERARQUIA] lista')).catch(e => console.warn('[JERARQUIA]', e.message));
     require('./src/lib/employeeArea').iniciarAreas()
       .then(() => require('./src/lib/codificacion').asegurarCodificacion())
-      .then(() => console.log('[CODIFICACION] lista')).catch(e => console.warn('[CODIFICACION]', e.message));
+      .then(() => console.log('[CODIFICACION] lista'))
+      // Fase 4: migración de los códigos antiguos, una sola vez y en una sola transacción
+      .then(() => require('./src/lib/migracionCodificacion').ejecutarUnaVez())
+      .then(r => console.log('[MIGRACION]', JSON.stringify(r)))
+      .catch(e => console.error('[CODIFICACION/MIGRACION] no se aplicó nada:', e.message));
   });
 })();
 

@@ -221,7 +221,10 @@ function datosMembrete(doc, ruta, tipo, empresa) {
 
 /* Formato base de un modelo del sistema (p. ej. el modelo de constancia = ORH-FMT-01).
    Se registra una sola vez y devuelve su código y versión vigente. */
-const FORMATOS_SISTEMA = { 'constancia-trabajo': { area: 'ORH', titulo: 'Modelo de constancia de trabajo' } };
+const FORMATOS_SISTEMA = {
+  'constancia-trabajo': { area: 'ORH', titulo: 'Modelo de constancia de trabajo' },
+  'acta-seguridad': { area: 'DST', titulo: 'Modelo de acta de auditoría de seguridad' },
+};
 async function formatoSistema(clave) {
   const def = FORMATOS_SISTEMA[clave];
   if (!def) return null;

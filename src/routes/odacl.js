@@ -261,7 +261,8 @@ router.put('/documents/:id', async (req, res) => {
     let reg = null;
     if (prev.codigo) {
       reg = await DM.docDe('ODACL', id);
-      if (reg && String(reg.tipo).trim() !== 'FMT') {
+      if (!reg) return res.status(409).json({ ok: false, error: `Esta es una versión anterior de ${prev.codigo} (obsoleta): edita la versión vigente.` });
+      if (String(reg.tipo).trim() !== 'FMT') {
         return res.status(409).json({ ok: false, error: `${prev.codigo} ya fue emitido: no se edita. Anúlalo y emite uno nuevo que lo reemplace.` });
       }
       if (contenido_html) req.body.contenido_html = DM.ponerCodigo(contenido_html, prev.codigo);
