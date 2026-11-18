@@ -2,7 +2,7 @@
 
 const express    = require('express');
 const { canonArea } = require('../lib/employeeArea');
-const { asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia } = require('../lib/jerarquia');
+const { asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia, validarJerarquiaEmpleado } = require('../lib/jerarquia');
 const crypto     = require('crypto');
 const multer     = require('multer');
 const bcrypt     = require('bcryptjs');
@@ -1051,6 +1051,8 @@ router.post('/empleados', async (req, res) => {
     delete data.rol;
 
     await normalizarCargoEmpleado(data);
+    const errJer = await validarJerarquiaEmpleado(data, null);
+    if (errJer) return res.status(400).json({ ok: false, error: errJer });
     const created = await insertRow('empleados', data);
 
     await pool.query(
@@ -1079,6 +1081,10 @@ router.put('/empleados/:id', async (req, res) => {
        sí se puede cambiar acá (es un dato organizacional, no un secreto). */
     const { meta, usuario, contrasena, password, rol, ...changes } = req.body || {};
     await normalizarCargoEmpleado(changes);
+    if (['areaTrabajoId', 'cargoId', 'subcargoId', 'jefeInmediatoId'].some(k => k in changes)) {
+      const errJer = await validarJerarquiaEmpleado({ ...before, ...changes }, id);
+      if (errJer) return res.status(400).json({ ok: false, error: errJer });
+    }
 
     /* Editar campos sensibles exige ser ADG/Gerente o confirmar la propia
        contraseña en este mismo request (igual criterio que para verlos). */
@@ -1239,9 +1245,13 @@ function composeFullName(emp) {
    se busca su propio registro de empleado por el username de la sesión. */
 async function resolveIssuerCargo(username) {
   const { rows } = await pool.query(
-    'SELECT cargo_id, cargo FROM rrhh.empleados WHERE lower(usuario) = lower($1) LIMIT 1', [username]
+    'SELECT cargo_id, subcargo_id, cargo FROM rrhh.empleados WHERE lower(usuario) = lower($1) LIMIT 1', [username]
   );
   if (!rows.length) return null;
+  if (rows[0].subcargo_id) {
+    const sub = await catalogoNombre(rows[0].subcargo_id);
+    if (sub) return sub;
+  }
   if (rows[0].cargo_id) {
     const nombre = await catalogoNombre(rows[0].cargo_id);
     if (nombre) return nombre;
@@ -1300,7 +1310,7 @@ router.post('/constancias', async (req, res) => {
     const [tipoDocumentoNombre, areaNombre, cargoNombre, firmanteCargo] = await Promise.all([
       catalogoNombre(emp.tipoDocumentoId),
       catalogoNombre(emp.areaTrabajoId),
-      emp.cargoId ? catalogoNombre(emp.cargoId) : Promise.resolve(emp.cargo || null),
+      emp.subcargoId ? catalogoNombre(emp.subcargoId) : emp.cargoId ? catalogoNombre(emp.cargoId) : Promise.resolve(emp.cargo || null),
       resolveIssuerCargo(req.user.username),
     ]);
 

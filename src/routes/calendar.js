@@ -208,14 +208,16 @@ router.get('/directory', async (req, res) => {
     if (q) {
       params.push(`%${q}%`);
       const n = params.length;
-      where += ` AND (u.nombre ILIKE $${n} OR u.apellidos ILIKE $${n} OR e.cargo ILIKE $${n})`;
+      where += ` AND (u.nombre ILIKE $${n} OR u.apellidos ILIKE $${n} OR COALESCE(sc.nombre, cg.nombre, e.cargo) ILIKE $${n})`;
     }
     if (area) { const a = canonArea(area); params.push(a); where += ` AND ${sqlCanonArea('c.nombre')} = $${params.length}`; }
     const { rows } = await pool.query(`
-      SELECT u.id AS user_id, u.nombre, u.apellidos, e.cargo, c.nombre AS area
+      SELECT u.id AS user_id, u.nombre, u.apellidos, COALESCE(sc.nombre, cg.nombre, e.cargo) AS cargo, c.nombre AS area
       FROM public.usuarios u
       LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
       LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      LEFT JOIN rrhh.catalogos sc ON sc.id = e.subcargo_id
+      LEFT JOIN rrhh.catalogos cg ON cg.id = e.cargo_id
       ${where}
       ORDER BY u.nombre ASC LIMIT 50
     `, params);
@@ -234,7 +236,7 @@ router.get('/directory', async (req, res) => {
    ============================================================ */
 router.get('/team-availability', async (req, res) => {
   try {
-    const area = String(req.query.area || 'TI').toUpperCase();
+    const area = canonArea(req.query.area || 'TI');
     const { from, to } = req.query;
     const fechaValida = f => /^\d{4}-\d{2}-\d{2}$/.test(String(f || ''));
     if (!fechaValida(from) || !fechaValida(to) || to < from) {
@@ -245,11 +247,13 @@ router.get('/team-availability', async (req, res) => {
     }
 
     const { rows: members } = await pool.query(`
-      SELECT u.id AS user_id, u.nombre, u.apellidos, e.cargo
+      SELECT u.id AS user_id, u.nombre, u.apellidos, COALESCE(sc.nombre, cg.nombre, e.cargo) AS cargo
       FROM public.usuarios u
       JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
       JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
-      WHERE u.estado = 'activo' AND upper(trim(c.nombre)) = $1
+      LEFT JOIN rrhh.catalogos sc ON sc.id = e.subcargo_id
+      LEFT JOIN rrhh.catalogos cg ON cg.id = e.cargo_id
+      WHERE u.estado = 'activo' AND ${sqlCanonArea('c.nombre')} = $1
       ORDER BY u.nombre ASC
     `, [area]);
     if (!members.length) return res.json({ area, from, to, members: [], busy: [], generated_at: new Date().toISOString() });
@@ -310,7 +314,7 @@ const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 router.post('/team-plan', requireModuleAccess('COMERCIAL', 'ODN', 'ADG'), async (req, res) => {
   try {
-    const area = String(req.body.area || 'TI').toUpperCase();
+    const area = canonArea(req.body.area || 'TI');
     const modality = req.body.modality === 'presencial' ? 'presencial' : 'virtual';
     const origen = String(req.body.origen || '').slice(0, 120);
     const proyecto = String(req.body.proyecto || '').slice(0, 160);
@@ -334,7 +338,7 @@ router.post('/team-plan', requireModuleAccess('COMERCIAL', 'ODN', 'ADG'), async 
       SELECT u.id FROM public.usuarios u
       JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
       JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
-      WHERE u.estado = 'activo' AND upper(trim(c.nombre)) = $1 AND u.id = ANY($2)
+      WHERE u.estado = 'activo' AND ${sqlCanonArea('c.nombre')} = $1 AND u.id = ANY($2)
     `, [area, todos]);
     if (validos.length !== todos.length) {
       return res.status(400).json({ error: `Algún participante no es un integrante activo de ${area}` });
@@ -436,11 +440,13 @@ router.get('/meetings', async (req, res) => {
     const ids = meetings.map(m => m.id);
     const { rows: participants } = await pool.query(`
       SELECT mp.meeting_id, mp.user_id, mp.role, mp.participant_type, mp.external_name, mp.external_kind,
-             u.nombre AS user_name, c.nombre AS user_area, e.cargo AS user_cargo
+             u.nombre AS user_name, c.nombre AS user_area, COALESCE(sc.nombre, cg.nombre, e.cargo) AS user_cargo
       FROM calendar.meeting_participants mp
       LEFT JOIN public.usuarios u ON u.id = mp.user_id
       LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
       LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      LEFT JOIN rrhh.catalogos sc ON sc.id = e.subcargo_id
+      LEFT JOIN rrhh.catalogos cg ON cg.id = e.cargo_id
       WHERE mp.meeting_id = ANY($1)
     `, [ids]);
     const byMeeting = {};
@@ -483,11 +489,13 @@ router.get('/meetings/:id', async (req, res) => {
 
     const { rows: participants } = await pool.query(`
       SELECT mp.meeting_id, mp.user_id, mp.role, mp.participant_type, mp.external_name, mp.external_kind,
-             u.nombre AS user_name, c.nombre AS user_area, e.cargo AS user_cargo
+             u.nombre AS user_name, c.nombre AS user_area, COALESCE(sc.nombre, cg.nombre, e.cargo) AS user_cargo
       FROM calendar.meeting_participants mp
       LEFT JOIN public.usuarios u ON u.id = mp.user_id
       LEFT JOIN rrhh.empleados e ON lower(e.usuario) = lower(u.username)
       LEFT JOIN rrhh.catalogos c ON c.id = e.area_trabajo_id
+      LEFT JOIN rrhh.catalogos sc ON sc.id = e.subcargo_id
+      LEFT JOIN rrhh.catalogos cg ON cg.id = e.cargo_id
       WHERE mp.meeting_id = $1`, [req.params.id]);
     m.participants = participants;
 

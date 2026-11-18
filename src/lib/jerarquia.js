@@ -217,4 +217,24 @@ async function datosJerarquia() {
   };
 }
 
-module.exports = { NIVELES, nivelDeNombre, asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia };
+/* Valida la ficha de un empleado contra la jerarquía. Devuelve un mensaje de error o null.
+   - El sub-cargo debe ser del área del empleado.
+   - El jefe inmediato no puede tener un nivel inferior (número mayor) al del empleado. */
+async function validarJerarquiaEmpleado(ficha, empleadoId) {
+  const ids = [ficha.areaTrabajoId, ficha.cargoId, ficha.subcargoId].filter(Boolean);
+  const { rows: cat } = ids.length ? await pool.query('SELECT id, catalogo, nombre, nivel, area FROM rrhh.catalogos WHERE id = ANY($1)', [ids]) : { rows: [] };
+  const de = id => cat.find(c => c.id === id);
+  const sub = de(ficha.subcargoId), area = de(ficha.areaTrabajoId);
+  if (sub && area && canonArea(sub.area) !== canonArea(area.nombre)) return `El puesto «${sub.nombre}» es de ${etiquetaArea(canonArea(sub.area))}, pero el empleado está en ${area.nombre}.`;
+  const nivel = (de(ficha.cargoId) || {}).nivel || (sub || {}).nivel;
+  if (ficha.jefeInmediatoId && nivel) {
+    if (ficha.jefeInmediatoId === empleadoId) return 'Un empleado no puede ser su propio jefe inmediato.';
+    const { rows: j } = await pool.query(`SELECT COALESCE(c.nivel, s.nivel) AS nivel FROM rrhh.empleados e
+      LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id LEFT JOIN rrhh.catalogos s ON s.id = e.subcargo_id WHERE e.id = $1`, [ficha.jefeInmediatoId]);
+    const nj = j.length && j[0].nivel;
+    if (nj && nj > nivel) return `El jefe inmediato (N${nj}) tiene un nivel inferior al del empleado (N${nivel}). Elige a alguien de un nivel más alto.`;
+  }
+  return null;
+}
+
+module.exports = { validarJerarquiaEmpleado, NIVELES, nivelDeNombre, asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia };

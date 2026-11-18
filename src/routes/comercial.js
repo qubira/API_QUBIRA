@@ -200,8 +200,8 @@ router.get('/mi-perfil', async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido, e.nombre, e.apellido,
-              e.numero_documento, c.nombre AS cargo
-         FROM rrhh.empleados e LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id
+              e.numero_documento, COALESCE(sc.nombre, c.nombre) AS cargo
+         FROM rrhh.empleados e LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id LEFT JOIN rrhh.catalogos sc ON sc.id = e.subcargo_id
         WHERE lower(e.usuario) = lower($1) LIMIT 1`, [req.user.username]);
     const e = rows[0];
     if (e) {
@@ -231,9 +231,10 @@ router.get('/trabajadores-activos', async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT e.id, e.primer_nombre, e.segundo_nombre, e.primer_apellido, e.segundo_apellido, e.nombre, e.apellido,
-             c.nombre AS cargo, a.nombre AS area
+             COALESCE(sc.nombre, c.nombre) AS cargo, a.nombre AS area
         FROM rrhh.empleados e
         LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id
+        LEFT JOIN rrhh.catalogos sc ON sc.id = e.subcargo_id
         LEFT JOIN rrhh.catalogos a ON a.id = e.area_trabajo_id
        WHERE COALESCE(lower(e.estado), 'activo') = 'activo'`);
     const trabajadores = rows
