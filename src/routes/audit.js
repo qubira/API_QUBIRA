@@ -71,7 +71,7 @@ router.get('/logs', async (req, res) => {
        áreas y elegir un rango de fechas — el resto queda limitado a su
        propia área y solo al día de hoy, sin importar qué pida el
        frontend (nunca confiar en el filtro del cliente). */
-    const canSeeOtherAreas = privileged || viewerArea === 'ADG';
+    const canSeeOtherAreas = privileged || viewerArea === 'ADG' || viewerArea === 'GG';
 
     const params = []; let where = 'WHERE 1=1';
     if (area === 'ALL') {

@@ -2,6 +2,7 @@
 
 const express    = require('express');
 const { canonArea } = require('../lib/employeeArea');
+const { asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia } = require('../lib/jerarquia');
 const crypto     = require('crypto');
 const multer     = require('multer');
 const bcrypt     = require('bcryptjs');
@@ -402,7 +403,7 @@ const MAPS = {
     paisId:'pais_id', departamentoGeoId:'departamento_geo_id', provinciaId:'provincia_id', distritoId:'distrito_id',
     direccion:'direccion', coordenadas:'coordenadas', codigoPostal:'codigo_postal',
     cuentaAntecedentes:'cuenta_antecedentes', tipoAntecedenteId:'tipo_antecedente_id',
-    areaTrabajoId:'area_trabajo_id', cargoId:'cargo_id', jefeInmediatoId:'jefe_inmediato_id',
+    areaTrabajoId:'area_trabajo_id', cargoId:'cargo_id', subcargoId:'subcargo_id', jefeInmediatoId:'jefe_inmediato_id',
     usuario:'usuario', contrasena:'contrasena', foto:'foto',
     contactoReferenciaNombre:'contacto_referencia_nombre',
     contactoReferenciaTel1:'contacto_referencia_tel1', contactoReferenciaTel2:'contacto_referencia_tel2',
@@ -562,7 +563,7 @@ async function listAll(mapKey) {
    ============================================================ */
 const EMPLOYEE_SAFE_FIELDS = new Set([
   'id', 'primerNombre', 'primerApellido', 'nombre', 'apellido', 'usuario',
-  'departmentId', 'areaTrabajoId', 'cargoId', 'cargo', 'jefeInmediatoId',
+  'departmentId', 'areaTrabajoId', 'cargoId', 'subcargoId', 'cargo', 'jefeInmediatoId',
   'fechaIngreso', 'email', 'emailLocal', 'emailDominioId', 'estado', 'foto',
 ]);
 
@@ -578,6 +579,9 @@ function maskEmployee(emp) {
    campo `usuario`. Base para las reglas de permisos de RRHH. */
 async function getViewerAreaCargo(username) {
   if (!username) return null;
+  // Nivel jerárquico de la cuenta (los permisos salen del nivel, no del nombre del cargo)
+  const info = await infoCargo(username).catch(() => null);
+  if (info && info.area && info.nivel) return { area: info.area, cargo: info.cargo, nivel: info.nivel };
   const { rows } = await pool.query(
     'SELECT area_trabajo_id, cargo_id FROM rrhh.empleados WHERE lower(usuario) = lower($1) LIMIT 1',
     [username]
@@ -597,15 +601,18 @@ async function getViewerAreaCargo(username) {
 
 async function isPrivilegedViewer(username) {
   const ac = await getViewerAreaCargo(username);
-  return !!ac && ac.area === 'ADG' && ac.cargo === 'GERENTE';
+  if (!ac) return false;
+  // Alta Dirección (N1), o ADG con nivel de gerencia o superior (como antes: Gerente de ADG)
+  if (ac.nivel) return ac.nivel === 1 || (ac.area === 'ADG' && ac.nivel <= 2);
+  return ac.area === 'ADG' && ac.cargo === 'GERENTE';
 }
 
-/* Eliminar empleados: Área ADG o RRHH, y Cargo Coordinador/Supervisor/Gerente */
+/* Eliminar empleados: Área ADG u ORH, con nivel N5 (Supervisor) o superior */
 async function canDeleteEmployees(username) {
   const ac = await getViewerAreaCargo(username);
-  return !!ac
-    && ['ADG', 'RRHH'].includes(ac.area)
-    && ['COORDINADOR', 'SUPERVISOR', 'GERENTE'].includes(ac.cargo);
+  if (!ac || !['ADG', 'RRHH'].includes(ac.area)) return false;
+  if (ac.nivel) return ac.nivel <= 5;
+  return ['COORDINADOR', 'SUPERVISOR', 'GERENTE'].includes(ac.cargo);
 }
 
 /* ============================================================
@@ -660,6 +667,7 @@ router.get('/bootstrap', async (req, res) => {
     await seedCatalogsIfEmpty();
     await seedPaisesIfEmpty();
     await alinearAreasTrabajo();
+    await asegurarJerarquia();
 
     const [
       departments, employees, contracts, documents,
@@ -682,7 +690,7 @@ router.get('/bootstrap', async (req, res) => {
     const catalogs = {};
     for (const r of catalogRows.rows) {
       if (!catalogs[r.catalogo]) catalogs[r.catalogo] = [];
-      catalogs[r.catalogo].push({ id: r.id, nombre: r.nombre, parentId: r.parent_id });
+      catalogs[r.catalogo].push({ id: r.id, nombre: r.nombre, parentId: r.parent_id, nivel: r.nivel ?? null, area: r.area ?? null });
     }
 
     const auditLog = auditRows.rows.map(a => ({
@@ -884,6 +892,11 @@ router.delete('/inscripciones/:id', async (req, res) => {
   }
 });
 
+/* Mapa jerárquico (estructura, funciones y comunicación entre áreas) */
+router.get('/jerarquia', async (req, res) => {
+  try { res.json(await datosJerarquia()); } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo leer la jerarquía' }); }
+});
+
 /* ============================================================
    Catálogos — alta de items (tipo doc, nacionalidad, cargo, etc.)
    ============================================================ */
@@ -892,13 +905,26 @@ router.post('/catalogos/:catalogo', async (req, res) => {
     const { catalogo } = req.params;
     const { nombre, parentId } = req.body || {};
     if (!nombre) return res.status(400).json({ ok: false, error: 'Falta el nombre' });
+    await asegurarJerarquia().catch(() => {});
+    let nivel = null, area = null;
+    if (catalogo === 'cargos') {
+      nivel = parseInt(req.body.nivel, 10);
+      if (!(nivel >= 1 && nivel <= 9)) return res.status(400).json({ ok: false, error: 'Elige el nivel jerárquico del cargo (1 a 9)' });
+    }
+    if (catalogo === 'subcargos') {
+      if (!parentId) return res.status(400).json({ ok: false, error: 'Elige el cargo principal del que depende' });
+      if (!req.body.area) return res.status(400).json({ ok: false, error: 'Elige el área del sub-cargo' });
+      const { rows: p } = await pool.query("SELECT nivel FROM rrhh.catalogos WHERE id = $1 AND catalogo = 'cargos'", [parentId]);
+      if (!p.length) return res.status(400).json({ ok: false, error: 'El cargo principal no existe' });
+      nivel = p[0].nivel; area = canonArea(req.body.area);
+    }
 
     const id = uid();
     await pool.query(
-      'INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id) VALUES ($1,$2,$3,$4)',
-      [id, catalogo, nombre, parentId || null]
+      'INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id, nivel, area) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, catalogo, nombre, parentId || null, nivel, area]
     );
-    return res.status(201).json({ ok: true, data: { id, nombre, parentId: parentId || null } });
+    return res.status(201).json({ ok: true, data: { id, nombre, parentId: parentId || null, nivel, area } });
   } catch (err) {
     console.error('[RRHH] POST /catalogos error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error al crear el ítem de catálogo' });
@@ -915,11 +941,11 @@ router.put('/catalogos/item/:id', async (req, res) => {
     if (!nombre) return res.status(400).json({ ok: false, error: 'Falta el nombre' });
 
     const { rows } = await pool.query(
-      'UPDATE rrhh.catalogos SET nombre = $1 WHERE id = $2 RETURNING id, catalogo, nombre, parent_id',
+      'UPDATE rrhh.catalogos SET nombre = $1 WHERE id = $2 RETURNING id, catalogo, nombre, parent_id, nivel, area',
       [nombre, req.params.id]
     );
     if (!rows.length) return res.status(404).json({ ok: false, error: 'Ítem no encontrado' });
-    return res.json({ ok: true, data: { id: rows[0].id, catalogo: rows[0].catalogo, nombre: rows[0].nombre, parentId: rows[0].parent_id } });
+    return res.json({ ok: true, data: { id: rows[0].id, catalogo: rows[0].catalogo, nombre: rows[0].nombre, parentId: rows[0].parent_id, nivel: rows[0].nivel, area: rows[0].area } });
   } catch (err) {
     console.error('[RRHH] PUT /catalogos/item error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error al renombrar el ítem de catálogo' });
@@ -934,6 +960,18 @@ router.put('/catalogos/item/:id', async (req, res) => {
 router.delete('/catalogos/item/:id', async (req, res) => {
   try {
     const id = req.params.id;
+    // Un cargo principal con sub-cargos o empleados no se borra (arrastraría la jerarquía)
+    const { rows: item } = await pool.query('SELECT catalogo FROM rrhh.catalogos WHERE id = $1', [id]);
+    if (item.length && item[0].catalogo === 'cargos') {
+      const { rows: [uso] } = await pool.query(`SELECT
+        (SELECT COUNT(*) FROM rrhh.catalogos WHERE parent_id = $1)::int AS subs,
+        (SELECT COUNT(*) FROM rrhh.empleados WHERE cargo_id = $1)::int AS emps`, [id]);
+      if (uso.subs || uso.emps) return res.status(409).json({ ok: false, error: `Este cargo principal tiene ${uso.subs} sub-cargo(s) y ${uso.emps} empleado(s). Muévelos a otro cargo antes de eliminarlo.` });
+    }
+    if (item.length && item[0].catalogo === 'subcargos') {
+      const { rows: [uso] } = await pool.query('SELECT COUNT(*)::int AS n FROM rrhh.empleados WHERE subcargo_id = $1', [id]);
+      if (uso.n) return res.status(409).json({ ok: false, error: `Hay ${uso.n} empleado(s) con este sub-cargo. Cámbialos antes de eliminarlo.` });
+    }
     const nivel1 = await pool.query('SELECT id FROM rrhh.catalogos WHERE parent_id = $1', [id]);
     for (const { id: hijoId } of nivel1.rows) {
       await pool.query('DELETE FROM rrhh.catalogos WHERE parent_id = $1', [hijoId]);
@@ -1012,6 +1050,7 @@ router.post('/empleados', async (req, res) => {
     data.contrasena = '';
     delete data.rol;
 
+    await normalizarCargoEmpleado(data);
     const created = await insertRow('empleados', data);
 
     await pool.query(
@@ -1039,6 +1078,7 @@ router.put('/empleados/:id', async (req, res) => {
        contraseña de ahí en más es exclusivo del panel de Soporte. El ROL
        sí se puede cambiar acá (es un dato organizacional, no un secreto). */
     const { meta, usuario, contrasena, password, rol, ...changes } = req.body || {};
+    await normalizarCargoEmpleado(changes);
 
     /* Editar campos sensibles exige ser ADG/Gerente o confirmar la propia
        contraseña en este mismo request (igual criterio que para verlos). */

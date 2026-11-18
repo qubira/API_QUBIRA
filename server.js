@@ -167,6 +167,7 @@ app.use((err, req, res, next) => {
     console.log(`[SERVER] Orígenes permitidos: ${allowedOrigins.join(', ') || '(todos en dev)'}`);
     mantenerDespierto();
     estadoRoutes.iniciarMedicion();
+    require('./src/lib/jerarquia').asegurarJerarquia().then(() => console.log('[JERARQUIA] lista')).catch(e => console.warn('[JERARQUIA]', e.message));
   });
 })();
 

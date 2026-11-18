@@ -51,4 +51,22 @@ publico.get('/areas.js', (req, res) => {
   res.send(SCRIPT);
 });
 
+/* Mapa jerárquico: datos (sin nombres de personas) y el componente que lo dibuja */
+const fs = require('fs');
+const path = require('path');
+const { datosJerarquia } = require('../lib/jerarquia');
+const MAPA_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'jerarquia-mapa.js'), 'utf8');
+let cacheJer = { t: 0, d: null };
+publico.get('/jerarquia', async (req, res) => {
+  try {
+    if (!cacheJer.d || Date.now() - cacheJer.t > 60e3) cacheJer = { t: Date.now(), d: await datosJerarquia() };
+    res.set('Cache-Control', 'no-store');
+    res.json(cacheJer.d);
+  } catch (e) { res.status(500).json({ error: 'No se pudo leer la jerarquía' }); }
+});
+publico.get('/jerarquia.js', (req, res) => {
+  res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
+  res.send(MAPA_JS);
+});
+
 module.exports = { publico };

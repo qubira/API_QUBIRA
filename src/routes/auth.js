@@ -9,6 +9,7 @@ const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { getEmployeeCargo, logSecurityEvent, logLoginAudit } = require('../lib/audit');
 const { getAuthorizedModules } = require('../lib/moduleAccess');
+const { infoCargo } = require('../lib/jerarquia');
 const { encrypt: encryptField, decrypt: decryptField } = require('../lib/crypto');
 const sec = require('../lib/security');
 
@@ -56,9 +57,10 @@ async function issueSession(user, req, canal = 'web') {
     [user.id, token, ip, req.headers['user-agent'] || null, expires, canal]
   );
 
-  const [cargo, authorized_modules] = await Promise.all([
+  const [cargo, authorized_modules, info] = await Promise.all([
     getEmployeeCargo(user.username).catch(() => null),
     getAuthorizedModules(user.username, user.nivel_acceso, user.id).catch(() => []),
+    infoCargo(user.username).catch(() => null),
   ]);
 
   return {
@@ -67,6 +69,7 @@ async function issueSession(user, req, canal = 'web') {
       id: user.id, nombre: user.nombre, apellidos: user.apellidos, username: user.username,
       correo: user.correo, rol: user.rol, nivel_acceso: user.nivel_acceso,
       avatar_color: user.avatar_color, cargo, authorized_modules,
+      nivel_cargo: info?.nivel || null, subcargo: info?.subcargo || null,
     },
   };
 }
@@ -707,11 +710,12 @@ router.post('/security/block-replacing-ip', async (req, res) => {
    cliente) — login/modulo.html y el chequeo de cada panel lo usan.
    ============================================================ */
 router.get('/me', requireAuth, async (req, res) => {
-  const [cargo, authorized_modules] = await Promise.all([
+  const [cargo, authorized_modules, info] = await Promise.all([
     getEmployeeCargo(req.user.username).catch(() => null),
     getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id).catch(() => []),
+    infoCargo(req.user.username).catch(() => null),
   ]);
-  return res.json({ ok: true, user: { ...req.user, cargo, authorized_modules } });
+  return res.json({ ok: true, user: { ...req.user, cargo, authorized_modules, nivel_cargo: info?.nivel || null, subcargo: info?.subcargo || null } });
 });
 
 module.exports = router;

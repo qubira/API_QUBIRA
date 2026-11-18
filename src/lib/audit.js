@@ -48,6 +48,9 @@ async function getEmployeeCargo(username) {
 
 async function canViewAudit(req) {
   if (req.user.nivel_acceso >= 100) return true;
+  // Por nivel jerárquico (N1 a N5); los nombres antiguos quedan como respaldo
+  const info = await require('./jerarquia').infoCargo(req.user.username).catch(() => null);
+  if (info && info.nivel) return info.nivel <= 5;
   const cargo = await getEmployeeCargo(req.user.username);
   return !!(cargo && QUALIFYING_CARGOS.includes(cargo));
 }
