@@ -10,7 +10,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
-const { getEmployeeArea } = require('../lib/employeeArea');
+const { getEmployeeArea, canonArea, sqlCanonArea } = require('../lib/employeeArea');
 const { ensureAuditSchema, canViewAudit } = require('../lib/audit');
 
 const router = express.Router();
@@ -77,14 +77,14 @@ router.get('/logs', async (req, res) => {
     if (area === 'ALL') {
       if (!canSeeOtherAreas) return res.status(403).json({ error: 'No tienes permiso para ver todas las áreas' });
     } else if (area) {
-      const wantedArea = area.toUpperCase() === 'ORH' ? 'RRHH' : area.toUpperCase();
+      const wantedArea = canonArea(area);
       if (!canSeeOtherAreas && wantedArea !== viewerArea) {
         return res.status(403).json({ error: 'No tienes permiso para ver la auditoría de otra área' });
       }
-      params.push(wantedArea); where += ` AND (CASE WHEN upper(trim(c.nombre)) = 'ORH' THEN 'RRHH' ELSE upper(trim(c.nombre)) END) = $${params.length}`;
+      params.push(wantedArea); where += ` AND ${sqlCanonArea('c.nombre')} = $${params.length}`;
     } else {
       if (!viewerArea) return res.json({ rows: [], total: 0 });
-      params.push(viewerArea); where += ` AND (CASE WHEN upper(trim(c.nombre)) = 'ORH' THEN 'RRHH' ELSE upper(trim(c.nombre)) END) = $${params.length}`;
+      params.push(viewerArea); where += ` AND ${sqlCanonArea('c.nombre')} = $${params.length}`;
     }
 
     if (!canSeeOtherAreas) {

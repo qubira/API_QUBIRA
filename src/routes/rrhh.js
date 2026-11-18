@@ -1,6 +1,7 @@
 'use strict';
 
 const express    = require('express');
+const { canonArea } = require('../lib/employeeArea');
 const crypto     = require('crypto');
 const multer     = require('multer');
 const bcrypt     = require('bcryptjs');
@@ -288,13 +289,16 @@ router.use((req, res, next) => {
 const AREAS_OFICIALES = ['GG', 'ADG', 'TI', 'ORH', 'SOPORTE', 'ODN', 'OPP', 'OCM', 'ODACL', 'DST'];
 
 /* Alinea el catálogo existente: renombra RRHH -> ORH y agrega las áreas que falten.
-   Idempotente: corre una vez por arranque del servidor. */
+   Corre una sola vez: si ORH ya existe, el catálogo lo administra ORH (crear, renombrar o borrar áreas). */
 let areasAlineadas = false;
 async function alinearAreasTrabajo() {
   if (areasAlineadas) return;
-  await pool.query("UPDATE rrhh.catalogos SET nombre = 'ORH' WHERE catalogo = 'areasTrabajo' AND upper(trim(nombre)) = 'RRHH'");
   const { rows } = await pool.query("SELECT upper(trim(nombre)) AS n FROM rrhh.catalogos WHERE catalogo = 'areasTrabajo'");
   const hay = new Set(rows.map(r => r.n));
+  // Solo la primera vez (cuando aún no existe ORH): después el catálogo lo maneja ORH
+  if (hay.has('ORH')) { areasAlineadas = true; return; }
+  await pool.query("UPDATE rrhh.catalogos SET nombre = 'ORH' WHERE catalogo = 'areasTrabajo' AND upper(trim(nombre)) = 'RRHH'");
+  hay.delete('RRHH'); hay.add('ORH');
   for (const nombre of AREAS_OFICIALES) {
     if (!hay.has(nombre)) await pool.query('INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id) VALUES ($1, $2, $3, NULL)', [uid(), 'areasTrabajo', nombre]);
   }
@@ -588,7 +592,7 @@ async function getViewerAreaCargo(username) {
   const cargo = cats.find(c => c.id === rows[0].cargo_id);
   if (!area || !cargo) return null;
   const a = area.nombre.trim().toUpperCase();
-  return { area: a === 'ORH' ? 'RRHH' : a, cargo: cargo.nombre.trim().toUpperCase() };
+  return { area: canonArea(a), cargo: cargo.nombre.trim().toUpperCase() };
 }
 
 async function isPrivilegedViewer(username) {

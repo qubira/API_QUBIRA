@@ -26,6 +26,7 @@ const casesPublicRouter = require('./src/routes/cases-public');
 const ocmRoutes         = require('./src/routes/ocm');
 const sitiosRoutes      = require('./src/routes/sitios');
 const estadoRoutes      = require('./src/routes/estado');
+const areasRoutes       = require('./src/routes/areas');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -131,6 +132,7 @@ app.use('/api/ocm',               ocmRoutes.router);
 app.use('/api/public/ocm',        ocmRoutes.publico);
 app.use('/api/ocm/sitios',        sitiosRoutes.router);
 app.use('/api/public',            estadoRoutes.publico); // /estado y /estado.js (horas de Render)
+app.use('/api/public',            areasRoutes.publico);  // /areas y /areas.js (catálogo de áreas de ORH)
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, status: 'running', service: 'qubira-api' });

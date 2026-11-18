@@ -19,7 +19,7 @@ const multer           = require('multer');
 const { pool }         = require('../db');
 const cloudinary       = require('../config/cloudinary');
 const { requireAuth }  = require('../middleware/auth');
-const { getEmployeeArea } = require('../lib/employeeArea');
+const { getEmployeeArea, canonArea, sqlCanonArea } = require('../lib/employeeArea');
 const { requireModuleAccess } = require('../lib/moduleAccess');
 const ti                = require('./ti'); // reutiliza canAccessProject (misma regla de acceso a proyectos TI/ADG)
 
@@ -210,7 +210,7 @@ router.get('/directory', async (req, res) => {
       const n = params.length;
       where += ` AND (u.nombre ILIKE $${n} OR u.apellidos ILIKE $${n} OR e.cargo ILIKE $${n})`;
     }
-    if (area) { const a = area.toUpperCase() === 'ORH' ? 'RRHH' : area.toUpperCase(); params.push(a); where += ` AND (CASE WHEN upper(trim(c.nombre)) = 'ORH' THEN 'RRHH' ELSE upper(trim(c.nombre)) END) = ${params.length}`; }
+    if (area) { const a = canonArea(area); params.push(a); where += ` AND ${sqlCanonArea('c.nombre')} = $${params.length}`; }
     const { rows } = await pool.query(`
       SELECT u.id AS user_id, u.nombre, u.apellidos, e.cargo, c.nombre AS area
       FROM public.usuarios u
