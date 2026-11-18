@@ -1,7 +1,8 @@
 'use strict';
 
 const express    = require('express');
-const { canonArea } = require('../lib/employeeArea');
+const { canonArea, asegurarAreas, refrescarAreas } = require('../lib/employeeArea');
+const { siglasUsadas } = require('../lib/codificacion');
 const { asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia, validarJerarquiaEmpleado } = require('../lib/jerarquia');
 const crypto     = require('crypto');
 const multer     = require('multer');
@@ -287,7 +288,7 @@ router.use((req, res, next) => {
 
 /* Áreas de trabajo oficiales (una por oficina/módulo + Gerencia General).
    RRHH pasó a llamarse ORH (Oficina de Recursos Humanos). */
-const AREAS_OFICIALES = ['GG', 'ADG', 'TI', 'ORH', 'SOPORTE', 'ODN', 'OPP', 'OCM', 'ODACL', 'DST'];
+const AREAS_OFICIALES = ['GG', 'ADG', 'OTI', 'ORH', 'OCOS', 'ODN', 'OPP', 'OCM', 'ODACL', 'DST'];
 
 /* Alinea el catálogo existente: renombra RRHH -> ORH y agrega las áreas que falten.
    Corre una sola vez: si ORH ya existe, el catálogo lo administra ORH (crear, renombrar o borrar áreas). */
@@ -668,6 +669,8 @@ router.get('/bootstrap', async (req, res) => {
     await seedPaisesIfEmpty();
     await alinearAreasTrabajo();
     await asegurarJerarquia();
+    await asegurarAreas();
+    const usadas = await siglasUsadas();
 
     const [
       departments, employees, contracts, documents,
@@ -690,7 +693,12 @@ router.get('/bootstrap', async (req, res) => {
     const catalogs = {};
     for (const r of catalogRows.rows) {
       if (!catalogs[r.catalogo]) catalogs[r.catalogo] = [];
-      catalogs[r.catalogo].push({ id: r.id, nombre: r.nombre, parentId: r.parent_id, nivel: r.nivel ?? null, area: r.area ?? null });
+      const item = { id: r.id, nombre: r.nombre, parentId: r.parent_id, nivel: r.nivel ?? null, area: r.area ?? null };
+      if (r.catalogo === 'areasTrabajo') {
+        Object.assign(item, { sigla: r.sigla || null, nombreCompleto: r.nombre_completo || null, alias: r.alias || [],
+          activo: r.activo !== false, siglaBloqueada: !!(r.sigla && usadas.has(r.sigla)) });
+      }
+      catalogs[r.catalogo].push(item);
     }
 
     const auditLog = auditRows.rows.map(a => ({
@@ -897,6 +905,33 @@ router.get('/jerarquia', async (req, res) => {
   try { res.json(await datosJerarquia()); } catch (e) { res.status(500).json({ ok: false, error: 'No se pudo leer la jerarquía' }); }
 });
 
+/* Áreas de trabajo: sigla (2 a 5 letras, única), nombre completo, alias y activa.
+   El nombre visible del área es su sigla. Devuelve { datos } o { error }. */
+async function datosArea(b, idActual) {
+  await asegurarAreas();
+  const { rows: actual } = idActual ? await pool.query("SELECT * FROM rrhh.catalogos WHERE id = $1 AND catalogo = 'areasTrabajo'", [idActual]) : { rows: [] };
+  const previo = actual[0] || null;
+  const sigla = String(b.sigla ?? b.nombre ?? (previo && previo.sigla) ?? '').trim().toUpperCase();
+  if (!/^[A-Z]{2,5}$/.test(sigla)) return { error: 'La sigla del área debe tener de 2 a 5 letras (sin números, espacios ni tildes).' };
+  if (previo && previo.sigla && previo.sigla !== sigla && (await siglasUsadas()).has(previo.sigla)) {
+    return { error: `La sigla ${previo.sigla} ya se usó en códigos de documentos y no se puede cambiar. Si necesitas otra sigla, crea un área nueva y desactiva esta.` };
+  }
+  const { rows: choque } = await pool.query(
+    "SELECT sigla FROM rrhh.catalogos WHERE catalogo = 'areasTrabajo' AND id <> $2 AND (upper(sigla) = $1 OR upper(trim(nombre)) = $1 OR $1 = ANY(alias))",
+    [sigla, idActual || '']);
+  if (choque.length) return { error: `Ya existe un área con la sigla o el alias ${sigla}.` };
+  const nombreCompleto = String(b.nombreCompleto ?? (previo && previo.nombre_completo) ?? '').trim();
+  if (!nombreCompleto) return { error: 'Escribe el nombre completo del área (se imprime en los documentos).' };
+  let alias = b.alias === undefined ? (previo && previo.alias) || [] : (Array.isArray(b.alias) ? b.alias : String(b.alias).split(','));
+  alias = [...new Set(alias.map(a => String(a).trim().toUpperCase()).filter(a => a && a !== sigla))];
+  if (alias.some(a => !/^[A-Z0-9 ÁÉÍÓÚÑ]{2,30}$/.test(a))) return { error: 'Cada alias debe tener solo letras, números o espacios.' };
+  if (previo && previo.sigla && previo.sigla !== sigla && !alias.includes(previo.sigla)) alias.push(previo.sigla); // la sigla anterior sigue reconociéndose
+  const activo = b.activo === undefined ? (previo ? previo.activo !== false : true) : !!b.activo;
+  return { datos: { sigla, nombreCompleto, alias, activo } };
+}
+const areaSalida = r => ({ id: r.id, catalogo: r.catalogo, nombre: r.nombre, parentId: r.parent_id, nivel: r.nivel, area: r.area,
+  sigla: r.sigla, nombreCompleto: r.nombre_completo, alias: r.alias || [], activo: r.activo !== false });
+
 /* ============================================================
    Catálogos — alta de items (tipo doc, nacionalidad, cargo, etc.)
    ============================================================ */
@@ -904,6 +939,14 @@ router.post('/catalogos/:catalogo', async (req, res) => {
   try {
     const { catalogo } = req.params;
     const { nombre, parentId } = req.body || {};
+    if (catalogo === 'areasTrabajo') {
+      const { datos, error } = await datosArea(req.body || {});
+      if (error) return res.status(400).json({ ok: false, error });
+      const { rows } = await pool.query(`INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id, sigla, nombre_completo, alias, activo)
+        VALUES ($1, 'areasTrabajo', $2, NULL, $2, $3, $4, $5) RETURNING *`, [uid(), datos.sigla, datos.nombreCompleto, datos.alias, datos.activo]);
+      await refrescarAreas().catch(() => {});
+      return res.status(201).json({ ok: true, data: areaSalida(rows[0]) });
+    }
     if (!nombre) return res.status(400).json({ ok: false, error: 'Falta el nombre' });
     await asegurarJerarquia().catch(() => {});
     let nivel = null, area = null;
@@ -938,6 +981,15 @@ router.post('/catalogos/:catalogo', async (req, res) => {
 router.put('/catalogos/item/:id', async (req, res) => {
   try {
     const { nombre } = req.body || {};
+    const { rows: esArea } = await pool.query("SELECT 1 FROM rrhh.catalogos WHERE id = $1 AND catalogo = 'areasTrabajo'", [req.params.id]);
+    if (esArea.length) {
+      const { datos, error } = await datosArea(req.body || {}, req.params.id);
+      if (error) return res.status(400).json({ ok: false, error });
+      const { rows } = await pool.query(`UPDATE rrhh.catalogos SET nombre = $2, sigla = $2, nombre_completo = $3, alias = $4, activo = $5
+        WHERE id = $1 RETURNING *`, [req.params.id, datos.sigla, datos.nombreCompleto, datos.alias, datos.activo]);
+      await refrescarAreas().catch(() => {});
+      return res.json({ ok: true, data: areaSalida(rows[0]) });
+    }
     if (!nombre) return res.status(400).json({ ok: false, error: 'Falta el nombre' });
 
     const { rows } = await pool.query(
@@ -961,7 +1013,16 @@ router.delete('/catalogos/item/:id', async (req, res) => {
   try {
     const id = req.params.id;
     // Un cargo principal con sub-cargos o empleados no se borra (arrastraría la jerarquía)
-    const { rows: item } = await pool.query('SELECT catalogo FROM rrhh.catalogos WHERE id = $1', [id]);
+    const { rows: item } = await pool.query('SELECT catalogo, sigla FROM rrhh.catalogos WHERE id = $1', [id]);
+    if (item.length && item[0].catalogo === 'areasTrabajo') {
+      const { rows: [uso] } = await pool.query('SELECT COUNT(*)::int AS n FROM rrhh.empleados WHERE area_trabajo_id = $1', [id]);
+      const usada = item[0].sigla && (await siglasUsadas()).has(item[0].sigla);
+      if (uso.n || usada) {
+        return res.status(409).json({ ok: false, error: usada
+          ? `El área ${item[0].sigla} ya tiene documentos codificados: no se elimina, se desactiva (sus códigos siguen siendo válidos).`
+          : `Hay ${uso.n} empleado(s) en esta área. Cámbialos de área o desactívala en lugar de eliminarla.` });
+      }
+    }
     if (item.length && item[0].catalogo === 'cargos') {
       const { rows: [uso] } = await pool.query(`SELECT
         (SELECT COUNT(*) FROM rrhh.catalogos WHERE parent_id = $1)::int AS subs,
@@ -979,6 +1040,7 @@ router.delete('/catalogos/item/:id', async (req, res) => {
     await pool.query('DELETE FROM rrhh.catalogos WHERE parent_id = $1', [id]);
     const { rowCount } = await pool.query('DELETE FROM rrhh.catalogos WHERE id = $1', [id]);
     if (!rowCount) return res.status(404).json({ ok: false, error: 'Ítem no encontrado' });
+    if (item.length && item[0].catalogo === 'areasTrabajo') await refrescarAreas().catch(() => {});
     return res.json({ ok: true });
   } catch (err) {
     console.error('[RRHH] DELETE /catalogos/item error:', err.message);

@@ -84,11 +84,7 @@ const FUNCIONES = {
   ODACL: 'Asuntos legales: contratos, cumplimiento normativo, protección de datos y consultas jurídicas.',
   DST: 'Desarrollo de Seguridad y Tecnología: seguridad e integridad de alto nivel. Crea los sistemas de seguridad y ciberseguridad y defiende los activos y sistemas internos frente a intrusiones y robo de información.',
 };
-const NOMBRES_AREA = {
-  ADG: 'Alta Dirección Gerencial', GG: 'Gerencia General', TI: 'Oficina de Tecnología e Información', RRHH: 'Oficina de Recursos Humanos',
-  SOPORTE: 'Oficina de Centro de Operaciones y Servicios', COMERCIAL: 'Oficina de Desarrollo de Negocios', OPP: 'Oficina de Presupuestos y Planeación',
-  OCM: 'Oficina de Comunicación y Marketing', ODACL: 'Oficina de Asuntos Corporativos y Legales', DST: 'Desarrollo de Seguridad y Tecnología',
-};
+// El nombre completo de cada área se lee del catálogo de ORH (no se escribe aquí).
 // A quién reporta cada área
 const REPORTA = { ADG: null, GG: 'ADG', DST: 'ADG' };
 const reportaA = clave => (clave in REPORTA ? REPORTA[clave] : 'GG');
@@ -209,7 +205,7 @@ async function datosJerarquia() {
       return { ...l, principal: p ? p.nombre : l.base };
     }),
     areas: areas.map(a => ({
-      ...a, nombre: NOMBRES_AREA[a.clave] || a.etiqueta, funcion: FUNCIONES[a.clave] || '',
+      ...a, nombre: a.nombre || a.etiqueta, funcion: FUNCIONES[a.clave] || '',
       reporta: reportaA(a.clave), reportaEtiqueta: reportaA(a.clave) ? etiquetaArea(reportaA(a.clave)) : null,
       cargos: subcargos.filter(s => s.area === a.clave).sort((x, y) => x.nivel - y.nivel),
     })),
@@ -237,4 +233,4 @@ async function validarJerarquiaEmpleado(ficha, empleadoId) {
   return null;
 }
 
-module.exports = { validarJerarquiaEmpleado, NIVELES, nivelDeNombre, asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia };
+module.exports = { validarJerarquiaEmpleado, reportaA, NIVELES, nivelDeNombre, asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia };

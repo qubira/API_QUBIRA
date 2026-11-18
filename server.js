@@ -27,6 +27,7 @@ const ocmRoutes         = require('./src/routes/ocm');
 const sitiosRoutes      = require('./src/routes/sitios');
 const estadoRoutes      = require('./src/routes/estado');
 const areasRoutes       = require('./src/routes/areas');
+const documentosRouter  = require('./src/routes/documentos');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -126,6 +127,7 @@ app.use('/api/comercial',  comercialRouter);
 app.use('/api/opp',        oppRouter);
 app.use('/api/divisas',    divisasRouter);
 app.use('/api/odacl',      odaclRouter);
+app.use('/api/documentos', documentosRouter); // registro central de documentos (CODIFICACION.md)
 app.use('/api/public/constancias', constanciasPublicRouter);
 app.use('/api/public/cases',       casesPublicRouter);
 app.use('/api/ocm',               ocmRoutes.router);
@@ -168,6 +170,9 @@ app.use((err, req, res, next) => {
     mantenerDespierto();
     estadoRoutes.iniciarMedicion();
     require('./src/lib/jerarquia').asegurarJerarquia().then(() => console.log('[JERARQUIA] lista')).catch(e => console.warn('[JERARQUIA]', e.message));
+    require('./src/lib/employeeArea').iniciarAreas()
+      .then(() => require('./src/lib/codificacion').asegurarCodificacion())
+      .then(() => console.log('[CODIFICACION] lista')).catch(e => console.warn('[CODIFICACION]', e.message));
   });
 })();
 
