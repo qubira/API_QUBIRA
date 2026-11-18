@@ -15,7 +15,14 @@ async function getEmployeeArea(username) {
      LIMIT 1`,
     [username]
   );
-  return rows.length ? rows[0].nombre.trim().toUpperCase() : null;
+  if (!rows.length) return null;
+  const area = rows[0].nombre.trim().toUpperCase();
+  return ALIAS_AREA[area] || area;
 }
+
+/* Nombres oficiales de área que se guardan con su clave interna histórica:
+   ORH (Oficina de Recursos Humanos) sigue siendo RRHH para permisos,
+   calendario y auditoría, así nada que ya esté guardado deja de coincidir. */
+const ALIAS_AREA = { ORH: 'RRHH' };
 
 module.exports = { getEmployeeArea };

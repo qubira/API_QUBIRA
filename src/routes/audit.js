@@ -77,14 +77,14 @@ router.get('/logs', async (req, res) => {
     if (area === 'ALL') {
       if (!canSeeOtherAreas) return res.status(403).json({ error: 'No tienes permiso para ver todas las áreas' });
     } else if (area) {
-      const wantedArea = area.toUpperCase();
+      const wantedArea = area.toUpperCase() === 'ORH' ? 'RRHH' : area.toUpperCase();
       if (!canSeeOtherAreas && wantedArea !== viewerArea) {
         return res.status(403).json({ error: 'No tienes permiso para ver la auditoría de otra área' });
       }
-      params.push(wantedArea); where += ` AND upper(c.nombre) = $${params.length}`;
+      params.push(wantedArea); where += ` AND (CASE WHEN upper(trim(c.nombre)) = 'ORH' THEN 'RRHH' ELSE upper(trim(c.nombre)) END) = $${params.length}`;
     } else {
       if (!viewerArea) return res.json({ rows: [], total: 0 });
-      params.push(viewerArea); where += ` AND upper(c.nombre) = $${params.length}`;
+      params.push(viewerArea); where += ` AND (CASE WHEN upper(trim(c.nombre)) = 'ORH' THEN 'RRHH' ELSE upper(trim(c.nombre)) END) = $${params.length}`;
     }
 
     if (!canSeeOtherAreas) {

@@ -12,7 +12,7 @@ const { encrypt: encryptField, decrypt: decryptField } = require('../lib/crypto'
 
 const router = express.Router();
 router.use(requireAuth); /* toda el area de RRHH exige sesion valida */
-router.use(requireModuleAccess('RRHH'));
+router.use(requireModuleAccess('RRHH', 'ORH'));
 
 function uid() { return crypto.randomUUID(); }
 
@@ -283,6 +283,24 @@ router.use((req, res, next) => {
   });
 });
 
+/* Áreas de trabajo oficiales (una por oficina/módulo + Gerencia General).
+   RRHH pasó a llamarse ORH (Oficina de Recursos Humanos). */
+const AREAS_OFICIALES = ['GG', 'ADG', 'TI', 'ORH', 'SOPORTE', 'ODN', 'OPP', 'OCM', 'ODACL', 'DST'];
+
+/* Alinea el catálogo existente: renombra RRHH -> ORH y agrega las áreas que falten.
+   Idempotente: corre una vez por arranque del servidor. */
+let areasAlineadas = false;
+async function alinearAreasTrabajo() {
+  if (areasAlineadas) return;
+  await pool.query("UPDATE rrhh.catalogos SET nombre = 'ORH' WHERE catalogo = 'areasTrabajo' AND upper(trim(nombre)) = 'RRHH'");
+  const { rows } = await pool.query("SELECT upper(trim(nombre)) AS n FROM rrhh.catalogos WHERE catalogo = 'areasTrabajo'");
+  const hay = new Set(rows.map(r => r.n));
+  for (const nombre of AREAS_OFICIALES) {
+    if (!hay.has(nombre)) await pool.query('INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id) VALUES ($1, $2, $3, NULL)', [uid(), 'areasTrabajo', nombre]);
+  }
+  areasAlineadas = true;
+}
+
 /* Semilla de catalogos base la primera vez que se usan (idioma, ubicaciones, etc.) */
 const CATALOG_SEED = {
   tiposDocumento: ['DNI', 'Carné de Extranjería', 'Pasaporte'],
@@ -290,7 +308,7 @@ const CATALOG_SEED = {
   estadosCiviles: ['Soltero(a)', 'Casado(a)', 'Divorciado(a)', 'Conviviente'],
   dominiosEmail: ['gmail.com', 'hotmail.com', 'outlook.com', 'qubira.com'],
   tiposAntecedente: ['Robo', 'Hurto', 'Estafa', 'Homicidio', 'Otro'],
-  areasTrabajo: ['ADG', 'GG', 'TI', 'RRHH'],
+  areasTrabajo: AREAS_OFICIALES,
   cargos: ['Practicante', 'Soporte', 'Analista', 'Supervisor', 'Coordinador', 'Gerente'],
 };
 
@@ -569,7 +587,8 @@ async function getViewerAreaCargo(username) {
   const area = cats.find(c => c.id === rows[0].area_trabajo_id);
   const cargo = cats.find(c => c.id === rows[0].cargo_id);
   if (!area || !cargo) return null;
-  return { area: area.nombre.trim().toUpperCase(), cargo: cargo.nombre.trim().toUpperCase() };
+  const a = area.nombre.trim().toUpperCase();
+  return { area: a === 'ORH' ? 'RRHH' : a, cargo: cargo.nombre.trim().toUpperCase() };
 }
 
 async function isPrivilegedViewer(username) {
@@ -636,6 +655,7 @@ router.get('/bootstrap', async (req, res) => {
   try {
     await seedCatalogsIfEmpty();
     await seedPaisesIfEmpty();
+    await alinearAreasTrabajo();
 
     const [
       departments, employees, contracts, documents,

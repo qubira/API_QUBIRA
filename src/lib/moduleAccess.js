@@ -20,7 +20,7 @@ const { getGrantedModules } = require('./security');
    panel propio: quedan registrados como módulos válidos (y aparecen en
    modulo.html) pero sin panel desplegado todavía, así que se muestran
    como "Próximamente" hasta que exista su repo/deploy. */
-const MODULES = ['TI', 'ADG', 'RRHH', 'SOPORTE', 'OCOS', 'COMERCIAL', 'ODN', 'DST', 'ACM', 'OCM', 'DJ', 'ODACL', 'OPP', 'CG'];
+const MODULES = ['TI', 'ADG', 'RRHH', 'SOPORTE', 'OCOS', 'COMERCIAL', 'ODN', 'DST', 'ACM', 'OCM', 'DJ', 'ODACL', 'OPP', 'CG', 'ORH'];
 
 /* Módulos que un usuario tiene autorizados:
    - nivel_acceso>=100 (CEO/superadmin): todos, incluido DST.
@@ -34,7 +34,10 @@ async function getAuthorizedModules(username, nivelAcceso, userId) {
     userId ? getGrantedModules(userId) : Promise.resolve([]),
   ]);
   const set = new Set(granted.filter(m => MODULES.includes(m)));
-  if (area && MODULES.includes(area)) set.add(area);
+  // DST solo se obtiene por otorgamiento explícito o nivel alto, nunca solo por estar en el área
+  if (area && MODULES.includes(area) && area !== 'DST') set.add(area);
+  if (set.has('RRHH')) set.add('ORH');
+  if (set.has('ORH')) set.add('RRHH');
   if (set.has('CG')) set.add('OPP');
   if (set.has('OPP')) set.add('CG');
   if (set.has('COMERCIAL')) set.add('ODN');

@@ -221,8 +221,8 @@ router.get('/totp-compliance', requirePrivileged, async (req, res) => {
       where += ` AND (u.nombre ILIKE $${params.length} OR u.apellidos ILIKE $${params.length} OR u.username ILIKE $${params.length} OR u.correo ILIKE $${params.length})`;
     }
     if (area) {
-      params.push(area);
-      where += ` AND c.nombre = $${params.length}`;
+      params.push(String(area).toUpperCase() === 'ORH' ? 'RRHH' : String(area).toUpperCase());
+      where += ` AND (CASE WHEN upper(trim(c.nombre)) = 'ORH' THEN 'RRHH' ELSE upper(trim(c.nombre)) END) = ${params.length}`;
     }
     if (status) {
       params.push(status);
