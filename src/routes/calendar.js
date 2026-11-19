@@ -312,7 +312,7 @@ router.get('/team-availability', async (req, res) => {
 const HORA_RE = /^\d{2}:\d{2}$/;
 const FECHA_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-router.post('/team-plan', requireModuleAccess('COMERCIAL', 'ODN', 'ADG'), async (req, res) => {
+router.post('/team-plan', requireModuleAccess('COMERCIAL', 'ODN', 'ADG', 'GG'), async (req, res) => {
   try {
     const area = canonArea(req.body.area || 'TI');
     const modality = req.body.modality === 'presencial' ? 'presencial' : 'virtual';

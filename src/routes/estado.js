@@ -15,6 +15,9 @@ const { pool } = require('../db');
 
 const publico = express.Router();
 const LIMITE = Number(process.env.RENDER_HORAS_LIMITE) || 750;
+/* Desde el 18/11/2026 la API está en el plan de pago Starter de Render: sin límite de horas.
+   Si se vuelve al plan gratuito, poner RENDER_PLAN=free en Render y el indicador vuelve a contar las 750 h. */
+const PLAN_PAGO = String(process.env.RENDER_PLAN || 'starter').toLowerCase() !== 'free';
 const INICIO = new Date();
 const BLOQUE_MIN = 5;
 
@@ -76,6 +79,7 @@ publico.get('/estado', async (req, res) => {
       inicio_mes: r.inicio_mes,
       fin_mes: r.fin_mes,
       servicio: 'API_QUBIRA',
+      plan: PLAN_PAGO ? 'pago' : 'gratis',
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -104,6 +108,13 @@ var datos=null,base=0,t0=Date.now();
 function dur(s){s=Math.max(0,Math.floor(s));var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+' d '+h+' h':h?h+' h '+m+' min':m+' min'}
 function hrs(x){return (Math.round(x*10)/10).toLocaleString('es-PE')+' h'}
 function pinta(){if(!datos)return;var up=base+(Date.now()-t0)/1000;
+if(datos.plan==='pago'){el.className=(mini?'min ':'');el.querySelector('.txt').innerHTML='Activo '+dur(up)+' <span class="sep">|</span> Plan de pago';
+det.innerHTML='<b>Servidor QUBIRA (Render)</b>'+
+'<div class="fila"><span>Plan</span><b>Starter (de pago)</b></div>'+
+'<div class="fila"><span>Límite de horas</span><b style="color:#059669">Sin límite</b></div>'+
+'<div class="fila"><span>Encendido sin cortes</span><b>'+dur(up)+'</b></div>'+
+'<div class="fila"><span>Horas encendido este mes</span><b>'+hrs(datos.horas_usadas_mes)+'</b></div>'+
+'<small>El servidor ya no se apaga por horas. Clic derecho en la etiqueta para minimizarla.</small>';return}
 var cls=datos.horas_restantes<50?'critico':datos.horas_restantes<150?'alerta':'';el.className=(mini?'min ':'')+cls;
 el.querySelector('.txt').innerHTML='Activo '+dur(up)+' <span class="sep">|</span> Quedan '+hrs(datos.horas_restantes)+' de '+datos.limite;
 var p=Math.min(100,datos.porcentaje),col=p>=93?'#ef4444':p>=80?'#f59e0b':'#10b981';

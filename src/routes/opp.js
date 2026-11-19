@@ -9,7 +9,7 @@ const router = express.Router();
 router.use(requireAuth);
 /* OPP: Oficina de Presupuestos y Planeación (también permite acceso
    a cuentas con módulo ADG o CG por retrocompatibilidad/supervisión). */
-router.use(requireModuleAccess('OPP', 'CG', 'ADG'));
+router.use(requireModuleAccess('OPP', 'CG', 'ADG', 'GG'));
 
 let schemaReady = null;
 function ensureOppSchema() {

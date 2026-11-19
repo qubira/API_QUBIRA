@@ -15,7 +15,7 @@ router.use(requireAuth);
 /* Este router sirve tanto al panel de TI como al de ADG (comparten
    backend) — cualquier otra área queda fuera, cerrando el hueco de
    que hoy cualquier cuenta autenticada podía llamar estos endpoints. */
-router.use(requireModuleAccess('TI', 'ADG'));
+router.use(requireModuleAccess('TI', 'ADG', 'GG'));
 
 function uid() { return crypto.randomUUID(); }
 
@@ -214,9 +214,12 @@ router.use((req, res, next) => { ensureSchema().then(() => next()).catch(next); 
    Solo ADG puede crear proyectos, subir contratos/proformas y aprobar
    el cierre. Solo TI puede reclamar proyectos y marcarlos finalizados.
    ============================================================ */
+// La Gerencia General (GG) usa las mismas herramientas que ADG: un requisito «ADG» lo cumple también GG
+const AREAS_DIRECCION = ['ADG', 'GG'];
+const cumpleArea = (mine, area) => mine === area || (area === 'ADG' && AREAS_DIRECCION.includes(mine));
 async function requireArea(req, res, area) {
   const mine = await getEmployeeArea(req.user.username);
-  if (mine !== area && req.user.nivel_acceso < 100) {
+  if (!cumpleArea(mine, area) && req.user.nivel_acceso < 100) {
     res.status(403).json({ error: `Esta acción es exclusiva del área ${area}` });
     return false;
   }
@@ -240,7 +243,7 @@ async function isProjectLockedForTi(projectId) {
    ============================================================ */
 async function isPrivilegedViewer(req) {
   const myArea = await getEmployeeArea(req.user.username);
-  return myArea === 'ADG' || req.user.nivel_acceso >= 100;
+  return AREAS_DIRECCION.includes(myArea) || req.user.nivel_acceso >= 100;
 }
 
 async function canAccessProject(req, projectId) {
@@ -619,7 +622,7 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
     const myArea = await getEmployeeArea(req.user.username);
     const privileged = req.user.nivel_acceso >= 100;
 
-    if (old.status === 'completed' && myArea !== 'ADG' && !privileged) {
+    if (old.status === 'completed' && !AREAS_DIRECCION.includes(myArea) && !privileged) {
       return res.status(403).json({ error: 'Este proyecto ya fue completado y aprobado por ADG — OTI ya no puede modificarlo' });
     }
 
@@ -628,7 +631,7 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
         if (myArea !== 'TI' && !privileged) return res.status(403).json({ error: 'Solo OTI puede marcar un proyecto como finalizado' });
         if (!['active', 'paused'].includes(old.status)) return res.status(400).json({ error: 'Solo se puede finalizar un proyecto activo o pausado' });
       } else if (status === 'completed') {
-        if (myArea !== 'ADG' && !privileged) return res.status(403).json({ error: 'Solo ADG puede aprobar y completar un proyecto' });
+        if (!AREAS_DIRECCION.includes(myArea) && !privileged) return res.status(403).json({ error: 'Solo ADG o GG pueden aprobar y completar un proyecto' });
         if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por OTI' });
       }
     }
@@ -792,7 +795,7 @@ router.get('/contracts', async (req, res) => {
     /* TI ve toda la información del contrato/proforma menos el archivo en
        sí — eso queda exclusivo de ADG. */
     const myArea = await getEmployeeArea(req.user.username);
-    if (myArea !== 'ADG' && req.user.nivel_acceso < 100) {
+    if (!AREAS_DIRECCION.includes(myArea) && req.user.nivel_acceso < 100) {
       rows.forEach(r => { r.file_path = null; });
     }
     res.json(rows);
@@ -804,7 +807,7 @@ router.get('/contracts/:id/file', async (req, res) => {
     const { rows } = await pool.query('SELECT file_path FROM ti.contracts WHERE id=$1', [req.params.id]);
     if (!rows.length || !rows[0].file_path) return res.status(404).json({ error: 'Archivo no encontrado' });
     const myArea = await getEmployeeArea(req.user.username);
-    if (myArea !== 'ADG' && req.user.nivel_acceso < 100) {
+    if (!AREAS_DIRECCION.includes(myArea) && req.user.nivel_acceso < 100) {
       return res.status(403).json({ error: 'No tienes acceso a este archivo' });
     }
     const signedUrl = signedRawFileUrl(rows[0].file_path);
@@ -1470,7 +1473,7 @@ router.put('/technology-catalog/:id', upload.single('image'), async (req, res) =
 router.put('/technology-catalog/:id/cost', async (req, res) => {
   try {
     const mine = await getEmployeeArea(req.user.username);
-    if (mine !== 'ADG' && mine !== 'OPP' && (req.user.nivel_acceso || 0) < 100) {
+    if (!AREAS_DIRECCION.includes(mine) && mine !== 'OPP' && (req.user.nivel_acceso || 0) < 100) {
       return res.status(403).json({ error: 'Esta acción es exclusiva de ADG u OPP' });
     }
     const toNum = v => (v === '' || v === undefined || v === null ? null : Number(v));

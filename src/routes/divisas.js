@@ -79,7 +79,7 @@ router.get('/', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.get('/historial', requireModuleAccess('OPP', 'CG', 'ADG'), async (req, res) => {
+router.get('/historial', requireModuleAccess('OPP', 'CG', 'ADG', 'GG'), async (req, res) => {
   try {
     const params = [];
     let where = '';
@@ -95,7 +95,7 @@ router.get('/historial', requireModuleAccess('OPP', 'CG', 'ADG'), async (req, re
 });
 
 /* Crear o actualizar una divisa (solo OPP). */
-router.put('/:codigo', requireModuleAccess('OPP', 'CG', 'ADG'), async (req, res) => {
+router.put('/:codigo', requireModuleAccess('OPP', 'CG', 'ADG', 'GG'), async (req, res) => {
   try {
     const codigo = String(req.params.codigo || '').toUpperCase();
     if (!CODIGO_RE.test(codigo)) return res.status(400).json({ error: 'El código debe tener 3 letras (ISO 4217, ej. USD)' });

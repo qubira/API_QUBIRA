@@ -17,9 +17,9 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 router.use(requireAuth);
 router.use((req, res, next) => {
   if (req.method === 'GET' && (req.path.startsWith('/templates') || req.path === '/info-societaria')) {
-    return requireModuleAccess('ODACL', 'DJ', 'ADG', 'COMERCIAL', 'ODN')(req, res, next);
+    return requireModuleAccess('ODACL', 'DJ', 'ADG', 'GG', 'COMERCIAL', 'ODN')(req, res, next);
   }
-  return requireModuleAccess('ODACL', 'DJ', 'ADG')(req, res, next);
+  return requireModuleAccess('ODACL', 'DJ', 'ADG', 'GG')(req, res, next);
 });
 
 let schemaReady = null;
