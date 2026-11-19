@@ -34,69 +34,38 @@ const NIVEL_POR_NOMBRE = {
 };
 const nivelDeNombre = n => NIVEL_POR_NOMBRE[String(n || '').trim().toUpperCase()] || null;
 
-// [clave interna del área, nivel, sub-cargos]
-const SUBCARGOS = [
-  ['ADG', 1, ['Presidente del Directorio', 'Director General (CEO)', 'Director de Operaciones (COO)', 'Director Financiero (CFO)', 'Director de Tecnología (CTO)', 'Director Comercial (CCO)']],
-  ['ADG', 6, ['Asesor de Dirección']], ['ADG', 8, ['Secretaria de Dirección']],
-  ['GG', 2, ['Gerente General', 'Gerente Adjunto', 'Gerente de Operaciones']],
-  ['GG', 6, ['Especialista en Gestión de Proyectos (PMO)']], ['GG', 7, ['Analista de Control de Gestión']], ['GG', 8, ['Asistente de Gerencia']],
-  ['TI', 3, ['Jefe de OTI']], ['TI', 4, ['Coordinador de Proyectos TI', 'Product Owner']], ['TI', 5, ['Líder Técnico (Tech Lead)', 'Scrum Master', 'Líder de QA']],
-  ['TI', 6, ['Arquitecto de Software', 'Desarrollador Senior', 'Ingeniero DevOps / Cloud', 'Administrador de Base de Datos (DBA)']],
-  ['TI', 7, ['Desarrollador Full Stack', 'Desarrollador Frontend', 'Desarrollador Backend', 'Desarrollador Móvil', 'Analista QA', 'Analista de Sistemas', 'Diseñador UX/UI']],
-  ['TI', 8, ['Desarrollador Junior', 'Técnico de Infraestructura']], ['TI', 9, ['Practicante de Desarrollo', 'Practicante de QA']],
-  ['RRHH', 3, ['Jefe de ORH']], ['RRHH', 4, ['Coordinador de Talento Humano', 'Coordinador de Bienestar']],
-  ['RRHH', 6, ['Especialista en Compensaciones', 'Especialista en Seguridad y Salud en el Trabajo (SST)']],
-  ['RRHH', 7, ['Analista de Reclutamiento y Selección', 'Analista de Planillas', 'Analista de Capacitación', 'Analista de Clima Laboral']],
-  ['RRHH', 8, ['Asistente de Recursos Humanos']], ['RRHH', 9, ['Practicante de Recursos Humanos']],
-  ['SOPORTE', 3, ['Jefe de OCOS']], ['SOPORTE', 4, ['Coordinador de Servicios al Cliente', 'Coordinador de Soporte Interno']],
-  ['SOPORTE', 5, ['Supervisor de Mesa de Ayuda', 'Supervisor de Postventa y Niveles de Servicio (SLA)']],
-  ['SOPORTE', 6, ['Especialista de Soporte Nivel 3 (clientes)', 'Especialista en Implementación']],
-  ['SOPORTE', 7, ['Analista de Soporte Nivel 2', 'Analista de Implementación', 'Analista de Servicios en Alquiler']],
-  ['SOPORTE', 8, ['Técnico de Soporte Nivel 1', 'Técnico de Soporte Interno', 'Agente de Mesa de Ayuda']], ['SOPORTE', 9, ['Practicante de Soporte']],
-  ['COMERCIAL', 3, ['Jefe Comercial']], ['COMERCIAL', 4, ['Coordinador de Cuentas', 'Coordinador de Preventa']], ['COMERCIAL', 5, ['Supervisor de Ventas']],
-  ['COMERCIAL', 6, ['Ejecutivo de Cuentas Senior (KAM)', 'Consultor de Preventa']], ['COMERCIAL', 7, ['Ejecutivo de Ventas', 'Analista Comercial']],
-  ['COMERCIAL', 8, ['Asistente Comercial', 'Asesor de Atención al Cliente']], ['COMERCIAL', 9, ['Practicante Comercial']],
-  ['OPP', 3, ['Jefe de OPP']], ['OPP', 4, ['Coordinador de Presupuestos']], ['OPP', 6, ['Especialista en Costos', 'Especialista en Planeamiento']],
-  ['OPP', 7, ['Analista Financiero', 'Analista de Presupuestos', 'Analista de Facturación']], ['OPP', 8, ['Asistente Contable', 'Asistente de Tesorería']], ['OPP', 9, ['Practicante de Finanzas']],
-  ['OCM', 3, ['Jefe de OCM']], ['OCM', 4, ['Coordinador de Marketing', 'Coordinador de Comunicaciones']], ['OCM', 5, ['Supervisor de Contenidos']],
-  ['OCM', 6, ['Estratega Digital', 'Especialista en SEO/SEM y Pauta']], ['OCM', 7, ['Community Manager', 'Diseñador Gráfico', 'Creador de Contenido Audiovisual', 'Analista de Marketing']],
-  ['OCM', 8, ['Asistente de Marketing']], ['OCM', 9, ['Practicante de Marketing']],
-  ['ODACL', 3, ['Jefe Legal']], ['ODACL', 4, ['Coordinador Legal y de Cumplimiento']],
-  ['ODACL', 6, ['Abogado Senior', 'Oficial de Cumplimiento (Compliance)', 'Oficial de Protección de Datos Personales']],
-  ['ODACL', 7, ['Abogado Corporativo', 'Analista de Contratos', 'Analista de Cumplimiento']], ['ODACL', 8, ['Asistente Legal']], ['ODACL', 9, ['Practicante de Derecho']],
-  ['DST', 3, ['Jefe de DST (CISO)']], ['DST', 4, ['Coordinador de Ciberseguridad', 'Coordinador de Desarrollo Seguro']],
-  ['DST', 5, ['Supervisor del Centro de Operaciones de Seguridad (SOC)', 'Líder de Respuesta a Incidentes']],
-  ['DST', 6, ['Arquitecto de Seguridad', 'Especialista en Ciberseguridad', 'Pentester (Hacking Ético)', 'Especialista en Identidades y Accesos (IAM)', 'Ingeniero DevSecOps']],
-  ['DST', 7, ['Desarrollador de Sistemas de Seguridad', 'Analista de Seguridad (SOC)', 'Analista Forense Digital', 'Analista de Riesgos y Cumplimiento TI']],
-  ['DST', 8, ['Técnico de Monitoreo', 'Técnico de Respaldo y Continuidad']], ['DST', 9, ['Practicante de Ciberseguridad']],
-];
+// Estructura oficial aprobada el 19/11/2026 (lib/estructura.json): 209 cargos con
+// área, nivel, sub-área, jefe inmediato y función, más las conexiones entre áreas.
+// Es la semilla del catálogo; después lo administra ORH.
+const ESTRUCTURA = require('./estructura.json');
+
+// [clave interna del área, nivel, sub-cargos] — derivado de la estructura oficial
+const SUBCARGOS = (() => {
+  const grupos = new Map();
+  for (const c of ESTRUCTURA.cargos) {
+    const k = c.area + '|' + c.nivel;
+    if (!grupos.has(k)) grupos.set(k, [c.area, c.nivel, []]);
+    grupos.get(k)[2].push(c.nombre);
+  }
+  return [...grupos.values()];
+})();
 
 // De qué se encarga cada área (clave interna)
-const FUNCIONES = {
-  ADG: 'Cúspide de la empresa: define la estrategia, aprueba proyectos e inversiones y supervisa a la Gerencia General y a DST.',
-  GG: 'Ejecuta la estrategia de ADG, dirige a los jefes de oficina y coordina la comunicación entre todas las áreas.',
-  TI: 'Desarrolla las herramientas, sistemas y aplicaciones que QUBIRA entrega a sus clientes.',
-  RRHH: 'Personal: selección, contratos, planillas, capacitación, bienestar y el catálogo de áreas y cargos.',
-  SOPORTE: 'Soporte de bajo nivel dentro de la empresa, y de bajo y alto nivel a los servicios que QUBIRA presta, vende o alquila a sus clientes.',
-  COMERCIAL: 'Vende y alquila los productos y servicios: clientes, proformas y contratos comerciales.',
-  OPP: 'Presupuestos, costos y precios: valoriza cada proyecto antes de venderlo y controla el gasto.',
-  OCM: 'Comunicación interna y externa, marca, redes sociales y campañas de marketing.',
-  ODACL: 'Asuntos legales: contratos, cumplimiento normativo, protección de datos y consultas jurídicas.',
-  DST: 'Desarrollo de Seguridad y Tecnología: seguridad e integridad de alto nivel. Crea los sistemas de seguridad y ciberseguridad y defiende los activos y sistemas internos frente a intrusiones y robo de información.',
-};
+const FUNCIONES = Object.fromEntries(ESTRUCTURA.areas.map(a => [a.clave, a.funcion]));
 // El nombre completo de cada área se lee del catálogo de ORH (no se escribe aquí).
 // A quién reporta cada área
 const REPORTA = { ADG: null, GG: 'ADG', DST: 'ADG' };
 const reportaA = clave => (clave in REPORTA ? REPORTA[clave] : 'GG');
 
 const FLUJOS = [
-  { pasos: ['OCM', 'ODN', 'OPP', 'ODACL', 'ADG'], titulo: 'Venta', texto: 'Marketing atrae al cliente, ODN arma la proforma, OPP valoriza costos y precio, ODACL redacta el contrato y ADG aprueba.' },
-  { pasos: ['ADG', 'GG', 'OTI', '⇄ DST'], titulo: 'Desarrollo', texto: 'GG asigna el proyecto aprobado a OTI, que construye la herramienta del cliente; DST revisa su seguridad antes de entregarla.' },
+  { pasos: ['OCM', 'ODN', 'OPP', 'ADG/GG', 'ODACL'], titulo: 'Venta', texto: 'Marketing atrae al cliente, ODN arma la proforma, OPP valoriza costos y precio, ADG/GG revisan y aprueban la proforma con OPP, y ODACL redacta el contrato.' },
+  { pasos: ['ADG', 'GG', 'OTI', '⇄ DST', 'GG (calidad)', 'OCOS'], titulo: 'Desarrollo', texto: 'ADG/GG aprueba el proyecto y crea su carpeta; GG lo asigna a OTI, que lo construye mientras DST revisa su seguridad; OTI lo presenta a GG para la revisión de calidad: si hay observaciones vuelve a OTI y, si se aprueba, pasa a OCOS.' },
   { pasos: ['OTI', 'OCOS', '⇄ Cliente'], titulo: 'Entrega y postventa', texto: 'OTI entrega a OCOS, que implementa y da soporte de bajo y alto nivel al cliente; los errores de fondo vuelven a OTI.' },
   { pasos: ['Todas', 'OCOS'], titulo: 'Soporte interno', texto: 'Cualquier área pide ayuda de bajo nivel a OCOS: equipos, accesos y problemas del día a día.' },
   { pasos: ['Todas', 'DST', 'ADG'], titulo: 'Seguridad', texto: 'Cualquier área reporta a DST un incidente o intento de intrusión; DST lo contiene y lo informa a la Alta Dirección.' },
-  { pasos: ['Todas', 'ORH'], titulo: 'Personal', texto: 'Las áreas piden a ORH vacantes, altas, bajas, cargos nuevos o capacitaciones.' },
-  { pasos: ['Todas', 'ODACL'], titulo: 'Legal', texto: 'Consultas jurídicas, revisión de contratos y cumplimiento normativo.' },
+  { pasos: ['Todas', 'GG'], titulo: 'Administración y logística', texto: 'Compras, proveedores, almacén y servicios generales del local.' },
+  { pasos: ['Todas', 'ORH'], titulo: 'Personal', texto: 'Las áreas piden a ORH vacantes, altas, bajas, cargos nuevos, practicantes o capacitaciones.' },
+  { pasos: ['Todas', 'ODACL'], titulo: 'Legal', texto: 'Consultas jurídicas, revisión de contratos, convenios de prácticas y cumplimiento normativo.' },
   { pasos: ['GG', '⇄ Jefes de oficina'], titulo: 'Coordinación', texto: 'GG reúne a los jefes, reparte prioridades y resuelve cuando dos áreas chocan. El calendario corporativo conecta las reuniones entre áreas.' },
 ];
 
@@ -105,14 +74,16 @@ const REGLAS = [
   'ORH es la única oficina que crea cargos y sub-cargos; aparecen solos en todo el sistema.',
   'Cada sub-cargo lleva su nivel y su área, y hereda los permisos del nivel de su cargo principal.',
   'Los permisos salen del nivel, no del nombre: un cargo nuevo funciona sin tocar código.',
-  'El jefe inmediato debe tener un nivel más alto que el empleado.',
+  'El jefe inmediato debe tener un nivel más alto. Excepción: en N1 (ADG) y N2 (GG) el jefe puede tener el mismo nivel, porque la jerarquía interna la da el cargo (Presidente › CEO › directores; Gerente General › gerentes).',
+  'Mando directo: los jefes de oficina reportan solo al Gerente General. Los directores de ADG fijan la política de su ramo y revisan resultados, pero no dan órdenes directas.',
+  'Cada oficina tiene al menos un par de practicantes (pre-profesional y profesional), los dos en N9. Las oficinas con más de un frente técnico pueden tener un par por sub-área; por ejemplo, OTI tiene uno en Desarrollo y otro en QA.',
   'ADG y GG no tienen jefes de oficina ni practicantes: solo directivos y gerentes más su equipo de apoyo.',
-  'DST reporta directo a ADG: vigila la seguridad de todos los sistemas, pero no ve los datos de trabajo de otras áreas.',
+  'DST reporta al Director General (CEO): vigila la seguridad de todos los sistemas, pero no ve los datos de trabajo de otras áreas. GG solo recibe sus reportes e indicadores de seguridad.',
 ];
 
 const PERMISOS = [
   { niveles: 'N1', ve: 'Todas las áreas', dirige: 'Toda la empresa', auditoria: 'Todas', aprueba: 'Todo' },
-  { niveles: 'N2', ve: 'Todas las oficinas', dirige: 'Jefes de oficina', auditoria: 'Todas', aprueba: 'Operación' },
+  { niveles: 'N2', ve: 'Todas las oficinas bajo su mando; de DST, solo reportes e indicadores de seguridad', dirige: 'Jefes de oficina', auditoria: 'Su línea (la de DST, no)', aprueba: 'Operación' },
   { niveles: 'N3', ve: 'Su oficina', dirige: 'Su oficina', auditoria: 'Su área', aprueba: 'Su área' },
   { niveles: 'N4', ve: 'Su oficina', dirige: 'Su proceso', auditoria: 'Su área', aprueba: '—' },
   { niveles: 'N5', ve: 'Su oficina', dirige: 'Su equipo', auditoria: 'Su área', aprueba: '—' },
@@ -128,7 +99,11 @@ function asegurarJerarquia() {
     await pool.query(`
       ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS nivel INT;
       ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS area TEXT;
-      ALTER TABLE rrhh.empleados ADD COLUMN IF NOT EXISTS subcargo_id TEXT;`);
+      ALTER TABLE rrhh.empleados ADD COLUMN IF NOT EXISTS subcargo_id TEXT;
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS subarea TEXT;
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS jefe TEXT;
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS funcion TEXT;
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS nombre_completo TEXT;`);
     // Cargos principales: los existentes reciben su nivel; los que faltan se crean
     const { rows: cargos } = await pool.query("SELECT id, nombre, nivel FROM rrhh.catalogos WHERE catalogo = 'cargos'");
     const porNivel = {};
@@ -153,8 +128,64 @@ function asegurarJerarquia() {
         }
       }
     }
+    await migrarEstructura(porNivel);
   })().catch(e => { lista = null; throw e; });
   return lista;
+}
+
+/* ─── Estructura oficial del 19/11/2026 ────────────────────────────────
+   Corre UNA sola vez, en UNA transacción, y queda marcada en doc.migraciones:
+   - Cada uno de los 209 cargos queda en el catálogo con su nivel, cargo
+     principal, sub-área, jefe inmediato y función (se actualiza si ya
+     existía con el mismo nombre en su área; si no, se crea).
+   - Los «Practicante de …» antiguos se borran si nadie los usa; los que
+     tienen empleados se quedan hasta que ORH los pase a pre-profesional
+     o profesional.
+   - OTI pasa a llamarse «Oficina de Tecnología de la Información».
+   No borra ningún sub-cargo que ORH haya creado aparte. */
+const CLAVE_MIGRACION = 'estructura-cargos-2026-11-19';
+const normNombre = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+const esPracticanteAntiguo = n => /^practicante\b/i.test(n) && !/profesional/i.test(n);
+async function migrarEstructura(porNivel) {
+  await pool.query(`CREATE SCHEMA IF NOT EXISTS doc;
+    CREATE TABLE IF NOT EXISTS doc.migraciones (clave TEXT PRIMARY KEY, ejecutada_en TIMESTAMPTZ NOT NULL DEFAULT now(), resumen JSONB);`);
+  const { rows: hecha } = await pool.query('SELECT 1 FROM doc.migraciones WHERE clave = $1', [CLAVE_MIGRACION]);
+  if (hecha.length) return;
+  const cx = await pool.connect();
+  try {
+    await cx.query('BEGIN');
+    await cx.query('LOCK TABLE rrhh.catalogos IN SHARE ROW EXCLUSIVE MODE');
+    const { rows: otra } = await cx.query('SELECT 1 FROM doc.migraciones WHERE clave = $1', [CLAVE_MIGRACION]);
+    if (otra.length) { await cx.query('ROLLBACK'); return; }
+    const { rows: subs } = await cx.query("SELECT id, nombre, area FROM rrhh.catalogos WHERE catalogo = 'subcargos'");
+    const existentes = new Map(subs.map(r => [canonArea(r.area) + '|' + normNombre(r.nombre), r]));
+    const resumen = { actualizados: 0, creados: 0, practicantesAntiguosBorrados: [], practicantesAntiguosConEmpleados: [], nombreOTI: 0 };
+    for (const c of ESTRUCTURA.cargos) {
+      if (!porNivel[c.nivel]) throw new Error(`No existe el cargo principal de nivel N${c.nivel}`);
+      const previo = existentes.get(c.area + '|' + normNombre(c.nombre));
+      const vals = [c.nombre, porNivel[c.nivel], c.nivel, c.area, c.subarea, c.jefe, c.funcion];
+      if (previo) {
+        await cx.query('UPDATE rrhh.catalogos SET nombre = $2, parent_id = $3, nivel = $4, area = $5, subarea = $6, jefe = $7, funcion = $8 WHERE id = $1', [previo.id, ...vals]);
+        resumen.actualizados++;
+      } else {
+        await cx.query("INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id, nivel, area, subarea, jefe, funcion) VALUES ($1, 'subcargos', $2, $3, $4, $5, $6, $7, $8)", [uid(), ...vals]);
+        resumen.creados++;
+      }
+    }
+    for (const r of subs.filter(r => esPracticanteAntiguo(r.nombre))) {
+      const { rows: [uso] } = await cx.query('SELECT COUNT(*)::int AS n FROM rrhh.empleados WHERE subcargo_id = $1', [r.id]);
+      if (uso.n) resumen.practicantesAntiguosConEmpleados.push(`${r.nombre} (${uso.n})`);
+      else { await cx.query('DELETE FROM rrhh.catalogos WHERE id = $1', [r.id]); resumen.practicantesAntiguosBorrados.push(r.nombre); }
+    }
+    const oti = await cx.query("UPDATE rrhh.catalogos SET nombre_completo = 'Oficina de Tecnología de la Información' WHERE catalogo = 'areasTrabajo' AND nombre_completo = 'Oficina de Tecnología e Información'");
+    resumen.nombreOTI = oti.rowCount;
+    await cx.query('INSERT INTO doc.migraciones (clave, resumen) VALUES ($1, $2)', [CLAVE_MIGRACION, JSON.stringify(resumen)]);
+    await cx.query('COMMIT');
+    console.log('[jerarquia] Estructura oficial aplicada:', JSON.stringify(resumen));
+  } catch (e) {
+    await cx.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally { cx.release(); }
 }
 
 /* ─── Cargo y nivel de una cuenta ──────────────────────────────────── */
@@ -186,12 +217,12 @@ async function normalizarCargoEmpleado(data) {
 async function datosJerarquia() {
   await asegurarJerarquia();
   const [{ rows: cat }, areas] = await Promise.all([
-    pool.query("SELECT id, catalogo, nombre, parent_id, nivel, area FROM rrhh.catalogos WHERE catalogo IN ('cargos', 'subcargos') ORDER BY nivel NULLS LAST, nombre"),
+    pool.query("SELECT id, catalogo, nombre, parent_id, nivel, area, subarea, jefe, funcion FROM rrhh.catalogos WHERE catalogo IN ('cargos', 'subcargos') ORDER BY nivel NULLS LAST, nombre"),
     listarAreas(),
   ]);
   const principales = cat.filter(c => c.catalogo === 'cargos');
   const nivelDe = id => (principales.find(p => p.id === id) || {}).nivel;
-  const subcargos = cat.filter(c => c.catalogo === 'subcargos').map(s => ({ nombre: s.nombre, nivel: s.nivel || nivelDe(s.parent_id), area: canonArea(s.area) }));
+  const subcargos = cat.filter(c => c.catalogo === 'subcargos').map(s => ({ nombre: s.nombre, nivel: s.nivel || nivelDe(s.parent_id), area: canonArea(s.area), subarea: s.subarea || null, jefe: s.jefe || null, funcion: s.funcion || null }));
   const claves = new Set(areas.map(a => a.clave));
   // Las áreas con sub-cargos se muestran aunque no estén en el catálogo de áreas (ej. GG)
   subcargos.forEach(s => { if (s.area && !claves.has(s.area)) { claves.add(s.area); areas.push({ clave: s.area, etiqueta: etiquetaArea(s.area) }); } });
@@ -210,12 +241,19 @@ async function datosJerarquia() {
       cargos: subcargos.filter(s => s.area === a.clave).sort((x, y) => x.nivel - y.nivel),
     })),
     flujos: FLUJOS, reglas: REGLAS, permisos: PERMISOS,
+    // Conexiones de trabajo entre cargos de distintas áreas (solo las de cargos que siguen en el catálogo)
+    tiposConexion: ESTRUCTURA.flujos,
+    conexiones: ESTRUCTURA.conexiones.filter(c => {
+      const hay = (nombre, area) => subcargos.some(s => s.area === area && normNombre(s.nombre) === normNombre(nombre));
+      return hay(c.de, c.deArea) && hay(c.a, c.aArea);
+    }).map(c => ({ ...c, deEtiqueta: etiquetaArea(c.deArea), aEtiqueta: etiquetaArea(c.aArea) })),
   };
 }
 
 /* Valida la ficha de un empleado contra la jerarquía. Devuelve un mensaje de error o null.
    - El sub-cargo debe ser del área del empleado.
-   - El jefe inmediato no puede tener un nivel inferior (número mayor) al del empleado. */
+   - El jefe inmediato debe tener un nivel más alto (número menor). Excepción: en N1 y N2
+     puede tener el mismo nivel (Presidente › CEO › directores; Gerente General › gerentes). */
 async function validarJerarquiaEmpleado(ficha, empleadoId) {
   const ids = [ficha.areaTrabajoId, ficha.cargoId, ficha.subcargoId].filter(Boolean);
   const { rows: cat } = ids.length ? await pool.query('SELECT id, catalogo, nombre, nivel, area FROM rrhh.catalogos WHERE id = ANY($1)', [ids]) : { rows: [] };
@@ -229,6 +267,7 @@ async function validarJerarquiaEmpleado(ficha, empleadoId) {
       LEFT JOIN rrhh.catalogos c ON c.id = e.cargo_id LEFT JOIN rrhh.catalogos s ON s.id = e.subcargo_id WHERE e.id = $1`, [ficha.jefeInmediatoId]);
     const nj = j.length && j[0].nivel;
     if (nj && nj > nivel) return `El jefe inmediato (N${nj}) tiene un nivel inferior al del empleado (N${nivel}). Elige a alguien de un nivel más alto.`;
+    if (nj && nj === nivel && nivel > 2) return `El jefe inmediato tiene el mismo nivel (N${nivel}) que el empleado. Solo en N1 (ADG) y N2 (GG) el jefe puede ser del mismo nivel; elige a alguien de un nivel más alto.`;
   }
   return null;
 }

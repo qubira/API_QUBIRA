@@ -35,6 +35,10 @@
     '.qbj-tabla{overflow-x:auto}.qbj table{border-collapse:collapse;width:100%;font-size:13px}.qbj th,.qbj td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--qbj-borde);vertical-align:top}.qbj th{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--qbj-tenue)}' +
     '.qbj ol{margin:0;padding-left:20px;display:grid;gap:6px}.qbj-dos{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;align-items:start}.qbj-oculto{display:none!important}' +
     '.qbj-cargando{padding:30px;text-align:center;color:var(--qbj-tenue)}' +
+    '.qbj-sa{font-size:11.5px;font-weight:700;color:#0f766e;background:rgba(15,118,110,.12);border-radius:999px;padding:2px 9px}.qbj-cargo[title]{cursor:help}' +
+    '.qbj-cgs{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;align-items:start}.qbj-cg{border:1px solid var(--qbj-borde);border-radius:10px;padding:12px 14px;display:grid;gap:8px;min-width:0}' +
+    '.qbj-cg-t{font-size:13.5px}.qbj-cg-t span{font:500 11.5px ui-monospace,Consolas,monospace;color:var(--qbj-tenue)}.qbj-cg ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}.qbj-cg li{font-size:13px}' +
+    '.qbj-cg li i{font:500 11px ui-monospace,Consolas,monospace;color:var(--qbj-tenue);font-style:normal}.qbj-cg li em{font-style:normal;color:#c2366b;padding:0 4px}.qbj-cg li p{color:var(--qbj-tenue);font-size:12px}' +
     '@media(max-width:560px){.qbj-esc{grid-template-columns:36px 1fr;width:calc(58% + var(--k)*5.25%)}.qbj-esc .c{grid-column:2}.qbj-areas,.qbj-dos{grid-template-columns:1fr}}';
 
   function estilos() {
@@ -50,10 +54,24 @@
     lineas.push('ALTA DIRECCIÓN GERENCIAL' + '                <i>ADG · N1</i>');
     var deADG = d.areas.filter(function (a) { return a.reporta === 'ADG' && a.clave !== 'GG'; });
     var deGG = d.areas.filter(function (a) { return a.reporta === 'GG'; });
-    deADG.forEach(function (a) { lineas.push('├── ' + esc(jefe(a)) + '   <i>' + esc(a.etiqueta) + ' · N3 · reporta a ADG</i>'); });
+    deADG.forEach(function (a) { lineas.push('├── ' + esc(jefe(a)) + '   <i>' + esc(a.etiqueta) + ' · N3 · reporta al CEO (ADG)</i>'); });
     lineas.push('└── ' + esc(cabeza('GG', 2) || 'Gerente General') + '   <i>GG · N2</i>');
     deGG.forEach(function (a, i) { lineas.push('    ' + (i === deGG.length - 1 ? '└── ' : '├── ') + esc(jefe(a)) + '   <i>' + esc(a.etiqueta) + ' · N3</i>'); });
     return lineas.join('\n');
+  }
+
+  /* Conexiones de trabajo entre cargos de distintas áreas, agrupadas por tipo.
+     Con un área elegida, solo las que la involucran. */
+  function conexiones(d, estado) {
+    var cx = (d.conexiones || []).filter(function (c) { return estado.area === 'TODAS' || c.deArea === estado.area || c.aArea === estado.area; });
+    if (!cx.length) return '';
+    var grupos = (d.tiposConexion || []).map(function (t) {
+      var ls = cx.filter(function (c) { return c.flujo === t.k; });
+      if (!ls.length) return '';
+      return '<div class="qbj-cg"><b class="qbj-cg-t">' + esc(t.t) + ' <span>' + ls.length + '</span></b><ul>' + ls.map(function (c) {
+        return '<li><b>' + esc(c.de) + '</b> <i>' + esc(c.deEtiqueta) + '</i><em>' + (c.dosVias ? '⇄' : '→') + '</em><b>' + esc(c.a) + '</b> <i>' + esc(c.aEtiqueta) + '</i><p>' + esc(c.texto) + '</p></li>'; }).join('') + '</ul></div>';
+    }).join('');
+    return '<div class="qbj-caja"><div><h3>Conexiones entre cargos</h3><p class="qbj-sub">Con quién trabaja cada cargo fuera de su área' + (estado.area === 'TODAS' ? '' : ' (solo las de ' + esc((d.areas.find(function (a) { return a.clave === estado.area; }) || {}).etiqueta || estado.area) + ')') + '. ⇄ = en ambos sentidos.</p></div><div class="qbj-cgs">' + grupos + '</div></div>';
   }
 
   function pintar(el, d, estado) {
@@ -71,7 +89,7 @@
           '<span class="n">N' + l.n + '</span><span><b>' + esc(l.principal) + '</b><small>' + esc(l.zona) + '</small></span><span class="c">' + c + ' cargo' + (c === 1 ? '' : 's') + '</span></button>'; }).join('') +
       '</div></div>' +
 
-      '<div class="qbj-dos"><div class="qbj-caja"><div><h3>Cadena de mando</h3><p class="qbj-sub">DST reporta directo a la Alta Dirección; las demás oficinas, a la Gerencia General.</p></div><pre class="qbj-arbol">' + arbol(d) + '</pre></div>' +
+      '<div class="qbj-dos"><div class="qbj-caja"><div><h3>Cadena de mando</h3><p class="qbj-sub">DST reporta al Director General (CEO); las demás oficinas, solo al Gerente General. Los directores fijan la política de su ramo y revisan resultados.</p></div><pre class="qbj-arbol">' + arbol(d) + '</pre></div>' +
       '<div class="qbj-caja"><h3>Permisos por nivel</h3><div class="qbj-tabla"><table><thead><tr><th>Nivel</th><th>Ve</th><th>Dirige</th><th>Auditoría</th><th>Aprueba</th></tr></thead><tbody>' +
       d.permisos.map(function (p) { return '<tr><td><b>' + esc(p.niveles) + '</b></td><td>' + esc(p.ve) + '</td><td>' + esc(p.dirige) + '</td><td>' + esc(p.auditoria) + '</td><td>' + esc(p.aprueba) + '</td></tr>'; }).join('') +
       '</tbody></table></div><p class="qbj-sub">Registrar empleados: quien tenga acceso a ORH. Eliminarlos: ORH y ADG desde N5. Datos sensibles: solo la Alta Dirección.</p></div></div>' +
@@ -82,15 +100,19 @@
         return '<button type="button" class="qbj-chip' + (estado.area === k ? ' on' : '') + '" data-area="' + esc(k) + '" aria-pressed="' + (estado.area === k) + '">' + esc(a ? a.etiqueta : 'Todas') + '</button>'; }).join('') +
       (estado.nivel ? '<button type="button" class="qbj-chip on" data-quitar="1">N' + estado.nivel + ' ✕</button>' : '') + '</div>' +
       '<div class="qbj-areas">' + areasVis.map(function (a) {
-        var niveles = {}; a.cargos.forEach(function (c) { if (!estado.nivel || c.nivel === estado.nivel) (niveles[c.nivel] = niveles[c.nivel] || []).push(c.nombre); });
+        var niveles = {}; a.cargos.forEach(function (c) { if (!estado.nivel || c.nivel === estado.nivel) (niveles[c.nivel] = niveles[c.nivel] || []).push(c); });
+        var subareas = []; a.cargos.forEach(function (c) { if (c.subarea && subareas.indexOf(c.subarea) < 0) subareas.push(c.subarea); });
         var ns = Object.keys(niveles).map(Number).sort(function (x, y) { return x - y; });
         if (estado.nivel && !ns.length) return '';
         return '<article class="qbj-area"><header><div><span class="sig">' + esc(a.etiqueta) + '</span><small>' + esc(a.nombre) + '</small></div><small>' + a.cargos.length + ' cargos</small></header>' +
           (a.reporta ? '<span class="qbj-rep">Reporta a ' + esc(a.reportaEtiqueta) + '</span>' : '<span class="qbj-rep">Cúspide</span>') +
           (a.funcion ? '<p class="qbj-sub" style="margin:0">' + esc(a.funcion) + '</p>' : '') +
+          (subareas.length ? '<div class="qbj-cargos">' + subareas.map(function (s) { return '<span class="qbj-sa">' + esc(s) + '</span>'; }).join('') + '</div>' : '') +
           (ns.length ? ns.map(function (n) { var l = d.niveles[n - 1] || {};
             return '<div class="qbj-niv" style="--c:' + color(n) + '"><span class="n">N' + n + '</span><div><span class="b">' + esc(l.principal || '') + '</span><div class="qbj-cargos">' +
-              niveles[n].map(function (c) { return '<span class="qbj-cargo">' + esc(c) + '</span>'; }).join('') + '</div></div></div>'; }).join('') : '<p class="qbj-sub">Aún sin sub-cargos: créalos en ORH → Configuración.</p>') +
+              niveles[n].map(function (c) {
+                var info = [c.funcion, c.subarea ? 'Sub-área: ' + c.subarea : '', c.jefe ? 'Jefe inmediato: ' + c.jefe : ''].filter(Boolean).join('\n');
+                return '<span class="qbj-cargo"' + (info ? ' title="' + esc(info) + '"' : '') + '>' + esc(c.nombre) + '</span>'; }).join('') + '</div></div></div>'; }).join('') : '<p class="qbj-sub">Aún sin sub-cargos: créalos en ORH → Configuración.</p>') +
           '</article>'; }).join('') + '</div></div>' +
 
       '<div class="qbj-dos"><div class="qbj-caja"><div><h3>Comunicación entre áreas</h3><p class="qbj-sub">Cada área se encarga de lo suyo y le pide a la responsable lo que no le toca.</p></div><div>' +
@@ -98,6 +120,7 @@
         f.pasos.map(function (p, i) { var s = String(p); var dob = s.indexOf('⇄') === 0; return (i ? '<em>' + (dob ? '⇄' : '→') + '</em>' : '') + '<b>' + esc(dob ? s.slice(1).trim() : s) + '</b>'; }).join('') +
         '<p>' + esc(f.texto) + '</p></div>'; }).join('') + '</div></div>' +
       '<div class="qbj-caja"><h3>Reglas de la jerarquía</h3><ol>' + d.reglas.map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ol></div></div>' +
+      conexiones(d, estado) +
       '</div>';
 
     el.querySelectorAll('[data-n]').forEach(function (b) { b.onclick = function () { var n = +b.dataset.n; estado.nivel = estado.nivel === n ? null : n; pintar(el, d, estado); }; });

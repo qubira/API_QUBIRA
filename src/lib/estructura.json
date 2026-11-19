@@ -1,0 +1,2419 @@
+{
+ "version": "2026-11-19",
+ "areas": [
+  {
+   "clave": "ADG",
+   "sigla": "ADG",
+   "nombre": "Alta Dirección Gerencial",
+   "reporta": "Cúspide",
+   "jefeRaiz": "Junta General de Accionistas",
+   "funcion": "Cúspide de la empresa: define la estrategia, aprueba proyectos e inversiones y supervisa a la Gerencia General. DST reporta al Director General (CEO)."
+  },
+  {
+   "clave": "GG",
+   "sigla": "GG",
+   "nombre": "Gerencia General",
+   "reporta": "Reporta a ADG",
+   "jefeRaiz": "Director General (CEO)",
+   "funcion": "Ejecuta la estrategia de ADG, dirige a los jefes de oficina, coordina a todas las áreas, revisa la calidad de los entregables antes de pasar a OCOS y lleva la administración y logística."
+  },
+  {
+   "clave": "DST",
+   "sigla": "DST",
+   "nombre": "Desarrollo de Seguridad y Tecnología",
+   "reporta": "Reporta al CEO (ADG)",
+   "jefeRaiz": "Director General (CEO)",
+   "funcion": "Seguridad e integridad de alto nivel: crea los sistemas de seguridad y ciberseguridad de la empresa y defiende sus activos y sistemas internos frente a intrusiones y robo de información."
+  },
+  {
+   "clave": "TI",
+   "sigla": "OTI",
+   "nombre": "Oficina de Tecnología de la Información",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Desarrolla las herramientas, sistemas y aplicaciones que QUBIRA entrega a sus clientes."
+  },
+  {
+   "clave": "SOPORTE",
+   "sigla": "OCOS",
+   "nombre": "Oficina de Centro de Operaciones y Servicios",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Soporte de bajo nivel dentro de la empresa, y de bajo y alto nivel a los servicios que QUBIRA presta, vende o alquila a sus clientes."
+  },
+  {
+   "clave": "COMERCIAL",
+   "sigla": "ODN",
+   "nombre": "Oficina de Desarrollo de Negocios",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Vende y alquila los productos y servicios: clientes, proformas, licitaciones, socios y contratos comerciales."
+  },
+  {
+   "clave": "OPP",
+   "sigla": "OPP",
+   "nombre": "Oficina de Presupuestos y Planeación",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Presupuestos, costos, contabilidad y tesorería: valoriza cada proyecto antes de venderlo y controla el gasto."
+  },
+  {
+   "clave": "ODACL",
+   "sigla": "ODACL",
+   "nombre": "Oficina de Asuntos Corporativos y Legales",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Asuntos legales: contratos, cumplimiento normativo, protección de datos, convenios de prácticas y consultas jurídicas."
+  },
+  {
+   "clave": "RRHH",
+   "sigla": "ORH",
+   "nombre": "Oficina de Recursos Humanos",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Personal: selección, contratos, planillas, practicantes, capacitación, bienestar y el catálogo de áreas y cargos."
+  },
+  {
+   "clave": "OCM",
+   "sigla": "OCM",
+   "nombre": "Oficina de Comunicación y Marketing",
+   "reporta": "Reporta a GG",
+   "jefeRaiz": "Gerente General",
+   "funcion": "Comunicación interna y externa, marca, eventos, redes sociales y campañas de marketing."
+  }
+ ],
+ "cargos": [
+  {
+   "area": "ADG",
+   "nombre": "Presidente del Directorio",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": null,
+   "funcion": "Preside el directorio, aprueba la estrategia y el presupuesto anual y representa a los accionistas.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director General (CEO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Presidente del Directorio",
+   "funcion": "Dirige la empresa, fija las metas anuales y responde por los resultados ante el directorio.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director de Operaciones (COO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Define la estrategia operativa, los estándares de servicio y las metas de eficiencia de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director Financiero (CFO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Define la política financiera, aprueba inversiones y supervisa presupuestos, tesorería y contabilidad.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director de Tecnología (CTO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Define la estrategia tecnológica de los productos y supervisa la arquitectura y a OTI.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director Comercial (CCO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Define la estrategia de ventas y mercados y supervisa a ODN y OCM.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director de Talento Humano (CHRO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Define la política de personas, cultura y compensaciones y supervisa a ORH.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Director Legal (CLO)",
+   "nivel": 1,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Responde por el riesgo legal de la empresa y supervisa a ODACL.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Auditor Interno Senior",
+   "nivel": 6,
+   "subarea": "Auditoría Interna",
+   "jefe": "Presidente del Directorio",
+   "funcion": "Revisa de forma independiente procesos, gastos y controles de todas las áreas e informa al directorio.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Auditor Interno",
+   "nivel": 7,
+   "subarea": "Auditoría Interna",
+   "jefe": "Auditor Interno Senior",
+   "funcion": "Ejecuta las pruebas de auditoría y documenta hallazgos y recomendaciones.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Asesor de Dirección",
+   "nivel": 6,
+   "subarea": "Apoyo a la Dirección",
+   "jefe": "Presidente del Directorio",
+   "funcion": "Prepara análisis y propuestas para las decisiones del directorio.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Asesor Legal de Directorio",
+   "nivel": 6,
+   "subarea": "Apoyo a la Dirección",
+   "jefe": "Presidente del Directorio",
+   "funcion": "Asesora al directorio en acuerdos, actas y responsabilidad de los directores.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Secretaria de Dirección",
+   "nivel": 8,
+   "subarea": "Apoyo a la Dirección",
+   "jefe": "Presidente del Directorio",
+   "funcion": "Lleva la agenda, la correspondencia y las actas de la Alta Dirección.",
+   "practica": null
+  },
+  {
+   "area": "ADG",
+   "nombre": "Asistente Ejecutivo de Dirección",
+   "nivel": 8,
+   "subarea": "Apoyo a la Dirección",
+   "jefe": "Presidente del Directorio",
+   "funcion": "Coordina viajes, reuniones y documentos de los directores.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Gerente General",
+   "nivel": 2,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Ejecuta la estrategia aprobada por ADG, dirige a los jefes de oficina y resuelve los cruces entre áreas.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Gerente Adjunto",
+   "nivel": 2,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Reemplaza al Gerente General en su ausencia y sigue los proyectos que este le delega.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Gerente de Operaciones",
+   "nivel": 2,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Hace cumplir en el día a día los estándares que fija el COO y sigue los indicadores de cada oficina.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Gerente de Proyectos (PMO)",
+   "nivel": 2,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige la cartera de proyectos: prioridades, plazos, recursos y riesgos.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Especialista en Gestión de Proyectos (PMO)",
+   "nivel": 6,
+   "subarea": null,
+   "jefe": "Gerente de Proyectos (PMO)",
+   "funcion": "Define la metodología de proyectos y controla el avance de cada uno.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Especialista en Gestión de Calidad (ISO 9001)",
+   "nivel": 6,
+   "subarea": "Gestión y Control",
+   "jefe": "Gerente General",
+   "funcion": "Mantiene el sistema de gestión de calidad y prepara las auditorías de certificación.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Analista de Control de Gestión",
+   "nivel": 7,
+   "subarea": "Gestión y Control",
+   "jefe": "Gerente General",
+   "funcion": "Mide los indicadores de cada oficina y prepara el tablero de la gerencia.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Analista de Procesos y Mejora Continua",
+   "nivel": 7,
+   "subarea": "Gestión y Control",
+   "jefe": "Gerente General",
+   "funcion": "Documenta los procesos, detecta cuellos de botella y propone mejoras.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Coordinador de Administración y Logística",
+   "nivel": 4,
+   "subarea": "Administración y Logística",
+   "jefe": "Gerente General",
+   "funcion": "Organiza compras, proveedores, almacén, local y servicios generales.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Analista de Compras",
+   "nivel": 7,
+   "subarea": "Administración y Logística",
+   "jefe": "Coordinador de Administración y Logística",
+   "funcion": "Cotiza, compara y emite órdenes de compra a proveedores.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Asistente de Logística y Almacén",
+   "nivel": 8,
+   "subarea": "Administración y Logística",
+   "jefe": "Coordinador de Administración y Logística",
+   "funcion": "Recibe, registra y despacha bienes y controla el inventario.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Recepcionista",
+   "nivel": 8,
+   "subarea": "Administración y Logística",
+   "jefe": "Coordinador de Administración y Logística",
+   "funcion": "Atiende visitas, llamadas y correspondencia de la oficina.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Auxiliar de Servicios Generales",
+   "nivel": 8,
+   "subarea": "Administración y Logística",
+   "jefe": "Coordinador de Administración y Logística",
+   "funcion": "Mantiene en orden el local: limpieza, mensajería y pequeñas reparaciones.",
+   "practica": null
+  },
+  {
+   "area": "GG",
+   "nombre": "Asistente de Gerencia",
+   "nivel": 8,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Lleva la agenda, los documentos y el seguimiento de pendientes de la gerencia.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Jefe de DST (CISO)",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Director General (CEO)",
+   "funcion": "Dirige la seguridad de la información de la empresa y reporta riesgos e incidentes a la Alta Dirección.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Coordinador de Ciberseguridad",
+   "nivel": 4,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Jefe de DST (CISO)",
+   "funcion": "Planifica la defensa de la empresa y coordina el SOC y la respuesta a incidentes.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "nivel": 5,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Coordinador de Ciberseguridad",
+   "funcion": "Dirige el monitoreo continuo de alertas y asigna los casos al equipo.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Especialista en Ciberseguridad",
+   "nivel": 6,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Configura y afina firewalls, antivirus empresarial (EDR), SIEM y demás defensas.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Cazador de Amenazas (Threat Hunter)",
+   "nivel": 6,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Busca de forma activa atacantes ocultos que las alertas no detectaron.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista de Seguridad (SOC)",
+   "nivel": 7,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Revisa alertas, descarta falsos positivos y escala los incidentes reales.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista de Inteligencia de Amenazas",
+   "nivel": 7,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Sigue campañas de ataque y vulnerabilidades nuevas que pueden afectar a QUBIRA.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Técnico de Monitoreo",
+   "nivel": 8,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Vigila consolas y paneles y registra los eventos de seguridad.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Practicante pre-profesional de Ciberseguridad",
+   "nivel": 9,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Estudiante que aprende y apoya en monitoreo y análisis de seguridad bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "DST",
+   "nombre": "Practicante profesional de Ciberseguridad",
+   "nivel": 9,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
+   "funcion": "Egresado que asume tareas reales de monitoreo y análisis de seguridad con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "DST",
+   "nombre": "Líder de Respuesta a Incidentes",
+   "nivel": 5,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Coordinador de Ciberseguridad",
+   "funcion": "Dirige la contención, limpieza y recuperación ante un ataque.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista Forense Digital",
+   "nivel": 7,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Líder de Respuesta a Incidentes",
+   "funcion": "Recoge y analiza evidencias digitales para saber qué pasó y cómo.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista de Respuesta a Incidentes",
+   "nivel": 7,
+   "subarea": "Ciberseguridad y SOC",
+   "jefe": "Líder de Respuesta a Incidentes",
+   "funcion": "Ejecuta los planes de respuesta y documenta cada incidente.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Coordinador de Desarrollo Seguro",
+   "nivel": 4,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Jefe de DST (CISO)",
+   "funcion": "Asegura que los sistemas propios y de clientes se construyan seguros desde el diseño.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Arquitecto de Seguridad",
+   "nivel": 6,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Diseña la arquitectura de seguridad de redes, nube y aplicaciones.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Ingeniero DevSecOps",
+   "nivel": 6,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Integra pruebas de seguridad automáticas en los procesos de despliegue de OTI.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Especialista en Seguridad de Aplicaciones (AppSec)",
+   "nivel": 6,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Revisa código y diseño de las aplicaciones y guía a los desarrolladores.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Especialista en Seguridad Cloud",
+   "nivel": 6,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Protege las cuentas, redes y servicios en la nube.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Pentester (Hacking Ético)",
+   "nivel": 6,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Ataca de forma autorizada los sistemas para encontrar fallas antes que otros.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista de Vulnerabilidades",
+   "nivel": 7,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Escanea los sistemas, prioriza vulnerabilidades y sigue su corrección.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Desarrollador de Sistemas de Seguridad",
+   "nivel": 7,
+   "subarea": "Desarrollo Seguro y Arquitectura",
+   "jefe": "Coordinador de Desarrollo Seguro",
+   "funcion": "Programa las herramientas internas de seguridad de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Coordinador de Riesgos y Continuidad",
+   "nivel": 4,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Jefe de DST (CISO)",
+   "funcion": "Gestiona el riesgo de seguridad, las normas y los planes de continuidad.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Especialista en Identidades y Accesos (IAM)",
+   "nivel": 6,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Coordinador de Riesgos y Continuidad",
+   "funcion": "Define quién accede a qué y gestiona altas, bajas y permisos de cuentas.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Oficial de Seguridad de la Información (ISO 27001)",
+   "nivel": 6,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Coordinador de Riesgos y Continuidad",
+   "funcion": "Mantiene las políticas y el sistema de gestión de seguridad de la información.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Especialista en Continuidad de Negocio",
+   "nivel": 6,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Coordinador de Riesgos y Continuidad",
+   "funcion": "Diseña y prueba los planes para seguir operando ante desastres.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista de Riesgos y Cumplimiento TI",
+   "nivel": 7,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Coordinador de Riesgos y Continuidad",
+   "funcion": "Evalúa riesgos tecnológicos y verifica el cumplimiento de controles.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Analista de Identidades y Accesos",
+   "nivel": 7,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Coordinador de Riesgos y Continuidad",
+   "funcion": "Atiende solicitudes de acceso y revisa los permisos cada cierto tiempo.",
+   "practica": null
+  },
+  {
+   "area": "DST",
+   "nombre": "Técnico de Respaldo y Continuidad",
+   "nivel": 8,
+   "subarea": "Identidades, Riesgos y Continuidad",
+   "jefe": "Coordinador de Riesgos y Continuidad",
+   "funcion": "Ejecuta y verifica las copias de respaldo y las pruebas de restauración.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Jefe de OTI",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige el desarrollo de los productos para clientes: prioridades, equipo y calidad técnica.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Coordinador de Proyectos TI",
+   "nivel": 4,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Jefe de OTI",
+   "funcion": "Planifica los proyectos de desarrollo y controla plazos, alcance y recursos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Scrum Master",
+   "nivel": 5,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Coordinador de Proyectos TI",
+   "funcion": "Facilita el trabajo ágil del equipo y quita los bloqueos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Analista de Proyectos TI",
+   "nivel": 7,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Coordinador de Proyectos TI",
+   "funcion": "Actualiza cronogramas, reportes de avance y riesgos de los proyectos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Product Owner",
+   "nivel": 4,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Jefe de OTI",
+   "funcion": "Decide qué se construye y en qué orden según el valor para el cliente.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Analista de Negocio (Business Analyst)",
+   "nivel": 7,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Product Owner",
+   "funcion": "Levanta requisitos con el cliente y los convierte en historias de usuario.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Analista de Sistemas",
+   "nivel": 7,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Product Owner",
+   "funcion": "Diseña la solución funcional y los flujos del sistema.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Diseñador UX/UI",
+   "nivel": 7,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Product Owner",
+   "funcion": "Diseña la experiencia y las pantallas de los productos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Redactor Técnico (Technical Writer)",
+   "nivel": 7,
+   "subarea": "Proyectos y Producto",
+   "jefe": "Product Owner",
+   "funcion": "Escribe manuales, documentación técnica y guías de usuario.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Líder Técnico (Tech Lead)",
+   "nivel": 5,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Jefe de OTI",
+   "funcion": "Guía técnicamente al equipo, revisa código y decide la arquitectura de cada proyecto.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Arquitecto de Software",
+   "nivel": 6,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Define la estructura técnica, tecnologías y estándares de los sistemas.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador Senior",
+   "nivel": 6,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Construye las partes críticas y guía a los desarrolladores con menos experiencia.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Especialista en Inteligencia Artificial",
+   "nivel": 6,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Diseña e integra modelos de IA en los productos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador Full Stack",
+   "nivel": 7,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Programa la parte visible y la parte de servidor de las aplicaciones.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador Frontend",
+   "nivel": 7,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Programa las interfaces web que usa el cliente.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador Backend",
+   "nivel": 7,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Programa servicios, APIs y lógica de negocio.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador Móvil",
+   "nivel": 7,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Programa las aplicaciones para Android e iOS.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador de Integraciones",
+   "nivel": 7,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Conecta los sistemas con servicios externos, pasarelas de pago y ERP.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Desarrollador Junior",
+   "nivel": 8,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Programa tareas acotadas con revisión de un desarrollador mayor.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Practicante pre-profesional de Desarrollo",
+   "nivel": 9,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Estudiante que aprende y apoya en programación bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "TI",
+   "nombre": "Practicante profesional de Desarrollo",
+   "nivel": 9,
+   "subarea": "Desarrollo de Software",
+   "jefe": "Líder Técnico (Tech Lead)",
+   "funcion": "Egresado que asume tareas reales de programación con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "TI",
+   "nombre": "Líder de QA",
+   "nivel": 5,
+   "subarea": "Calidad (QA)",
+   "jefe": "Jefe de OTI",
+   "funcion": "Define la estrategia de pruebas y decide si una versión está lista para entregar.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Ingeniero de Automatización QA",
+   "nivel": 6,
+   "subarea": "Calidad (QA)",
+   "jefe": "Líder de QA",
+   "funcion": "Programa pruebas automáticas que corren en cada versión.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Analista QA",
+   "nivel": 7,
+   "subarea": "Calidad (QA)",
+   "jefe": "Líder de QA",
+   "funcion": "Diseña y ejecuta casos de prueba y reporta los errores.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Analista de Pruebas de Rendimiento",
+   "nivel": 7,
+   "subarea": "Calidad (QA)",
+   "jefe": "Líder de QA",
+   "funcion": "Mide cómo responden los sistemas con muchos usuarios a la vez.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Practicante pre-profesional de QA",
+   "nivel": 9,
+   "subarea": "Calidad (QA)",
+   "jefe": "Líder de QA",
+   "funcion": "Estudiante que aprende y apoya en pruebas de software bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "TI",
+   "nombre": "Practicante profesional de QA",
+   "nivel": 9,
+   "subarea": "Calidad (QA)",
+   "jefe": "Líder de QA",
+   "funcion": "Egresado que asume tareas reales de pruebas de software con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "TI",
+   "nombre": "Líder de Infraestructura y Datos",
+   "nivel": 5,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Jefe de OTI",
+   "funcion": "Dirige los servidores, la nube y las bases de datos de los productos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Ingeniero DevOps / Cloud",
+   "nivel": 6,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Líder de Infraestructura y Datos",
+   "funcion": "Automatiza despliegues y administra la infraestructura en la nube.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Administrador de Base de Datos (DBA)",
+   "nivel": 6,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Líder de Infraestructura y Datos",
+   "funcion": "Diseña, protege y optimiza las bases de datos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Ingeniero de Datos",
+   "nivel": 6,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Líder de Infraestructura y Datos",
+   "funcion": "Construye los flujos que recogen, limpian y preparan los datos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Científico de Datos",
+   "nivel": 6,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Líder de Infraestructura y Datos",
+   "funcion": "Analiza datos y crea modelos predictivos para los productos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Analista de Inteligencia de Negocios (BI)",
+   "nivel": 7,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Líder de Infraestructura y Datos",
+   "funcion": "Arma reportes y tableros con los datos de los productos.",
+   "practica": null
+  },
+  {
+   "area": "TI",
+   "nombre": "Técnico de Infraestructura",
+   "nivel": 8,
+   "subarea": "Infraestructura y Datos",
+   "jefe": "Líder de Infraestructura y Datos",
+   "funcion": "Instala y mantiene servidores y entornos de desarrollo.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Jefe de OCOS",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige el soporte interno y el servicio a los clientes que usan los productos de QUBIRA.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Coordinador de Servicios al Cliente",
+   "nivel": 4,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Jefe de OCOS",
+   "funcion": "Organiza la implementación, el soporte y la postventa de cada cliente.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "nivel": 5,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Coordinador de Servicios al Cliente",
+   "funcion": "Vigila que se cumplan los tiempos de atención pactados con cada cliente.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Especialista de Soporte Nivel 3 (clientes)",
+   "nivel": 6,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "funcion": "Resuelve los problemas más complejos de los clientes y los escala a OTI si es un error de fondo.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Especialista en Implementación",
+   "nivel": 6,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "funcion": "Dirige la puesta en marcha de los sistemas en el cliente.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Especialista en Capacitación a Clientes",
+   "nivel": 6,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "funcion": "Prepara y dicta las capacitaciones a los usuarios de los clientes.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Analista de Implementación",
+   "nivel": 7,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "funcion": "Configura el sistema y migra los datos del cliente.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Analista de Servicios en Alquiler",
+   "nivel": 7,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "funcion": "Controla equipos y servicios alquilados: entregas, estado y renovaciones.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Analista de Calidad de Servicio",
+   "nivel": 7,
+   "subarea": "Servicios al Cliente y Postventa",
+   "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
+   "funcion": "Mide la satisfacción y los indicadores de atención y propone mejoras.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Coordinador de Soporte Interno",
+   "nivel": 4,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Jefe de OCOS",
+   "funcion": "Organiza el soporte a los empleados: equipos, cuentas y redes.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Supervisor de Mesa de Ayuda",
+   "nivel": 5,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Coordinador de Soporte Interno",
+   "funcion": "Dirige la mesa de ayuda y reparte los tickets.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Analista de Soporte Nivel 2",
+   "nivel": 7,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Resuelve los casos que el nivel 1 no pudo cerrar.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Técnico de Soporte Nivel 1",
+   "nivel": 8,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Atiende la primera llamada o ticket y resuelve lo frecuente.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Técnico de Soporte Interno",
+   "nivel": 8,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Instala y repara equipos y programas de los empleados.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Agente de Mesa de Ayuda",
+   "nivel": 8,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Registra cada pedido de ayuda y lo asigna al técnico que corresponde.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Técnico de Campo",
+   "nivel": 8,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Atiende en el local del cliente o en otras sedes.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Practicante pre-profesional de Soporte",
+   "nivel": 9,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Estudiante que aprende y apoya en soporte técnico bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Practicante profesional de Soporte",
+   "nivel": 9,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Supervisor de Mesa de Ayuda",
+   "funcion": "Egresado que asume tareas reales de soporte técnico con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Administrador de Redes y Comunicaciones",
+   "nivel": 6,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Coordinador de Soporte Interno",
+   "funcion": "Mantiene la red, el wifi, la telefonía y la conexión a internet de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Administrador de Sistemas Internos",
+   "nivel": 6,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Coordinador de Soporte Interno",
+   "funcion": "Administra el correo, los servidores internos y las cuentas de los empleados.",
+   "practica": null
+  },
+  {
+   "area": "SOPORTE",
+   "nombre": "Analista de Activos TI",
+   "nivel": 7,
+   "subarea": "Soporte Interno y Mesa de Ayuda",
+   "jefe": "Coordinador de Soporte Interno",
+   "funcion": "Lleva el inventario de equipos, licencias y garantías.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Jefe Comercial",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige las ventas y alquileres: metas, cartera de clientes y equipo comercial.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Coordinador de Cuentas",
+   "nivel": 4,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Jefe Comercial",
+   "funcion": "Organiza la cartera de clientes y el seguimiento de las oportunidades.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Supervisor de Ventas",
+   "nivel": 5,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Coordinador de Cuentas",
+   "funcion": "Dirige al equipo de ventas y controla sus metas.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Ejecutivo de Cuentas Senior (KAM)",
+   "nivel": 6,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Atiende a los clientes más grandes y hace crecer su relación con QUBIRA.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Desarrollador de Negocios (Business Developer)",
+   "nivel": 6,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Abre mercados y sectores nuevos para la empresa.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Ejecutivo de Ventas",
+   "nivel": 7,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Prospecta, visita y cierra ventas con nuevos clientes.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Ejecutivo de Éxito del Cliente (Customer Success)",
+   "nivel": 7,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Acompaña al cliente después de la venta para que renueve y amplíe.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Asesor de Atención al Cliente",
+   "nivel": 8,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Responde consultas comerciales por teléfono, correo y redes.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Practicante pre-profesional Comercial",
+   "nivel": 9,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Estudiante que aprende y apoya en ventas bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Practicante profesional Comercial",
+   "nivel": 9,
+   "subarea": "Ventas y Cuentas",
+   "jefe": "Supervisor de Ventas",
+   "funcion": "Egresado que asume tareas reales de ventas con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Coordinador de Preventa",
+   "nivel": 4,
+   "subarea": "Preventa y Propuestas",
+   "jefe": "Jefe Comercial",
+   "funcion": "Organiza las demostraciones y las propuestas técnicas y económicas.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Consultor de Preventa",
+   "nivel": 6,
+   "subarea": "Preventa y Propuestas",
+   "jefe": "Coordinador de Preventa",
+   "funcion": "Entiende la necesidad del cliente y diseña la solución que se le propone.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Analista Comercial",
+   "nivel": 7,
+   "subarea": "Preventa y Propuestas",
+   "jefe": "Coordinador de Preventa",
+   "funcion": "Analiza ventas, precios y competencia y mantiene el CRM al día.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Analista de Propuestas",
+   "nivel": 7,
+   "subarea": "Preventa y Propuestas",
+   "jefe": "Coordinador de Preventa",
+   "funcion": "Redacta proformas y propuestas con los costos que valoriza OPP.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Asistente Comercial",
+   "nivel": 8,
+   "subarea": "Preventa y Propuestas",
+   "jefe": "Coordinador de Preventa",
+   "funcion": "Prepara documentos, citas y seguimientos del equipo comercial.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Especialista en Contrataciones con el Estado",
+   "nivel": 6,
+   "subarea": "Licitaciones y Sector Público",
+   "jefe": "Jefe Comercial",
+   "funcion": "Prepara y presenta las ofertas a procesos de compra pública.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Analista de Licitaciones",
+   "nivel": 7,
+   "subarea": "Licitaciones y Sector Público",
+   "jefe": "Especialista en Contrataciones con el Estado",
+   "funcion": "Revisa las bases, arma los expedientes y sigue los plazos de cada proceso.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Coordinador de Alianzas y Canales",
+   "nivel": 4,
+   "subarea": "Alianzas y Canales",
+   "jefe": "Jefe Comercial",
+   "funcion": "Consigue y gestiona socios y distribuidores que venden con QUBIRA.",
+   "practica": null
+  },
+  {
+   "area": "COMERCIAL",
+   "nombre": "Ejecutivo de Canales",
+   "nivel": 7,
+   "subarea": "Alianzas y Canales",
+   "jefe": "Coordinador de Alianzas y Canales",
+   "funcion": "Atiende a los socios, los capacita y sigue sus ventas.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Jefe de OPP",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige presupuestos, costos, planeamiento, contabilidad y tesorería.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Coordinador de Presupuestos",
+   "nivel": 4,
+   "subarea": "Presupuestos y Costos",
+   "jefe": "Jefe de OPP",
+   "funcion": "Arma el presupuesto anual y controla su ejecución por área.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Especialista en Costos",
+   "nivel": 6,
+   "subarea": "Presupuestos y Costos",
+   "jefe": "Coordinador de Presupuestos",
+   "funcion": "Calcula el costo real de cada producto y proyecto.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Presupuestos",
+   "nivel": 7,
+   "subarea": "Presupuestos y Costos",
+   "jefe": "Coordinador de Presupuestos",
+   "funcion": "Compara lo presupuestado con lo gastado y avisa las desviaciones.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Costos",
+   "nivel": 7,
+   "subarea": "Presupuestos y Costos",
+   "jefe": "Coordinador de Presupuestos",
+   "funcion": "Valoriza cada proforma antes de que ODN la envíe.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista Financiero",
+   "nivel": 7,
+   "subarea": "Presupuestos y Costos",
+   "jefe": "Coordinador de Presupuestos",
+   "funcion": "Analiza rentabilidad, flujo de caja y estados financieros.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Especialista en Planeamiento",
+   "nivel": 6,
+   "subarea": "Planeamiento",
+   "jefe": "Jefe de OPP",
+   "funcion": "Traduce la estrategia de ADG en metas y planes anuales medibles.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Planeamiento y Proyecciones",
+   "nivel": 7,
+   "subarea": "Planeamiento",
+   "jefe": "Especialista en Planeamiento",
+   "funcion": "Proyecta ingresos, gastos y escenarios.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Evaluación de Proyectos",
+   "nivel": 7,
+   "subarea": "Planeamiento",
+   "jefe": "Especialista en Planeamiento",
+   "funcion": "Evalúa si una inversión o proyecto es rentable antes de aprobarlo.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Contador General",
+   "nivel": 6,
+   "subarea": "Contabilidad y Tributación",
+   "jefe": "Jefe de OPP",
+   "funcion": "Responde por la contabilidad, los estados financieros y las declaraciones a SUNAT.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista Contable",
+   "nivel": 7,
+   "subarea": "Contabilidad y Tributación",
+   "jefe": "Contador General",
+   "funcion": "Registra operaciones, concilia cuentas y prepara los cierres mensuales.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista Tributario",
+   "nivel": 7,
+   "subarea": "Contabilidad y Tributación",
+   "jefe": "Contador General",
+   "funcion": "Calcula los impuestos y prepara las declaraciones.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Asistente Contable",
+   "nivel": 8,
+   "subarea": "Contabilidad y Tributación",
+   "jefe": "Contador General",
+   "funcion": "Ordena comprobantes y registra documentos contables.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Supervisor de Finanzas y Tesorería",
+   "nivel": 5,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Jefe de OPP",
+   "funcion": "Controla pagos, cobros, bancos y facturación.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Facturación",
+   "nivel": 7,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Supervisor de Finanzas y Tesorería",
+   "funcion": "Emite las facturas electrónicas y controla que se cobren.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Tesorería",
+   "nivel": 7,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Supervisor de Finanzas y Tesorería",
+   "funcion": "Programa pagos, maneja las cuentas bancarias y controla la caja.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Analista de Cobranzas",
+   "nivel": 7,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Supervisor de Finanzas y Tesorería",
+   "funcion": "Sigue las facturas por cobrar y gestiona a los clientes morosos.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Asistente de Tesorería",
+   "nivel": 8,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Supervisor de Finanzas y Tesorería",
+   "funcion": "Prepara pagos, depósitos y conciliaciones bancarias.",
+   "practica": null
+  },
+  {
+   "area": "OPP",
+   "nombre": "Practicante pre-profesional de Finanzas",
+   "nivel": 9,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Supervisor de Finanzas y Tesorería",
+   "funcion": "Estudiante que aprende y apoya en finanzas y contabilidad bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "OPP",
+   "nombre": "Practicante profesional de Finanzas",
+   "nivel": 9,
+   "subarea": "Finanzas y Tesorería",
+   "jefe": "Supervisor de Finanzas y Tesorería",
+   "funcion": "Egresado que asume tareas reales de finanzas y contabilidad con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Jefe Legal",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige los asuntos legales y el cumplimiento normativo de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Coordinador Legal y de Cumplimiento",
+   "nivel": 4,
+   "subarea": null,
+   "jefe": "Jefe Legal",
+   "funcion": "Reparte los casos legales y sigue plazos, contratos y obligaciones.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Abogado Senior",
+   "nivel": 6,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Coordinador Legal y de Cumplimiento",
+   "funcion": "Lleva los casos y contratos más complejos y revisa el trabajo del equipo.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Abogado Corporativo",
+   "nivel": 7,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Asesora en temas societarios, poderes y acuerdos de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Analista de Contratos",
+   "nivel": 7,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Redacta y revisa contratos con clientes y proveedores.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Abogado Laboral",
+   "nivel": 7,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Asesora a ORH en contratos de trabajo, ceses e inspecciones de SUNAFIL.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Abogado de Propiedad Intelectual y TI",
+   "nivel": 7,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Protege marcas, software y licencias de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Abogado de Contrataciones con el Estado",
+   "nivel": 7,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Revisa la parte legal de las licitaciones públicas.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Practicante pre-profesional de Derecho",
+   "nivel": 9,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Estudiante que aprende y apoya en asuntos legales bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Practicante profesional de Derecho",
+   "nivel": 9,
+   "subarea": "Legal Corporativo y Contratos",
+   "jefe": "Abogado Senior",
+   "funcion": "Egresado que asume tareas reales de asuntos legales con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Oficial de Cumplimiento (Compliance)",
+   "nivel": 6,
+   "subarea": "Cumplimiento y Protección de Datos",
+   "jefe": "Coordinador Legal y de Cumplimiento",
+   "funcion": "Vigila que la empresa cumpla leyes, normas y su código de ética.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Analista de Cumplimiento",
+   "nivel": 7,
+   "subarea": "Cumplimiento y Protección de Datos",
+   "jefe": "Oficial de Cumplimiento (Compliance)",
+   "funcion": "Revisa controles, capacita al personal y documenta el cumplimiento.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Oficial de Protección de Datos Personales",
+   "nivel": 6,
+   "subarea": "Cumplimiento y Protección de Datos",
+   "jefe": "Coordinador Legal y de Cumplimiento",
+   "funcion": "Asegura que los datos personales se traten según la Ley 29733.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Analista de Protección de Datos",
+   "nivel": 7,
+   "subarea": "Cumplimiento y Protección de Datos",
+   "jefe": "Oficial de Protección de Datos Personales",
+   "funcion": "Registra los bancos de datos, atiende pedidos de los titulares y revisa consentimientos.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Analista de Gestión Documental y Archivo",
+   "nivel": 7,
+   "subarea": "Trámites y Archivo Legal",
+   "jefe": "Coordinador Legal y de Cumplimiento",
+   "funcion": "Custodia contratos, poderes y expedientes legales.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Procurador",
+   "nivel": 8,
+   "subarea": "Trámites y Archivo Legal",
+   "jefe": "Coordinador Legal y de Cumplimiento",
+   "funcion": "Hace trámites ante notarías, registros públicos y entidades.",
+   "practica": null
+  },
+  {
+   "area": "ODACL",
+   "nombre": "Asistente Legal",
+   "nivel": 8,
+   "subarea": null,
+   "jefe": "Coordinador Legal y de Cumplimiento",
+   "funcion": "Prepara documentos, agenda audiencias y archiva expedientes.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Jefe de ORH",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige la gestión de personas y administra el catálogo de áreas y cargos.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Coordinador de Talento Humano",
+   "nivel": 4,
+   "subarea": "Talento Humano",
+   "jefe": "Jefe de ORH",
+   "funcion": "Organiza el reclutamiento, la capacitación y el desarrollo del personal.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Especialista en Desempeño y Desarrollo",
+   "nivel": 6,
+   "subarea": "Talento Humano",
+   "jefe": "Coordinador de Talento Humano",
+   "funcion": "Diseña la evaluación de desempeño y los planes de carrera.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Reclutamiento y Selección",
+   "nivel": 7,
+   "subarea": "Talento Humano",
+   "jefe": "Coordinador de Talento Humano",
+   "funcion": "Publica vacantes, entrevista y presenta candidatos.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Capacitación",
+   "nivel": 7,
+   "subarea": "Talento Humano",
+   "jefe": "Coordinador de Talento Humano",
+   "funcion": "Detecta necesidades de formación y organiza los cursos.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Estructura Organizacional y Cargos",
+   "nivel": 7,
+   "subarea": "Talento Humano",
+   "jefe": "Coordinador de Talento Humano",
+   "funcion": "Mantiene el catálogo de cargos, los perfiles de puesto y los organigramas.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Practicante pre-profesional de Recursos Humanos",
+   "nivel": 9,
+   "subarea": "Talento Humano",
+   "jefe": "Coordinador de Talento Humano",
+   "funcion": "Estudiante que aprende y apoya en gestión de personas bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Practicante profesional de Recursos Humanos",
+   "nivel": 9,
+   "subarea": "Talento Humano",
+   "jefe": "Coordinador de Talento Humano",
+   "funcion": "Egresado que asume tareas reales de gestión de personas con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Supervisor de Planillas",
+   "nivel": 5,
+   "subarea": "Compensaciones y Planillas",
+   "jefe": "Jefe de ORH",
+   "funcion": "Controla que la planilla y los beneficios se paguen bien y a tiempo.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Especialista en Compensaciones",
+   "nivel": 6,
+   "subarea": "Compensaciones y Planillas",
+   "jefe": "Supervisor de Planillas",
+   "funcion": "Define bandas salariales, bonos y beneficios.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Planillas",
+   "nivel": 7,
+   "subarea": "Compensaciones y Planillas",
+   "jefe": "Supervisor de Planillas",
+   "funcion": "Calcula la planilla, CTS, gratificaciones y aportes.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Compensaciones y Beneficios",
+   "nivel": 7,
+   "subarea": "Compensaciones y Planillas",
+   "jefe": "Supervisor de Planillas",
+   "funcion": "Compara sueldos con el mercado y administra los beneficios.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Asistente de Planillas",
+   "nivel": 8,
+   "subarea": "Compensaciones y Planillas",
+   "jefe": "Supervisor de Planillas",
+   "funcion": "Registra asistencia, vacaciones y descansos médicos.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Coordinador de Bienestar",
+   "nivel": 4,
+   "subarea": "Bienestar y Seguridad en el Trabajo",
+   "jefe": "Jefe de ORH",
+   "funcion": "Organiza el bienestar, el clima laboral y la seguridad en el trabajo.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Especialista en Seguridad y Salud en el Trabajo (SST)",
+   "nivel": 6,
+   "subarea": "Bienestar y Seguridad en el Trabajo",
+   "jefe": "Coordinador de Bienestar",
+   "funcion": "Cumple la Ley 29783: riesgos, comité de SST, capacitaciones e incidentes.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Médico Ocupacional",
+   "nivel": 6,
+   "subarea": "Bienestar y Seguridad en el Trabajo",
+   "jefe": "Coordinador de Bienestar",
+   "funcion": "Hace los exámenes médicos ocupacionales y sigue la salud del personal.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Clima Laboral",
+   "nivel": 7,
+   "subarea": "Bienestar y Seguridad en el Trabajo",
+   "jefe": "Coordinador de Bienestar",
+   "funcion": "Mide el clima laboral y propone acciones para mejorarlo.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Trabajador Social",
+   "nivel": 7,
+   "subarea": "Bienestar y Seguridad en el Trabajo",
+   "jefe": "Coordinador de Bienestar",
+   "funcion": "Atiende casos personales, subsidios y beneficios sociales.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de SST",
+   "nivel": 7,
+   "subarea": "Bienestar y Seguridad en el Trabajo",
+   "jefe": "Coordinador de Bienestar",
+   "funcion": "Inspecciona los puestos, registra incidentes y lleva los registros obligatorios.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Administración de Personal",
+   "nivel": 7,
+   "subarea": "Administración de Personal",
+   "jefe": "Jefe de ORH",
+   "funcion": "Lleva legajos, contratos, altas y bajas en el T-Registro.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Analista de Relaciones Laborales",
+   "nivel": 7,
+   "subarea": "Administración de Personal",
+   "jefe": "Jefe de ORH",
+   "funcion": "Atiende reclamos, temas disciplinarios y la relación con los representantes de los trabajadores.",
+   "practica": null
+  },
+  {
+   "area": "RRHH",
+   "nombre": "Asistente de Recursos Humanos",
+   "nivel": 8,
+   "subarea": "Administración de Personal",
+   "jefe": "Jefe de ORH",
+   "funcion": "Apoya con documentos, constancias y atención al personal.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Jefe de OCM",
+   "nivel": 3,
+   "subarea": null,
+   "jefe": "Gerente General",
+   "funcion": "Dirige la marca, la comunicación y el marketing de la empresa.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Coordinador de Marketing",
+   "nivel": 4,
+   "subarea": "Marketing Digital",
+   "jefe": "Jefe de OCM",
+   "funcion": "Planifica las campañas y controla su presupuesto y resultados.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Estratega Digital",
+   "nivel": 6,
+   "subarea": "Marketing Digital",
+   "jefe": "Coordinador de Marketing",
+   "funcion": "Define canales, públicos y mensajes de las campañas digitales.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Especialista en SEO/SEM y Pauta",
+   "nivel": 6,
+   "subarea": "Marketing Digital",
+   "jefe": "Coordinador de Marketing",
+   "funcion": "Posiciona la web en buscadores y maneja la publicidad pagada.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Especialista en Automatización y Email Marketing",
+   "nivel": 6,
+   "subarea": "Marketing Digital",
+   "jefe": "Coordinador de Marketing",
+   "funcion": "Arma flujos de correo para convertir interesados en clientes.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Analista de Marketing",
+   "nivel": 7,
+   "subarea": "Marketing Digital",
+   "jefe": "Coordinador de Marketing",
+   "funcion": "Mide los resultados de las campañas y del embudo de ventas.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Diseñador Web",
+   "nivel": 7,
+   "subarea": "Marketing Digital",
+   "jefe": "Coordinador de Marketing",
+   "funcion": "Diseña y mantiene la web y las páginas de campaña.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Coordinador de Comunicaciones",
+   "nivel": 4,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Jefe de OCM",
+   "funcion": "Organiza la comunicación interna y externa y la relación con la prensa.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Supervisor de Contenidos",
+   "nivel": 5,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Coordinador de Comunicaciones",
+   "funcion": "Planifica el calendario de contenidos y revisa lo que se publica.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Community Manager",
+   "nivel": 7,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Supervisor de Contenidos",
+   "funcion": "Gestiona las redes sociales y responde a la comunidad.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Diseñador Gráfico",
+   "nivel": 7,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Supervisor de Contenidos",
+   "funcion": "Diseña piezas gráficas para campañas, redes y documentos.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Creador de Contenido Audiovisual",
+   "nivel": 7,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Supervisor de Contenidos",
+   "funcion": "Graba y edita videos, fotos y animaciones.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Redactor de Contenidos (Copywriter)",
+   "nivel": 7,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Supervisor de Contenidos",
+   "funcion": "Escribe los textos de la web, redes, campañas y blog.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Practicante pre-profesional de Marketing",
+   "nivel": 9,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Supervisor de Contenidos",
+   "funcion": "Estudiante que aprende y apoya en marketing y comunicación bajo la guía de su tutor.",
+   "practica": "pre"
+  },
+  {
+   "area": "OCM",
+   "nombre": "Practicante profesional de Marketing",
+   "nivel": 9,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Supervisor de Contenidos",
+   "funcion": "Egresado que asume tareas reales de marketing y comunicación con supervisión de su tutor.",
+   "practica": "pro"
+  },
+  {
+   "area": "OCM",
+   "nombre": "Especialista en Comunicación Interna",
+   "nivel": 6,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Coordinador de Comunicaciones",
+   "funcion": "Mantiene informado y conectado al personal.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Especialista en Relaciones Públicas y Prensa",
+   "nivel": 6,
+   "subarea": "Comunicaciones y Contenidos",
+   "jefe": "Coordinador de Comunicaciones",
+   "funcion": "Gestiona notas de prensa, voceros y reputación.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Especialista de Marca (Brand)",
+   "nivel": 6,
+   "subarea": "Marca y Eventos",
+   "jefe": "Jefe de OCM",
+   "funcion": "Cuida la identidad visual y el manual de marca.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Analista de Eventos",
+   "nivel": 7,
+   "subarea": "Marca y Eventos",
+   "jefe": "Especialista de Marca (Brand)",
+   "funcion": "Organiza ferias, lanzamientos y eventos con clientes.",
+   "practica": null
+  },
+  {
+   "area": "OCM",
+   "nombre": "Asistente de Marketing",
+   "nivel": 8,
+   "subarea": null,
+   "jefe": "Jefe de OCM",
+   "funcion": "Apoya con materiales, proveedores y seguimiento de campañas.",
+   "practica": null
+  }
+ ],
+ "flujos": [
+  {
+   "k": "fun",
+   "t": "Supervisión de directores"
+  },
+  {
+   "k": "venta",
+   "t": "Venta"
+  },
+  {
+   "k": "des",
+   "t": "Desarrollo y entrega"
+  },
+  {
+   "k": "per",
+   "t": "Personas"
+  },
+  {
+   "k": "fin",
+   "t": "Finanzas y logística"
+  },
+  {
+   "k": "seg",
+   "t": "Seguridad y control"
+  }
+ ],
+ "conexiones": [
+  {
+   "de": "Director General (CEO)",
+   "deArea": "ADG",
+   "a": "Jefe de DST (CISO)",
+   "aArea": "DST",
+   "flujo": "fun",
+   "texto": "Recibe los reportes de riesgo e incidentes y aprueba la política de seguridad.",
+   "dosVias": false
+  },
+  {
+   "de": "Director de Operaciones (COO)",
+   "deArea": "ADG",
+   "a": "Jefe de OCOS",
+   "aArea": "SOPORTE",
+   "flujo": "fun",
+   "texto": "Fija la estrategia operativa y los estándares de servicio y revisa resultados de OCOS; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Director Financiero (CFO)",
+   "deArea": "ADG",
+   "a": "Jefe de OPP",
+   "aArea": "OPP",
+   "flujo": "fun",
+   "texto": "Fija la política financiera y revisa resultados de OPP; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Director de Tecnología (CTO)",
+   "deArea": "ADG",
+   "a": "Jefe de OTI",
+   "aArea": "TI",
+   "flujo": "fun",
+   "texto": "Fija la estrategia técnica y revisa resultados de OTI; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Director Comercial (CCO)",
+   "deArea": "ADG",
+   "a": "Jefe Comercial",
+   "aArea": "COMERCIAL",
+   "flujo": "fun",
+   "texto": "Fija la estrategia comercial y revisa resultados de ODN; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Director Comercial (CCO)",
+   "deArea": "ADG",
+   "a": "Jefe de OCM",
+   "aArea": "OCM",
+   "flujo": "fun",
+   "texto": "Fija la estrategia de marca y marketing y revisa resultados de OCM; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Director de Talento Humano (CHRO)",
+   "deArea": "ADG",
+   "a": "Jefe de ORH",
+   "aArea": "RRHH",
+   "flujo": "fun",
+   "texto": "Fija la política de personas y compensaciones y revisa resultados de ORH; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Director Legal (CLO)",
+   "deArea": "ADG",
+   "a": "Jefe Legal",
+   "aArea": "ODACL",
+   "flujo": "fun",
+   "texto": "Fija la política legal y de cumplimiento y revisa resultados de ODACL; el mando diario es de GG.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Marketing",
+   "deArea": "OCM",
+   "a": "Ejecutivo de Ventas",
+   "aArea": "COMERCIAL",
+   "flujo": "venta",
+   "texto": "Entrega los interesados que llegan por las campañas.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Propuestas",
+   "deArea": "COMERCIAL",
+   "a": "Analista de Costos",
+   "aArea": "OPP",
+   "flujo": "venta",
+   "texto": "Pide valorizar costos y precio de la proforma.",
+   "dosVias": false
+  },
+  {
+   "de": "Consultor de Preventa",
+   "deArea": "COMERCIAL",
+   "a": "Arquitecto de Software",
+   "aArea": "TI",
+   "flujo": "venta",
+   "texto": "Consulta si la solución que se propone es viable.",
+   "dosVias": false
+  },
+  {
+   "de": "Jefe de OPP",
+   "deArea": "OPP",
+   "a": "Gerente General",
+   "aArea": "GG",
+   "flujo": "venta",
+   "texto": "Revisan juntos la proforma valorizada antes de aprobarla.",
+   "dosVias": true
+  },
+  {
+   "de": "Ejecutivo de Ventas",
+   "deArea": "COMERCIAL",
+   "a": "Analista de Contratos",
+   "aArea": "ODACL",
+   "flujo": "venta",
+   "texto": "Pide el contrato cuando el cliente acepta la proforma aprobada.",
+   "dosVias": false
+  },
+  {
+   "de": "Jefe Comercial",
+   "deArea": "COMERCIAL",
+   "a": "Director Comercial (CCO)",
+   "aArea": "ADG",
+   "flujo": "venta",
+   "texto": "Presenta las ventas grandes para su aprobación.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Licitaciones",
+   "deArea": "COMERCIAL",
+   "a": "Abogado de Contrataciones con el Estado",
+   "aArea": "ODACL",
+   "flujo": "venta",
+   "texto": "Pide revisar las bases y la parte legal de la oferta.",
+   "dosVias": false
+  },
+  {
+   "de": "Especialista en Contrataciones con el Estado",
+   "deArea": "COMERCIAL",
+   "a": "Analista de Costos",
+   "aArea": "OPP",
+   "flujo": "venta",
+   "texto": "Pide valorizar la oferta económica de la licitación.",
+   "dosVias": false
+  },
+  {
+   "de": "Ejecutivo de Ventas",
+   "deArea": "COMERCIAL",
+   "a": "Analista de Facturación",
+   "aArea": "OPP",
+   "flujo": "venta",
+   "texto": "Avisa la venta cerrada para emitir la factura.",
+   "dosVias": false
+  },
+  {
+   "de": "Gerente de Proyectos (PMO)",
+   "deArea": "GG",
+   "a": "Coordinador de Proyectos TI",
+   "aArea": "TI",
+   "flujo": "des",
+   "texto": "Asigna el proyecto aprobado y su plazo.",
+   "dosVias": false
+  },
+  {
+   "de": "Consultor de Preventa",
+   "deArea": "COMERCIAL",
+   "a": "Analista de Negocio (Business Analyst)",
+   "aArea": "TI",
+   "flujo": "des",
+   "texto": "Pasa lo acordado con el cliente para convertirlo en requisitos.",
+   "dosVias": false
+  },
+  {
+   "de": "Líder Técnico (Tech Lead)",
+   "deArea": "TI",
+   "a": "Coordinador de Desarrollo Seguro",
+   "aArea": "DST",
+   "flujo": "des",
+   "texto": "Piden y hacen la revisión de seguridad antes de entregar.",
+   "dosVias": true
+  },
+  {
+   "de": "Ingeniero DevOps / Cloud",
+   "deArea": "TI",
+   "a": "Ingeniero DevSecOps",
+   "aArea": "DST",
+   "flujo": "des",
+   "texto": "Integran las pruebas de seguridad en los despliegues.",
+   "dosVias": true
+  },
+  {
+   "de": "Jefe de OTI",
+   "deArea": "TI",
+   "a": "Gerente General",
+   "aArea": "GG",
+   "flujo": "des",
+   "texto": "Presenta el entregable para la revisión de calidad; si hay observaciones, vuelve a OTI.",
+   "dosVias": true
+  },
+  {
+   "de": "Líder de QA",
+   "deArea": "TI",
+   "a": "Coordinador de Servicios al Cliente",
+   "aArea": "SOPORTE",
+   "flujo": "des",
+   "texto": "Entrega la versión aprobada por GG para implementarla en el cliente.",
+   "dosVias": false
+  },
+  {
+   "de": "Especialista de Soporte Nivel 3 (clientes)",
+   "deArea": "SOPORTE",
+   "a": "Líder Técnico (Tech Lead)",
+   "aArea": "TI",
+   "flujo": "des",
+   "texto": "Escala los errores de fondo del producto.",
+   "dosVias": false
+  },
+  {
+   "de": "Redactor Técnico (Technical Writer)",
+   "deArea": "TI",
+   "a": "Especialista en Capacitación a Clientes",
+   "aArea": "SOPORTE",
+   "flujo": "des",
+   "texto": "Entrega los manuales con los que se capacita a los usuarios.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Administración de Personal",
+   "deArea": "RRHH",
+   "a": "Especialista en Identidades y Accesos (IAM)",
+   "aArea": "DST",
+   "flujo": "per",
+   "texto": "Avisa altas y bajas para abrir o cerrar accesos.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Administración de Personal",
+   "deArea": "RRHH",
+   "a": "Administrador de Sistemas Internos",
+   "aArea": "SOPORTE",
+   "flujo": "per",
+   "texto": "Pide correo y cuentas para cada ingreso.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Reclutamiento y Selección",
+   "deArea": "RRHH",
+   "a": "Analista de Contratos",
+   "aArea": "ODACL",
+   "flujo": "per",
+   "texto": "Pide revisar los convenios de prácticas y contratos.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Relaciones Laborales",
+   "deArea": "RRHH",
+   "a": "Abogado Laboral",
+   "aArea": "ODACL",
+   "flujo": "per",
+   "texto": "Consultan ceses, sanciones e inspecciones laborales.",
+   "dosVias": true
+  },
+  {
+   "de": "Especialista en Comunicación Interna",
+   "deArea": "OCM",
+   "a": "Analista de Clima Laboral",
+   "aArea": "RRHH",
+   "flujo": "per",
+   "texto": "Comunican al personal los resultados y acciones de clima.",
+   "dosVias": true
+  },
+  {
+   "de": "Analista de Estructura Organizacional y Cargos",
+   "deArea": "RRHH",
+   "a": "Analista de Procesos y Mejora Continua",
+   "aArea": "GG",
+   "flujo": "per",
+   "texto": "Alinean los cargos con los procesos de la empresa.",
+   "dosVias": true
+  },
+  {
+   "de": "Analista de Planillas",
+   "deArea": "RRHH",
+   "a": "Analista de Tesorería",
+   "aArea": "OPP",
+   "flujo": "fin",
+   "texto": "Envía la planilla aprobada para pagarla.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Compras",
+   "deArea": "GG",
+   "a": "Analista de Tesorería",
+   "aArea": "OPP",
+   "flujo": "fin",
+   "texto": "Envía las órdenes de compra para pagar a proveedores.",
+   "dosVias": false
+  },
+  {
+   "de": "Coordinador de Presupuestos",
+   "deArea": "OPP",
+   "a": "Coordinador de Administración y Logística",
+   "aArea": "GG",
+   "flujo": "fin",
+   "texto": "Controla que las compras estén dentro del presupuesto.",
+   "dosVias": false
+  },
+  {
+   "de": "Especialista en Planeamiento",
+   "deArea": "OPP",
+   "a": "Analista de Control de Gestión",
+   "aArea": "GG",
+   "flujo": "fin",
+   "texto": "Comparten las metas y los indicadores de cada área.",
+   "dosVias": true
+  },
+  {
+   "de": "Analista de Servicios en Alquiler",
+   "deArea": "SOPORTE",
+   "a": "Analista de Facturación",
+   "aArea": "OPP",
+   "flujo": "fin",
+   "texto": "Avisa los alquileres que se facturan cada mes.",
+   "dosVias": false
+  },
+  {
+   "de": "Ejecutivo de Éxito del Cliente (Customer Success)",
+   "deArea": "COMERCIAL",
+   "a": "Analista de Cobranzas",
+   "aArea": "OPP",
+   "flujo": "fin",
+   "texto": "Coordinan con los clientes que tienen deuda.",
+   "dosVias": true
+  },
+  {
+   "de": "Analista de Activos TI",
+   "deArea": "SOPORTE",
+   "a": "Asistente de Logística y Almacén",
+   "aArea": "GG",
+   "flujo": "fin",
+   "texto": "Registran la compra y entrega de equipos.",
+   "dosVias": true
+  },
+  {
+   "de": "Líder de Respuesta a Incidentes",
+   "deArea": "DST",
+   "a": "Oficial de Protección de Datos Personales",
+   "aArea": "ODACL",
+   "flujo": "seg",
+   "texto": "Avisa si un incidente expuso datos personales.",
+   "dosVias": false
+  },
+  {
+   "de": "Especialista en Identidades y Accesos (IAM)",
+   "deArea": "DST",
+   "a": "Administrador de Sistemas Internos",
+   "aArea": "SOPORTE",
+   "flujo": "seg",
+   "texto": "Indica los permisos aprobados para aplicarlos en las cuentas.",
+   "dosVias": false
+  },
+  {
+   "de": "Técnico de Respaldo y Continuidad",
+   "deArea": "DST",
+   "a": "Administrador de Base de Datos (DBA)",
+   "aArea": "TI",
+   "flujo": "seg",
+   "texto": "Coordinan las copias y restauraciones de las bases de datos.",
+   "dosVias": true
+  },
+  {
+   "de": "Auditor Interno Senior",
+   "deArea": "ADG",
+   "a": "Oficial de Cumplimiento (Compliance)",
+   "aArea": "ODACL",
+   "flujo": "seg",
+   "texto": "Revisa los controles y el cumplimiento normativo.",
+   "dosVias": false
+  },
+  {
+   "de": "Analista de Riesgos y Cumplimiento TI",
+   "deArea": "DST",
+   "a": "Analista de Cumplimiento",
+   "aArea": "ODACL",
+   "flujo": "seg",
+   "texto": "Comparten el mapa de riesgos y controles.",
+   "dosVias": true
+  },
+  {
+   "de": "Oficial de Seguridad de la Información (ISO 27001)",
+   "deArea": "DST",
+   "a": "Especialista en Gestión de Calidad (ISO 9001)",
+   "aArea": "GG",
+   "flujo": "seg",
+   "texto": "Coordinan las auditorías de certificación.",
+   "dosVias": true
+  },
+  {
+   "de": "Analista de Protección de Datos",
+   "deArea": "ODACL",
+   "a": "Especialista en Automatización y Email Marketing",
+   "aArea": "OCM",
+   "flujo": "seg",
+   "texto": "Revisa el consentimiento de los correos masivos.",
+   "dosVias": false
+  },
+  {
+   "de": "Especialista en Seguridad de Aplicaciones (AppSec)",
+   "deArea": "DST",
+   "a": "Diseñador Web",
+   "aArea": "OCM",
+   "flujo": "seg",
+   "texto": "Revisa la seguridad de la web pública.",
+   "dosVias": false
+  },
+  {
+   "de": "Especialista en Seguridad y Salud en el Trabajo (SST)",
+   "deArea": "RRHH",
+   "a": "Coordinador de Administración y Logística",
+   "aArea": "GG",
+   "flujo": "seg",
+   "texto": "Coordinan la seguridad física del local.",
+   "dosVias": true
+  }
+ ]
+}

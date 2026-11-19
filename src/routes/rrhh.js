@@ -703,6 +703,7 @@ router.get('/bootstrap', async (req, res) => {
     for (const r of catalogRows.rows) {
       if (!catalogs[r.catalogo]) catalogs[r.catalogo] = [];
       const item = { id: r.id, nombre: r.nombre, parentId: r.parent_id, nivel: r.nivel ?? null, area: r.area ?? null };
+      if (r.catalogo === 'subcargos') Object.assign(item, { subarea: r.subarea || null, jefe: r.jefe || null, funcion: r.funcion || null });
       if (r.catalogo === 'areasTrabajo') {
         Object.assign(item, { sigla: r.sigla || null, nombreCompleto: r.nombre_completo || null, alias: r.alias || [],
           activo: r.activo !== false, siglaBloqueada: !!(r.sigla && usadas.has(r.sigla)) });
@@ -1008,12 +1009,15 @@ router.post('/catalogos/:catalogo', async (req, res) => {
       nivel = p[0].nivel; area = canonArea(req.body.area);
     }
 
+    // Sub-cargo: sub-área, jefe inmediato (nombre del sub-cargo) y función son opcionales
+    const txt = v => (v === undefined || v === null || !String(v).trim() ? null : String(v).trim().slice(0, 300));
+    const extra = catalogo === 'subcargos' ? { subarea: txt(req.body.subarea), jefe: txt(req.body.jefe), funcion: txt(req.body.funcion) } : { subarea: null, jefe: null, funcion: null };
     const id = uid();
     await pool.query(
-      'INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id, nivel, area) VALUES ($1,$2,$3,$4,$5,$6)',
-      [id, catalogo, nombre, parentId || null, nivel, area]
+      'INSERT INTO rrhh.catalogos (id, catalogo, nombre, parent_id, nivel, area, subarea, jefe, funcion) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [id, catalogo, nombre, parentId || null, nivel, area, extra.subarea, extra.jefe, extra.funcion]
     );
-    return res.status(201).json({ ok: true, data: { id, nombre, parentId: parentId || null, nivel, area } });
+    return res.status(201).json({ ok: true, data: { id, nombre, parentId: parentId || null, nivel, area, ...(catalogo === 'subcargos' ? extra : {}) } });
   } catch (err) {
     console.error('[RRHH] POST /catalogos error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error al crear el ítem de catálogo' });

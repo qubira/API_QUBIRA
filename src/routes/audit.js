@@ -72,14 +72,21 @@ router.get('/logs', async (req, res) => {
        propia área y solo al día de hoy, sin importar qué pida el
        frontend (nunca confiar en el filtro del cliente). */
     const canSeeOtherAreas = privileged || viewerArea === 'ADG' || viewerArea === 'GG';
+    /* GG ve la auditoría de su línea, no la de DST: DST reporta al CEO
+       (ADG) y GG solo recibe sus reportes e indicadores de seguridad. */
+    const veDST = privileged || viewerArea === 'ADG' || viewerArea === 'DST';
 
     const params = []; let where = 'WHERE 1=1';
     if (area === 'ALL') {
       if (!canSeeOtherAreas) return res.status(403).json({ error: 'No tienes permiso para ver todas las áreas' });
+      if (!veDST) where += ` AND ${sqlCanonArea('c.nombre')} IS DISTINCT FROM 'DST'`;
     } else if (area) {
       const wantedArea = canonArea(area);
       if (!canSeeOtherAreas && wantedArea !== viewerArea) {
         return res.status(403).json({ error: 'No tienes permiso para ver la auditoría de otra área' });
+      }
+      if (wantedArea === 'DST' && !veDST) {
+        return res.status(403).json({ error: 'La auditoría de DST solo la ve la Alta Dirección (ADG)' });
       }
       params.push(wantedArea); where += ` AND ${sqlCanonArea('c.nombre')} = $${params.length}`;
     } else {
@@ -126,6 +133,7 @@ router.get('/logs', async (req, res) => {
       rows: rows.map(r => ({ ...r, description: friendlyDescription(r), full_path: fullPath(r), changes: parsedBody(r), body: undefined })),
       total: countRows[0].total,
       canSeeOtherAreas,
+      veDST,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

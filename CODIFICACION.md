@@ -56,7 +56,7 @@ Estado inicial (al final de la fase 1):
 |---|---|---|
 | ADG | Alta Dirección Gerencial | — |
 | GG | Gerencia General | — |
-| OTI | Oficina de Tecnología e Información | TI |
+| OTI | Oficina de Tecnología de la Información | TI |
 | ORH | Oficina de Recursos Humanos | RRHH |
 | OCOS | Oficina de Centro de Operaciones y Servicios | SOPORTE |
 | ODN | Oficina de Desarrollo de Negocios | COMERCIAL |
@@ -302,7 +302,7 @@ Las proformas se generan como PDF en el navegador: el navegador **pide el códig
 
 ## 11. Impresión
 
-- **Membrete:** `OTI-INF-2026-027 · Oficina de Tecnología e Información` (nombre completo desde el catálogo).
+- **Membrete:** `OTI-INF-2026-027 · Oficina de Tecnología de la Información` (nombre completo desde el catálogo).
 - **Línea de ruta:** `Ruta: OTI crea → OTI revisa → OTI aprueba`. Solo en documentos **internos**. Los que se entregan a personas de fuera (CST, CTR, PRF) no la imprimen; su ruta queda en el sistema.
 - **Bloque de firmas:** generado desde `doc.ruta` (nombre, puesto, acción y fecha de cada paso). En la constancia sigue siendo una sola firma: quien la emite.
 - **Razón social y RUC** se leen de la configuración de la empresa (`doc.empresa`), no están escritos en los modelos. Cuando QUBIRA S.A.C. tenga su RUC 20 se cambian una sola vez.

@@ -45,7 +45,7 @@ function sqlCanonArea(col) {
 // Solo para llenar las áreas existentes la primera vez; después se editan en ORH.
 const SEMILLA = {
   ADG: ['ADG', 'Alta Dirección Gerencial'], GG: ['GG', 'Gerencia General'],
-  TI: ['OTI', 'Oficina de Tecnología e Información'], RRHH: ['ORH', 'Oficina de Recursos Humanos'],
+  TI: ['OTI', 'Oficina de Tecnología de la Información'], RRHH: ['ORH', 'Oficina de Recursos Humanos'],
   SOPORTE: ['OCOS', 'Oficina de Centro de Operaciones y Servicios'], COMERCIAL: ['ODN', 'Oficina de Desarrollo de Negocios'],
   OPP: ['OPP', 'Oficina de Presupuestos y Planeación'], OCM: ['OCM', 'Oficina de Comunicación y Marketing'],
   ODACL: ['ODACL', 'Oficina de Asuntos Corporativos y Legales'], DST: ['DST', 'Desarrollo de Seguridad y Tecnología'],
