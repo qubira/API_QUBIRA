@@ -61,6 +61,10 @@ function ensurePasskeySchema() {
       );
       CREATE INDEX IF NOT EXISTS passkeys_usuario_idx ON security.passkeys (usuario_id);
 
+      -- Con qué se inició cada sesión ('passkey' o NULL = contraseña/rostro).
+      -- Una sesión por passkey ya probó 2 factores: el hub no vuelve a pedir el 2FA.
+      ALTER TABLE sesiones ADD COLUMN IF NOT EXISTS metodo TEXT;
+
       CREATE TABLE IF NOT EXISTS security.webauthn_challenges (
         id         TEXT PRIMARY KEY,
         challenge  TEXT NOT NULL,

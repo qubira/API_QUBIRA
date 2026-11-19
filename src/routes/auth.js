@@ -19,7 +19,9 @@ const {
 } = require('@simplewebauthn/server');
 
 const router = express.Router();
-router.use((req, res, next) => { sec.ensureSecuritySchema().then(() => next()).catch(next); });
+router.use((req, res, next) => {
+  Promise.all([sec.ensureSecuritySchema(), pk.ensurePasskeySchema()]).then(() => next()).catch(next);
+});
 
 /* Una sola sesión activa por cuenta: entrar con credenciales o rostro
    desde un dispositivo nuevo apaga las sesiones que esa cuenta tenía
@@ -44,7 +46,7 @@ async function revokeOtherSessions(userId, newIp, canal = 'web') {
    usado tanto por /login (credenciales) como por /exchange (código de
    traspaso desde login/modulo.html), así ambos caminos terminan en
    exactamente la misma sesión. */
-async function issueSession(user, req, canal = 'web', expiresOverride = null) {
+async function issueSession(user, req, canal = 'web', expiresOverride = null, metodo = null) {
   // La app móvil inicia sesión una sola vez: su sesión dura un año (uso exclusivo de personal de confianza)
   const expiresIn = expiresOverride || (canal === 'movil' ? '8760h' : (process.env.JWT_EXPIRES_IN || '24h'));
   const token = jwt.sign(
@@ -57,9 +59,9 @@ async function issueSession(user, req, canal = 'web', expiresOverride = null) {
   const ip = sec.clientIp(req);
 
   await pool.query(
-    `INSERT INTO sesiones (usuario_id, token, ip_address, user_agent, expires_at, canal)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [user.id, token, ip, req.headers['user-agent'] || null, expires, canal]
+    `INSERT INTO sesiones (usuario_id, token, ip_address, user_agent, expires_at, canal, metodo)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [user.id, token, ip, req.headers['user-agent'] || null, expires, canal, metodo]
   );
 
   const [cargo, authorized_modules, info] = await Promise.all([
@@ -657,8 +659,6 @@ router.post('/face/login', async (req, res) => {
      guardadas para este dominio y el servidor identifica la cuenta por
      el credential_id. La sesión dura PASSKEY_SESSION_HOURS (2h).
    ============================================================ */
-router.use('/passkey', (req, res, next) => { pk.ensurePasskeySchema().then(() => next()).catch(next); });
-
 function rpOr400(req, res) {
   const rp = pk.rpFromOrigin(req.headers.origin);
   if (!rp) res.status(400).json({ ok: false, error: 'Las passkeys solo funcionan desde el login central de QUBIRA' });
@@ -853,7 +853,7 @@ router.post('/passkey/login/verify', async (req, res) => {
     );
     await sec.recordLoginAttempt({ username: user.username, ip, success: true, userAgent: ua });
     await revokeOtherSessions(user.id, ip, 'web');
-    const { token, user: userOut } = await issueSession(user, req, 'web', `${pk.SESSION_HOURS}h`);
+    const { token, user: userOut } = await issueSession(user, req, 'web', `${pk.SESSION_HOURS}h`, 'passkey');
 
     await pool.query(`INSERT INTO auditoria_usuarios (usuario_id, accion, realizado_por) VALUES ($1, 'LOGIN', $1)`, [user.id]);
     await logLoginAudit(user.id, '/api/auth/passkey/login').catch(() => {});
@@ -934,12 +934,15 @@ router.post('/security/block-replacing-ip', async (req, res) => {
    cliente) — login/modulo.html y el chequeo de cada panel lo usan.
    ============================================================ */
 router.get('/me', requireAuth, async (req, res) => {
-  const [cargo, authorized_modules, info] = await Promise.all([
+  const [cargo, authorized_modules, info, ses] = await Promise.all([
     getEmployeeCargo(req.user.username).catch(() => null),
     getAuthorizedModules(req.user.username, req.user.nivel_acceso, req.user.id).catch(() => []),
     infoCargo(req.user.username).catch(() => null),
+    pool.query('SELECT metodo FROM sesiones WHERE id = $1', [req.user.sessionId]).catch(() => ({ rows: [] })),
   ]);
-  return res.json({ ok: true, user: { ...req.user, cargo, authorized_modules, nivel_cargo: info?.nivel || null, subcargo: info?.subcargo || null } });
+  // auth_method = 'passkey' → el hub no pide el 2FA para entrar a los módulos
+  const auth_method = ses.rows[0]?.metodo || 'password';
+  return res.json({ ok: true, user: { ...req.user, cargo, authorized_modules, nivel_cargo: info?.nivel || null, subcargo: info?.subcargo || null, auth_method } });
 });
 
 module.exports = router;
