@@ -145,6 +145,8 @@ function asegurarJerarquia() {
    No borra ningún sub-cargo que ORH haya creado aparte. */
 const CLAVE_MIGRACION = 'estructura-cargos-2026-11-19';
 const normNombre = s => String(s || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+const ORDEN_OFICIAL = new Map(ESTRUCTURA.cargos.map((c, i) => [c.area + '|' + normNombre(c.nombre), i]));
+const ordenOficial = s => (ORDEN_OFICIAL.has(s.area + '|' + normNombre(s.nombre)) ? ORDEN_OFICIAL.get(s.area + '|' + normNombre(s.nombre)) : 1e6);
 const esPracticanteAntiguo = n => /^practicante\b/i.test(n) && !/profesional/i.test(n);
 async function migrarEstructura(porNivel) {
   await pool.query(`CREATE SCHEMA IF NOT EXISTS doc;
@@ -238,7 +240,8 @@ async function datosJerarquia() {
     areas: areas.map(a => ({
       ...a, nombre: a.nombre || a.etiqueta, funcion: FUNCIONES[a.clave] || '',
       reporta: reportaA(a.clave), reportaEtiqueta: reportaA(a.clave) ? etiquetaArea(reportaA(a.clave)) : null,
-      cargos: subcargos.filter(s => s.area === a.clave).sort((x, y) => x.nivel - y.nivel),
+      // Orden de la estructura oficial (así se arman los árboles); los creados después por ORH van al final, por nivel
+      cargos: subcargos.filter(s => s.area === a.clave).sort((x, y) => (ordenOficial(x) - ordenOficial(y)) || (x.nivel - y.nivel) || x.nombre.localeCompare(y.nombre)),
     })),
     flujos: FLUJOS, reglas: REGLAS, permisos: PERMISOS,
     // Conexiones de trabajo entre cargos de distintas áreas (solo las de cargos que siguen en el catálogo)
