@@ -112,6 +112,10 @@ const apiLimiter = rateLimit({
    RUTAS API
    ============================================================ */
 app.use('/api/auth/login',                    loginLimiter);
+app.use('/api/auth/passkey/login',            rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30, standardHeaders: true, legacyHeaders: false,
+  message: { ok: false, error: 'Demasiados intentos. Espera 15 minutos.' },
+}));
 app.use('/api/soporte/master-password/verify', masterPasswordLimiter);
 app.use('/api',                               apiLimiter);
 

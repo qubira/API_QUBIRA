@@ -12,6 +12,11 @@ const { getAuthorizedModules } = require('../lib/moduleAccess');
 const { infoCargo } = require('../lib/jerarquia');
 const { encrypt: encryptField, decrypt: decryptField } = require('../lib/crypto');
 const sec = require('../lib/security');
+const pk  = require('../lib/passkeys');
+const {
+  generateRegistrationOptions, verifyRegistrationResponse,
+  generateAuthenticationOptions, verifyAuthenticationResponse,
+} = require('@simplewebauthn/server');
 
 const router = express.Router();
 router.use((req, res, next) => { sec.ensureSecuritySchema().then(() => next()).catch(next); });
@@ -39,9 +44,9 @@ async function revokeOtherSessions(userId, newIp, canal = 'web') {
    usado tanto por /login (credenciales) como por /exchange (código de
    traspaso desde login/modulo.html), así ambos caminos terminan en
    exactamente la misma sesión. */
-async function issueSession(user, req, canal = 'web') {
+async function issueSession(user, req, canal = 'web', expiresOverride = null) {
   // La app móvil inicia sesión una sola vez: su sesión dura un año (uso exclusivo de personal de confianza)
-  const expiresIn = canal === 'movil' ? '8760h' : (process.env.JWT_EXPIRES_IN || '24h');
+  const expiresIn = expiresOverride || (canal === 'movil' ? '8760h' : (process.env.JWT_EXPIRES_IN || '24h'));
   const token = jwt.sign(
     { sub: user.id, username: user.username, rol: user.rol },
     process.env.JWT_SECRET,
@@ -637,6 +642,225 @@ router.post('/face/login', async (req, res) => {
     return res.json({ ok: true, token, user: userOut });
   } catch (err) {
     console.error('[AUTH] Face login error:', err.message);
+    return res.status(500).json({ ok: false, error: 'Error interno del servidor' });
+  }
+});
+
+/* ============================================================
+   Passkeys (WebAuthn) — ingreso con el celular (QR) o Windows Hello
+   sin contraseña ni código 2FA. Ver src/lib/passkeys.js.
+   - Registrar/listar/eliminar: con sesión iniciada, desde el hub.
+     Registrar exige la contraseña actual (y el código 2FA si la cuenta
+     lo tiene): así una sesión robada no puede agregarse una llave
+     propia para entrar después cuando quiera.
+   - Ingresar: público, sin usuario — el navegador ofrece las passkeys
+     guardadas para este dominio y el servidor identifica la cuenta por
+     el credential_id. La sesión dura PASSKEY_SESSION_HOURS (2h).
+   ============================================================ */
+router.use('/passkey', (req, res, next) => { pk.ensurePasskeySchema().then(() => next()).catch(next); });
+
+function rpOr400(req, res) {
+  const rp = pk.rpFromOrigin(req.headers.origin);
+  if (!rp) res.status(400).json({ ok: false, error: 'Las passkeys solo funcionan desde el login central de QUBIRA' });
+  return rp;
+}
+
+router.get('/passkey/list', requireAuth, async (req, res) => {
+  try {
+    res.json({ ok: true, passkeys: await pk.listPasskeys(req.user.id), session_hours: pk.SESSION_HOURS });
+  } catch (err) {
+    console.error('[AUTH] Passkey list error:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudieron cargar las passkeys' });
+  }
+});
+
+router.post('/passkey/register/options', requireAuth, async (req, res) => {
+  try {
+    const rp = rpOr400(req, res); if (!rp) return;
+
+    const { rows } = await pool.query(
+      'SELECT password_hash, totp_enabled, nombre, apellidos FROM usuarios WHERE id = $1', [req.user.id]);
+    const u = rows[0];
+    const passOk = u && await bcrypt.compare(String(req.body?.password || ''), u.password_hash);
+    if (!passOk) return res.status(401).json({ ok: false, error: 'Contraseña incorrecta' });
+    if (u.totp_enabled) {
+      if (!String(req.body?.code || '').trim()) {
+        return res.status(401).json({ ok: false, totp_required: true, error: 'Ingresa el código de tu app autenticadora' });
+      }
+      const { valid, error } = await sec.verifyAccountTotp({
+        userId: req.user.id, username: req.user.username, code: req.body?.code,
+        ip: sec.clientIp(req), userAgent: req.headers['user-agent'],
+      });
+      if (!valid) return res.status(401).json({ ok: false, totp_required: true, error: error || 'Código 2FA inválido' });
+    }
+
+    const existing = await pk.credentialsOfUser(req.user.id);
+    if (existing.length >= pk.MAX_PASSKEYS_PER_USER) {
+      return res.status(400).json({ ok: false, error: `Máximo ${pk.MAX_PASSKEYS_PER_USER} passkeys por cuenta. Elimina alguna antes.` });
+    }
+
+    const tipo = req.body?.tipo === 'local' ? 'localDevice' : 'remoteDevice';
+    const options = await generateRegistrationOptions({
+      rpName: 'QUBIRA',
+      rpID: rp.rpID,
+      userID: new TextEncoder().encode('qubira-user-' + req.user.id),
+      userName: req.user.username,
+      userDisplayName: `${u.nombre || ''} ${u.apellidos || ''}`.trim() || req.user.username,
+      attestationType: 'none',
+      excludeCredentials: existing,
+      authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
+      preferredAuthenticatorType: tipo,
+    });
+    const challengeId = await pk.saveChallenge({ challenge: options.challenge, tipo: 'registro', userId: req.user.id, rp });
+    res.json({ ok: true, options, challenge_id: challengeId });
+  } catch (err) {
+    console.error('[AUTH] Passkey register options error:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo iniciar el registro de la passkey' });
+  }
+});
+
+router.post('/passkey/register/verify', requireAuth, async (req, res) => {
+  try {
+    const { challenge_id, response, nombre } = req.body || {};
+    const ch = await pk.consumeChallenge(challenge_id, 'registro');
+    if (!ch || ch.usuario_id !== req.user.id) {
+      return res.status(400).json({ ok: false, error: 'El registro expiró. Vuelve a intentarlo.' });
+    }
+
+    let verification;
+    try {
+      verification = await verifyRegistrationResponse({
+        response, expectedChallenge: ch.challenge, expectedOrigin: ch.origin, expectedRPID: ch.rp_id,
+        requireUserVerification: true,
+      });
+    } catch (e) {
+      return res.status(400).json({ ok: false, error: 'No se pudo verificar la passkey: ' + e.message });
+    }
+    if (!verification.verified || !verification.registrationInfo) {
+      return res.status(400).json({ ok: false, error: 'La passkey no pasó la verificación' });
+    }
+
+    const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo;
+    const label = String(nombre || '').trim().slice(0, 60) || 'Mi passkey';
+    await pool.query(
+      `INSERT INTO security.passkeys
+         (usuario_id, credential_id, public_key, counter, transports, device_type, backed_up, nombre, rp_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [req.user.id, credential.id, Buffer.from(credential.publicKey).toString('base64url'),
+       credential.counter || 0, credential.transports || null, credentialDeviceType, credentialBackedUp,
+       label, ch.rp_id]
+    );
+    await logSecurityEvent({ userId: req.user.id, path: '/api/auth/passkey/register', actionType: 'passkey_registered', ip: sec.clientIp(req), statusCode: 200 });
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ ok: false, error: 'Esa passkey ya está registrada' });
+    console.error('[AUTH] Passkey register verify error:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo guardar la passkey' });
+  }
+});
+
+router.delete('/passkey/:id', requireAuth, async (req, res) => {
+  try {
+    const { rowCount } = await pool.query(
+      'DELETE FROM security.passkeys WHERE id = $1 AND usuario_id = $2', [req.params.id, req.user.id]);
+    if (!rowCount) return res.status(404).json({ ok: false, error: 'Passkey no encontrada' });
+    await logSecurityEvent({ userId: req.user.id, path: '/api/auth/passkey', actionType: 'passkey_removed', ip: sec.clientIp(req), statusCode: 200 });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[AUTH] Passkey delete error:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo eliminar la passkey' });
+  }
+});
+
+router.post('/passkey/login/options', async (req, res) => {
+  const ip = sec.clientIp(req);
+  try {
+    const rp = rpOr400(req, res); if (!rp) return;
+    await sec.touchIpObservation(ip);
+    if (await sec.isIpBlocked(ip)) {
+      return res.status(403).json({ ok: false, error: 'Acceso bloqueado por seguridad. Contacta al administrador.' });
+    }
+    const options = await generateAuthenticationOptions({ rpID: rp.rpID, userVerification: 'required' });
+    const challengeId = await pk.saveChallenge({ challenge: options.challenge, tipo: 'login', rp });
+    res.json({ ok: true, options, challenge_id: challengeId });
+  } catch (err) {
+    console.error('[AUTH] Passkey login options error:', err.message);
+    res.status(500).json({ ok: false, error: 'No se pudo iniciar el ingreso con passkey' });
+  }
+});
+
+router.post('/passkey/login/verify', async (req, res) => {
+  const ip = sec.clientIp(req);
+  const ua = req.headers['user-agent'];
+  try {
+    const { challenge_id, response } = req.body || {};
+    if (await sec.isIpBlocked(ip)) {
+      return res.status(403).json({ ok: false, error: 'Acceso bloqueado por seguridad. Contacta al administrador.' });
+    }
+    const ch = await pk.consumeChallenge(challenge_id, 'login');
+    if (!ch) return res.status(400).json({ ok: false, error: 'La solicitud expiró. Vuelve a intentarlo.' });
+
+    const stored = response?.id ? await pk.findByCredentialId(String(response.id)) : null;
+    if (!stored || stored.rp_id !== ch.rp_id) {
+      await sec.recordLoginAttempt({ username: 'passkey:unknown', ip, success: false, userAgent: ua });
+      return res.status(401).json({ ok: false, error: 'Passkey no reconocida. ¿La registraste desde tu panel?' });
+    }
+
+    let verification;
+    try {
+      verification = await verifyAuthenticationResponse({
+        response, expectedChallenge: ch.challenge, expectedOrigin: ch.origin, expectedRPID: ch.rp_id,
+        requireUserVerification: true,
+        credential: {
+          id: stored.credential_id,
+          publicKey: new Uint8Array(Buffer.from(stored.public_key, 'base64url')),
+          counter: Number(stored.counter) || 0,
+          transports: stored.transports || undefined,
+        },
+      });
+    } catch (e) {
+      verification = { verified: false };
+    }
+
+    const { rows } = await pool.query(
+      `SELECT u.id, u.nombre, u.apellidos, u.correo, u.username, u.estado, u.avatar_color,
+              u.bloqueada_hasta, u.suspendida_en, r.nombre AS rol, r.nivel_acceso
+       FROM usuarios u JOIN roles r ON r.id = u.rol_id WHERE u.id = $1`,
+      [stored.usuario_id]
+    );
+    const user = rows[0];
+    if (!verification.verified || !user) {
+      await sec.recordLoginAttempt({ username: user?.username || 'passkey:unknown', ip, success: false, userAgent: ua });
+      return res.status(401).json({ ok: false, error: 'No se pudo verificar la passkey' });
+    }
+
+    if (user.estado !== 'activo') {
+      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: ua });
+      return res.status(403).json({ ok: false, error: 'Cuenta desactivada. Contacta al administrador.' });
+    }
+    if (user.suspendida_en) {
+      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: ua });
+      return res.status(403).json({ ok: false, error: 'Cuenta suspendida por seguridad. Contacta al administrador.' });
+    }
+    if (user.bloqueada_hasta && new Date(user.bloqueada_hasta) > new Date()) {
+      await sec.recordLoginAttempt({ username: user.username, ip, success: false, userAgent: ua });
+      return res.status(403).json({ ok: false, error: 'Cuenta temporalmente bloqueada por seguridad. Intenta más tarde.' });
+    }
+
+    await pool.query(
+      'UPDATE security.passkeys SET counter = $1, last_used_at = NOW(), last_used_ip = $2 WHERE id = $3',
+      [verification.authenticationInfo.newCounter, ip, stored.id]
+    );
+    await sec.recordLoginAttempt({ username: user.username, ip, success: true, userAgent: ua });
+    await revokeOtherSessions(user.id, ip, 'web');
+    const { token, user: userOut } = await issueSession(user, req, 'web', `${pk.SESSION_HOURS}h`);
+
+    await pool.query(`INSERT INTO auditoria_usuarios (usuario_id, accion, realizado_por) VALUES ($1, 'LOGIN', $1)`, [user.id]);
+    await logLoginAudit(user.id, '/api/auth/passkey/login').catch(() => {});
+
+    return res.json({ ok: true, token, user: userOut, session_hours: pk.SESSION_HOURS });
+  } catch (err) {
+    console.error('[AUTH] Passkey login verify error:', err.message);
     return res.status(500).json({ ok: false, error: 'Error interno del servidor' });
   }
 });
