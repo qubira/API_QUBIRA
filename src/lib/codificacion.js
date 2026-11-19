@@ -95,6 +95,8 @@ function asegurarCodificacion() {
         emitido_en TIMESTAMPTZ,
         actualizado_en TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+      -- Áreas que revisan elegidas al crear (informes y planes): arman la ruta de ese documento
+      ALTER TABLE doc.documentos ADD COLUMN IF NOT EXISTS revisores TEXT[];
       CREATE INDEX IF NOT EXISTS documentos_codigo_anterior_ix ON doc.documentos (codigo_anterior);
       CREATE INDEX IF NOT EXISTS documentos_area_tipo_ix ON doc.documentos (area, tipo, estado);
       CREATE UNIQUE INDEX IF NOT EXISTS documentos_origen_uq ON doc.documentos (modulo, id_origen) WHERE id_origen IS NOT NULL;
@@ -304,7 +306,17 @@ async function siglasUsadas() {
 }
 
 /* Pasos de la ruta de un tipo para un documento concreto */
+// Tipos en los que quien crea puede elegir las áreas que revisan
+const TIPOS_CON_REVISORES = ['INF', 'PLN'];
+
 function rutaPara(tipo, doc) {
+  /* Ruta elegida al crear: cada área revisora revisa (N5+) en el orden indicado y al final
+     aprueba ADG (si se eleva) o el N3+ del área dueña. Ej.: OTI crea → ODN revisa → OPP revisa → ADG aprueba */
+  if (TIPOS_CON_REVISORES.includes(tipo.sigla) && Array.isArray(doc.revisores) && doc.revisores.length) {
+    const pasos = doc.revisores.map(a => ({ area: a, accion: 'REVISA', nivel_min: 5 }));
+    pasos.push(doc.elevar_adg ? { area: 'ADG', accion: 'APRUEBA', nivel_min: 3 } : { area: doc.area, accion: 'APRUEBA', nivel_min: 3 });
+    return pasos;
+  }
   const def = tipo.ruta_defecto || [];
   let pasos = Array.isArray(def) ? def : (def[doc.area] || def['*'] || []);
   pasos = pasos.map(p => ({ ...p, area: p.area === 'DUENA' ? doc.area : p.area === 'DESTINO' ? doc.area_destino : p.area }))
@@ -400,5 +412,5 @@ function estadoFinal(tipo) {
 module.exports = {
   CLASES, ACCIONES, AREA_DUENA_FIJA, asegurarCodificacion, anioLima, formatearCodigo, validarCodigo, siguienteNumero,
   listarTipos, tipoPorSigla, datosEmpresa, guardarEmpresa, siglasUsadas, rutaPara, quienEs, puedeActuar, puedeEmitir, estadoFinal,
-  personasDelArea, areaPorNombre, pisoCorrelativo, datosMembrete, formatoSistema, TIPOS_EXTERNOS,
+  personasDelArea, areaPorNombre, pisoCorrelativo, TIPOS_CON_REVISORES, datosMembrete, formatoSistema, TIPOS_EXTERNOS,
 };

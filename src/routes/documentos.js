@@ -174,14 +174,24 @@ async function crearBorrador(cli, quien, b) {
     if (['ANULADO', 'RECHAZADO'].includes(reemplaza.estado)) throw new Rechazo(409, `${reemplaza.codigo} ya está ${reemplaza.estado.toLowerCase()}`);
   }
   if (limpio(b.referencia) && !(await docPorCodigo(b.referencia, cli))) throw new Rechazo(400, `No existe el documento de referencia ${b.referencia}`);
+  // Áreas que revisan (informes y planes): siglas activas, sin repetir ni incluir al área dueña
+  let revisores = null;
+  if (Array.isArray(b.revisores) && b.revisores.length) {
+    if (!C.TIPOS_CON_REVISORES.includes(tipo.sigla)) throw new Rechazo(400, `Las áreas que revisan solo se eligen en ${C.TIPOS_CON_REVISORES.join(' y ')}`);
+    revisores = [...new Set(b.revisores.map(x => String(x).trim().toUpperCase()))].filter(x => x && x !== area);
+    const malas = revisores.filter(x => !areas.some(a => a.sigla === x));
+    if (malas.length) throw new Rechazo(400, `Áreas que no existen o están inactivas: ${malas.join(', ')}`);
+    if (revisores.length > 8) throw new Rechazo(400, 'Elige como máximo 8 áreas revisoras');
+    if (!revisores.length) revisores = null;
+  }
   const { rows } = await cli.query(`INSERT INTO doc.documentos
       (area, tipo, detalle, titulo, estado, area_destino, elevar_adg, formato_codigo, formato_version, referencia, referencia_version,
-       reemplaza_a, codigo_anterior, modulo, id_origen, enlace_externo, fecha_documento, creado_por)
-    VALUES ($1,$2,$3,$4,'BORRADOR',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
+       reemplaza_a, codigo_anterior, modulo, id_origen, enlace_externo, fecha_documento, creado_por, revisores)
+    VALUES ($1,$2,$3,$4,'BORRADOR',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
     [area, tipo.sigla, limpio(b.detalle), b.titulo.trim(), destino, !!b.elevar_adg, limpio(b.formato_codigo),
       b.formato_version ? Number(b.formato_version) : null, limpio(b.referencia), b.referencia_version ? Number(b.referencia_version) : null,
       reemplaza ? reemplaza.codigo : null, limpio(b.codigo_anterior), limpio(b.modulo), limpio(b.id_origen), limpio(b.enlace_externo),
-      limpio(b.fecha_documento), quien.usuario]);
+      limpio(b.fecha_documento), quien.usuario, revisores]);
   return { doc: rows[0], tipo };
 }
 
