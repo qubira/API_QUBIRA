@@ -31,6 +31,7 @@ const documentosRouter  = require('./src/routes/documentos');
 const proyectoFlujoRouter = require('./src/routes/proyectoFlujo');
 const casosDerivadosRouter = require('./src/routes/casosDerivados');
 const notificacionesRouter = require('./src/routes/notificaciones');
+const scrumRouter = require('./src/routes/scrum');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -139,7 +140,8 @@ app.use('/api/odacl',      odaclRouter);
 app.use('/api/documentos', documentosRouter); // registro central de documentos (CODIFICACION.md)
 app.use('/api/proyecto-flujo', proyectoFlujoRouter);
 app.use('/api/casos-derivados', casosDerivadosRouter);
-app.use('/api/notificaciones', notificacionesRouter); // campana de cada módulo // soporte escalado a OTI, DST y ODACL // etapas y puertas de cada proyecto (Flujo de Proyectos QUBIRA)
+app.use('/api/notificaciones', notificacionesRouter);
+app.use('/api/scrum', scrumRouter); // tablero Scrum de cada proyecto // campana de cada módulo // soporte escalado a OTI, DST y ODACL // etapas y puertas de cada proyecto (Flujo de Proyectos QUBIRA)
 app.use('/api/public/constancias', constanciasPublicRouter);
 app.use('/api/public/cases',       casesPublicRouter);
 app.use('/api/ocm',               ocmRoutes.router);

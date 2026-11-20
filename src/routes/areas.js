@@ -60,6 +60,7 @@ const BANDEJA_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'bandeja
 const FLUJO_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'flujo-proyecto.js'), 'utf8');
 const CASOS_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'casos-derivados.js'), 'utf8');
 const NOTIF_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'notificaciones.js'), 'utf8');
+const SCRUM_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'scrum.js'), 'utf8');
 let cacheJer = { t: 0, d: null };
 publico.get('/jerarquia', async (req, res) => {
   try {
@@ -91,6 +92,11 @@ publico.get('/casos-derivados.js', (req, res) => {
 publico.get('/notificaciones.js', (req, res) => {
   res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
   res.send(NOTIF_JS);
+});
+// Tablero Scrum del proyecto (ADG/GG y OTI)
+publico.get('/scrum.js', (req, res) => {
+  res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
+  res.send(SCRUM_JS);
 });
 
 module.exports = { publico };

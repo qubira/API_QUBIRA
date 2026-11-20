@@ -12,6 +12,7 @@ const crypto = require('crypto');
 const { pool } = require('../db');
 const C = require('./codificacion');
 const N = require('./notificar');
+const S = require('./scrum');
 
 /* Cargo titular de cada puerta (página «Flujo de Proyectos»). Si el cargo está por crear o sin
    persona asignada, actúa su suplente temporal (rrhh.catalogos.suplente). */
@@ -181,6 +182,7 @@ function requisitos(p, ctx, datos = {}) {
       break;
     case 'desarrollo':
       R('OTI tomó el proyecto', !!p.claimed_by);
+      R('Backlog del tablero Scrum terminado' + (ctx.scrum ? ` (${ctx.scrum.hechas} hechas, ${ctx.scrum.pendientes} pendientes)` : ''), ctx.scrum && ctx.scrum.ok);
       sinExceso();
       break;
     case 'comision': {
@@ -236,8 +238,8 @@ async function cargar(id, cli = pool, bloquear = false) {
   return rows[0];
 }
 async function contexto(p) {
-  const [cfg, actas, contrato] = await Promise.all([config(), actasDe(p.id), contratoDe(p.contrato_codigo)]);
-  return { cfg, actas, contrato, costo: alertaCosto(p, cfg) };
+  const [cfg, actas, contrato, scrum] = await Promise.all([config(), actasDe(p.id), contratoDe(p.contrato_codigo), S.backlogTerminado(p.id).catch(() => null)]);
+  return { cfg, actas, contrato, scrum, costo: alertaCosto(p, cfg) };
 }
 async function puedeVer(quien) { return quien.esADG || VEN_FLUJO.includes(quien.sigla); }
 
@@ -357,6 +359,10 @@ async function devolver(id, quien, comentario) {
     await cli.query("UPDATE ti.projects SET flujo_etapa = 'desarrollo', updated_at = now() WHERE id = $1", [p.id]);
     await anotar(cli, p, quien, 'DEVUELVE', { a_etapa: 'desarrollo', comentario });
     return 'desarrollo';
+  }).then(async r => {
+    // La observación entra al backlog como una falla para el siguiente sprint
+    await S.crearHistoria(id, quien, { titulo: `Corregir: ${texto(comentario, 150)}`, criterios: texto(comentario, 2000), tipo: 'falla', origen: `devuelto por ${quien.sigla || 'auditoría'}` }).catch(e => console.warn('[FLUJO] falla al backlog:', e.message));
+    return r;
   });
 }
 
