@@ -2176,6 +2176,182 @@ router.delete('/calidad/actas/:id', async (req, res) => {
   } catch (e) { DM.responder(res, e, '[TI] anular acta:'); }
 });
 
+/* ============================================================
+   INFORMES DE ESTADO DEL PROYECTO (IT-IE)
+   Código: IT000XXX-IE  |  Área emisora: OTI
+   Revisores: ODN, OPP  |  Aprueba: ADG
+   ============================================================ */
+
+let _informesListo = null;
+function ensureInformes() {
+  if (!_informesListo) {
+    _informesListo = pool.query(`
+      CREATE TABLE IF NOT EXISTS ti.informes_estado (
+        id TEXT PRIMARY KEY,
+        codigo TEXT UNIQUE NOT NULL,
+        project_id TEXT REFERENCES ti.projects(id) ON DELETE SET NULL,
+        titulo TEXT NOT NULL,
+        estado TEXT NOT NULL DEFAULT 'borrador',
+        version TEXT NOT NULL DEFAULT '1.0',
+        fecha_emision DATE,
+        fecha_limite DATE,
+        elaborado_por INTEGER,
+        revisado_por_odn INTEGER,
+        revisado_por_opp INTEGER,
+        aprobado_por INTEGER,
+        datos JSONB NOT NULL DEFAULT '{}'::jsonb,
+        updated_by INTEGER,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS informes_estado_project_idx ON ti.informes_estado(project_id);
+      CREATE INDEX IF NOT EXISTS informes_estado_estado_idx ON ti.informes_estado(estado);
+    `).catch(e => { _informesListo = null; throw e; });
+  }
+  return _informesListo;
+}
+
+/* Generar código automático IT000XXX-IE */
+async function generarCodigoInforme() {
+  const { rows } = await pool.query(`SELECT codigo FROM ti.informes_estado ORDER BY created_at DESC LIMIT 1`);
+  if (!rows.length) return 'IT000001-IE';
+  const last = rows[0].codigo; // IT000027-IE
+  const match = last.match(/IT0*(\d+)-IE/);
+  if (!match) return 'IT000001-IE';
+  const next = parseInt(match[1], 10) + 1;
+  return 'IT' + String(next).padStart(6, '0') + '-IE';
+}
+
+/* GET /informes-estado — listar todos */
+router.get('/informes-estado', async (req, res) => {
+  try {
+    await ensureInformes();
+    const { project_id, estado } = req.query;
+    let where = 'WHERE 1=1'; const params = [];
+    if (project_id) { params.push(project_id); where += ` AND i.project_id=$${params.length}`; }
+    if (estado) { params.push(estado); where += ` AND i.estado=$${params.length}`; }
+    const { rows } = await pool.query(`
+      SELECT i.*, p.name AS project_name, p.code AS project_code, p.client AS project_client,
+             p.company_logo AS project_logo,
+             e.nombre AS elaborado_nombre, ap.nombre AS aprobado_nombre
+      FROM ti.informes_estado i
+      LEFT JOIN ti.projects p ON p.id = i.project_id
+      LEFT JOIN public.usuarios e ON e.id = i.elaborado_por
+      LEFT JOIN public.usuarios ap ON ap.id = i.aprobado_por
+      ${where}
+      ORDER BY i.created_at DESC
+    `, params);
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* GET /informes-estado/:id — detalle */
+router.get('/informes-estado/:id', async (req, res) => {
+  try {
+    await ensureInformes();
+    const { rows } = await pool.query(`
+      SELECT i.*, p.name AS project_name, p.code AS project_code, p.client AS project_client,
+             p.company_logo AS project_logo, p.description AS project_description,
+             p.website_url AS project_url, p.project_type, p.status AS project_status,
+             e.nombre AS elaborado_nombre, ap.nombre AS aprobado_nombre
+      FROM ti.informes_estado i
+      LEFT JOIN ti.projects p ON p.id = i.project_id
+      LEFT JOIN public.usuarios e ON e.id = i.elaborado_por
+      LEFT JOIN public.usuarios ap ON ap.id = i.aprobado_por
+      WHERE i.id=$1
+    `, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Informe no encontrado' });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* POST /informes-estado — crear */
+router.post('/informes-estado', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    await ensureInformes();
+    const { project_id, titulo, fecha_limite, datos = {} } = req.body;
+    if (!titulo) return res.status(400).json({ error: 'El título es requerido' });
+    const id = uid();
+    const codigo = await generarCodigoInforme();
+    await pool.query(`
+      INSERT INTO ti.informes_estado
+        (id, codigo, project_id, titulo, estado, version, fecha_limite, elaborado_por, datos)
+      VALUES ($1,$2,$3,$4,'borrador','1.0',$5,$6,$7::jsonb)
+    `, [id, codigo, project_id || null, titulo, fecha_limite || null, req.user.id, JSON.stringify(datos)]);
+    await logActivity(project_id, req.user.id, 'updated', `${req.user.nombre || req.user.username} creó el informe de estado ${codigo} – ${titulo}`);
+    const { rows } = await pool.query('SELECT * FROM ti.informes_estado WHERE id=$1', [id]);
+    res.status(201).json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* PUT /informes-estado/:id — actualizar */
+router.put('/informes-estado/:id', async (req, res) => {
+  try {
+    await ensureInformes();
+    const { rows: old } = await pool.query('SELECT * FROM ti.informes_estado WHERE id=$1', [req.params.id]);
+    if (!old.length) return res.status(404).json({ error: 'Informe no encontrado' });
+    const o = old[0];
+    const {
+      titulo = o.titulo,
+      estado = o.estado,
+      version = o.version,
+      fecha_emision = o.fecha_emision,
+      fecha_limite = o.fecha_limite,
+      project_id = o.project_id,
+      revisado_por_odn = o.revisado_por_odn,
+      revisado_por_opp = o.revisado_por_opp,
+      aprobado_por = o.aprobado_por,
+      datos = o.datos
+    } = req.body;
+
+    const { rows: updated } = await pool.query(`
+      UPDATE ti.informes_estado SET
+        titulo=$1, estado=$2, version=$3, fecha_emision=$4, fecha_limite=$5,
+        project_id=$6, revisado_por_odn=$7, revisado_por_opp=$8, aprobado_por=$9,
+        datos=$10::jsonb, updated_by=$11, updated_at=NOW()
+      WHERE id=$12
+      RETURNING *
+    `, [titulo, estado, version, fecha_emision || null, fecha_limite || null,
+        project_id || null, revisado_por_odn || null, revisado_por_opp || null,
+        aprobado_por || null, JSON.stringify(datos), req.user.id, req.params.id]);
+
+    if (project_id) await logActivity(project_id, req.user.id, 'updated',
+      `${req.user.nombre || req.user.username} actualizó informe ${o.codigo} → estado: ${estado}`);
+    res.json(updated[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* DELETE /informes-estado/:id — eliminar (solo borrador) */
+router.delete('/informes-estado/:id', async (req, res) => {
+  try {
+    if (!(await requireArea(req, res, 'ADG'))) return;
+    await ensureInformes();
+    const { rows } = await pool.query('SELECT * FROM ti.informes_estado WHERE id=$1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Informe no encontrado' });
+    if (rows[0].estado !== 'borrador') return res.status(400).json({ error: 'Solo se pueden eliminar informes en borrador' });
+    await pool.query('DELETE FROM ti.informes_estado WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+/* PATCH /informes-estado/:id/estado — cambio de estado rápido */
+router.patch('/informes-estado/:id/estado', async (req, res) => {
+  try {
+    await ensureInformes();
+    const { estado } = req.body;
+    const ESTADOS = ['borrador', 'en_revision', 'emitido', 'cerrado'];
+    if (!ESTADOS.includes(estado)) return res.status(400).json({ error: 'Estado inválido' });
+    const { rows } = await pool.query(
+      `UPDATE ti.informes_estado SET estado=$1, updated_by=$2, updated_at=NOW()
+       WHERE id=$3 RETURNING *`,
+      [estado, req.user.id, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No encontrado' });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 router.helpers = { isPrivilegedViewer, canAccessProject, isProjectResponsible, getAccessibleProjectIds, logActivity, ensureSchema };
 
 module.exports = router;
