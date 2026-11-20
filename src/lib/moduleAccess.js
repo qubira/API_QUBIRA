@@ -29,6 +29,9 @@ const MODULES = ['TI', 'ADG', 'GG', 'RRHH', 'SOPORTE', 'OCOS', 'COMERCIAL', 'ODN
      (ej. Abraham es de TI pero además le dieron SOPORTE, ADG y DST). */
 async function getAuthorizedModules(username, nivelAcceso, userId) {
   if (nivelAcceso >= 100) return [...MODULES];
+  // El Presidente del Directorio entra a todos los módulos
+  const cargo = await require('./jerarquia').infoCargo(username).catch(() => null);
+  if (cargo && /^presidente del directorio$/i.test(String(cargo.subcargo || cargo.cargo || '').trim())) return [...MODULES];
   const [area, granted] = await Promise.all([
     getEmployeeArea(username),
     userId ? getGrantedModules(userId) : Promise.resolve([]),

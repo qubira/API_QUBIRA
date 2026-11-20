@@ -252,12 +252,12 @@ async function vista(p, quien, conDetalle = true) {
     id: p.id, code: p.code, name: p.name, client: p.client, status: p.status, ruta: p.flujo_ruta, modalidad: p.flujo_modalidad, etapa,
     etapa_nombre: etapa ? ETAPAS[etapa].nombre : null, costo: ctx.costo,
     pendiente: etapa && ETAPAS[etapa].quien ? ETAPAS[etapa].quien : null,
-    puedo_aprobar: !!(etapa && PUERTA[etapa] && cumple(quien, PUERTA[etapa]) && !(etapa === 'evaluacion' && String(p.created_by) === String(quien.id))),
+    puedo_aprobar: !!(etapa && PUERTA[etapa] && cumple(quien, PUERTA[etapa]) && (quien.presidente || !(etapa === 'evaluacion' && String(p.created_by) === String(quien.id)))),
   };
   if (!conDetalle) return base;
   const titular = etapa ? await titularPuerta(p) : null;
   const requerido = await cargoRequerido(p);
-  if (requerido && base.puedo_aprobar) {
+  if (requerido && base.puedo_aprobar && !quien.presidente) {
     const tit = await N.titulares(requerido, null);
     if (tit.length && !tit.some(u => u.toLowerCase() === String(quien.usuario).toLowerCase())) base.puedo_aprobar = false;
   }
@@ -319,8 +319,8 @@ async function avanzar(id, quien, b = {}) {
     if (b.etapa && b.etapa !== etapa) throw new Rechazo(409, `El proyecto ya pasó a «${ETAPAS[etapa].nombre}». Actualiza la página.`);
     if (!PUERTA[etapa]) throw new Rechazo(409, 'El proyecto ya está en su última etapa');
     if (!cumple(quien, PUERTA[etapa])) throw new Rechazo(403, `Esta puerta la aprueba: ${ETAPAS[etapa].quien}.`);
-    if (etapa === 'evaluacion' && String(p.created_by) === String(quien.id)) throw new Rechazo(403, 'Nadie aprueba lo que propuso: otra persona de ADG debe aprobar este proyecto (si lo propuso el Director General, el Presidente del Directorio).');
-    if (ctxPrevio.requerido) {
+    if (!quien.presidente && etapa === 'evaluacion' && String(p.created_by) === String(quien.id)) throw new Rechazo(403, 'Nadie aprueba lo que propuso: otra persona de ADG debe aprobar este proyecto (si lo propuso el Director General, el Presidente del Directorio).');
+    if (ctxPrevio.requerido && !quien.presidente) {
       const tit = await N.titulares(ctxPrevio.requerido);
       if (tit.length && !tit.some(u => u.toLowerCase() === String(quien.usuario).toLowerCase())) throw new Rechazo(403, `Este proyecto lo propuso el Director General: lo aprueba el ${ctxPrevio.requerido}.`);
     }

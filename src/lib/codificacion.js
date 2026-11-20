@@ -345,10 +345,13 @@ async function quienEs(user) {
   const { rows } = await pool.query(
     "SELECT trim(concat_ws(' ', nombre, apellidos)) AS nombre FROM usuarios WHERE lower(username) = lower($1)", [user.username]
   ).catch(() => ({ rows: [] }));
+  const cargoExacto = (info && (info.subcargo || info.cargo)) || '';
+  const presidente = /^presidente del directorio$/i.test(String(cargoExacto).trim());
+  if (presidente) { clave = 'ADG'; nivel = 1; }
   return {
-    usuario: user.username, clave: clave || null, sigla: clave ? etiquetaArea(clave) : null, nivel: nivel || null,
+    presidente, usuario: user.username, clave: clave || null, sigla: clave ? etiquetaArea(clave) : null, nivel: nivel || null,
     nombre: (rows[0] && rows[0].nombre) || user.username, cargo: (info && (info.subcargo || info.cargo)) || null,
-    superadmin, esADG: clave === 'ADG' || superadmin,
+    superadmin: superadmin || presidente, esADG: clave === 'ADG' || superadmin || presidente,
   };
 }
 
@@ -372,6 +375,8 @@ async function personasDelArea(sigla, nivelMin, excluir) {
    3. Si en el área no hay otra persona con el nivel necesario, actúa el jefe
       inmediato según el Mapa jerárquico (GG, o ADG para DST y GG); si tampoco, ADG. */
 async function puedeActuar(quien, paso, doc) {
+  // Regla fundamental: el Presidente del Directorio actúa sin restricciones (queda anotado en la ruta)
+  if (quien.presidente) return { ok: true, motivo: String(quien.usuario).toLowerCase() === String(doc.creado_por).toLowerCase() ? 'Por el Presidente del Directorio (documento propio, sin segunda firma)' : 'Por el Presidente del Directorio' };
   const nivelMin = paso.nivel_min || 3;
   if (['REVISA', 'APRUEBA', 'RECHAZA', 'OBSERVA'].includes(paso.accion) && quien.usuario.toLowerCase() === String(doc.creado_por).toLowerCase()) {
     return { ok: false, error: 'No puedes revisar ni aprobar un documento que tú creaste.' };
