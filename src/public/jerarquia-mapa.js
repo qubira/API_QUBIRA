@@ -28,15 +28,15 @@
     9: 'Pre-profesional: estudiante en curso. Profesional: egresado hace menos de 12 meses.',
   };
   var PERMISO = {
-    1: 'Ve todas las áreas, dirige a toda la empresa, ve toda la auditoría y aprueba todo.',
-    2: 'Ve todas las oficinas bajo su mando; de DST ve solo los reportes e indicadores de seguridad, no su operación. Dirige a los jefes de oficina, ve la auditoría de su línea y aprueba la operación.',
-    3: 'Ve y dirige su oficina, ve la auditoría de su área y aprueba lo de su área.',
-    4: 'Ve su oficina, organiza su proceso y ve la auditoría de su área.',
-    5: 'Ve su oficina, dirige su equipo y ve la auditoría de su área.',
-    6: 'Ve su oficina. No dirige personas ni ve auditoría.',
-    7: 'Ve su oficina. No dirige personas ni ve auditoría.',
-    8: 'Ve solo lo que se le asigna.',
-    9: 'Ve solo lo que se le asigna.',
+    1: 'Ve todas las áreas, dirige a toda la empresa, ve toda la auditoría, revisa todo y aprueba todo.',
+    2: 'Ve todas las oficinas bajo su mando; de DST ve solo los reportes e indicadores de seguridad, no su operación. Dirige a los jefes de oficina, ve la auditoría de su línea, revisa todo, menos la operación de DST, y aprueba la operación.',
+    3: 'Ve y dirige su oficina, ve la auditoría de su área, revisa y aprueba lo de su área.',
+    4: 'Ve su oficina, organiza su proceso, ve la auditoría de su área y revisa lo de su área.',
+    5: 'Ve su oficina, dirige su equipo, ve la auditoría de su área y revisa lo de su área.',
+    6: 'Ve su oficina. No dirige personas ni ve auditoría. Revisa solo como revisor técnico de su especialidad, cuando el flujo lo designa.',
+    7: 'Ve su oficina. No dirige personas ni ve auditoría. Revisa solo como revisor técnico de su especialidad, cuando el flujo lo designa.',
+    8: 'Ve solo lo que se le asigna. No revisa ni aprueba.',
+    9: 'Ve solo lo que se le asigna. No revisa ni aprueba.',
   };
   var cache = null, secuencia = 0;
 
@@ -92,6 +92,7 @@
     '.qbj-cat{max-height:560px;overflow:auto;border:1px solid var(--qbj-borde);border-radius:10px}.qbj-cat table{min-width:780px}',
     '.qbj-cat thead th{position:sticky;top:0;background:var(--qbj-fondo);z-index:1}.qbj-cat tbody tr{cursor:pointer}.qbj-cat tbody tr:hover td,.qbj-cat tbody tr:focus-visible td{background:var(--qbj-suave)}',
     '.qbj-cat td .fn{color:var(--qbj-tenue);font-size:12.5px;margin-top:2px;max-width:60ch}.qbj-vacio{padding:22px;text-align:center;color:var(--qbj-tenue)}',
+    '.qbj-pc{display:inline-block;font-weight:700;font-size:10px;line-height:16px;letter-spacing:.06em;text-transform:uppercase;color:var(--qbj-acento);border:1px dashed var(--qbj-acento);border-radius:4px;padding:0 5px;margin-left:6px;vertical-align:1px;white-space:nowrap}',
     '.qbj-tipo{display:inline-block;font-weight:700;font-size:10px;line-height:16px;letter-spacing:.08em;text-transform:uppercase;color:var(--qbj-ambar);border:1px solid var(--qbj-ambar);border-radius:4px;padding:0 5px;margin-right:6px;vertical-align:1px}',
     /* organigramas */
     '.qbj-tree,.qbj-tree ul{list-style:none;margin:0;padding:0}.qbj-tree li{position:relative;padding-top:6px}.qbj-tree ul.k{padding-left:36px}',
@@ -158,7 +159,7 @@
     var C = [];
     areas.forEach(function (a) {
       (a.cargos || []).forEach(function (c) {
-        var x = { i: C.length, nombre: c.nombre, nivel: c.nivel || 9, area: a.clave, a: a, subarea: c.subarea || null, jefeNombre: c.jefe || null, funcion: c.funcion || '', k: [], padre: null };
+        var x = { i: C.length, nombre: c.nombre, nivel: c.nivel || 9, area: a.clave, a: a, subarea: c.subarea || null, jefeNombre: c.jefe || null, funcion: c.funcion || '', porCrear: !!c.porCrear, suplente: c.suplente || null, k: [], padre: null };
         x.tipo = /pre-?profesional/i.test(x.nombre) ? 'pre' : (/^practicante profesional/i.test(x.nombre) ? 'pro' : null);
         C.push(x); a.lista.push(x);
       });
@@ -243,10 +244,14 @@
       '<div class="qbj-nota"><b>Para los dos</b><p>Seguro de salud, 15 días de descanso por cada 12 meses, media subvención adicional por cada 6 meses de convenio continuo y certificado al terminar. ORH registra el convenio y ODACL lo revisa antes de firmar.</p></div>' +
       '<div class="qbj-tabla"><table><thead><tr><th>Área</th><th>Sub-área</th><th>Pre-profesional</th><th>Profesional</th><th>Tutor (jefe inmediato)</th></tr></thead><tbody class="qbj-tprac"></tbody></table></div></section>' +
 
-      '<div class="qbj-dos"><section class="qbj-caja"><h3>Permisos por nivel</h3><div class="qbj-tabla"><table><thead><tr><th>Nivel</th><th>Ve</th><th>Dirige</th><th>Auditoría</th><th>Aprueba</th></tr></thead><tbody>' +
-      (d.permisos || []).map(function (p) { return '<tr><td><b>' + esc(p.niveles) + '</b></td><td>' + esc(p.ve) + '</td><td>' + esc(p.dirige) + '</td><td>' + esc(p.auditoria) + '</td><td>' + esc(p.aprueba) + '</td></tr>'; }).join('') +
+      '<div class="qbj-dos"><section class="qbj-caja"><h3>Permisos por nivel</h3><div class="qbj-tabla"><table><thead><tr><th>Nivel</th><th>Ve</th><th>Dirige</th><th>Auditoría</th><th>Revisa</th><th>Aprueba</th></tr></thead><tbody>' +
+      (d.permisos || []).map(function (p) { return '<tr><td><b>' + esc(p.niveles) + '</b></td><td>' + esc(p.ve) + '</td><td>' + esc(p.dirige) + '</td><td>' + esc(p.auditoria) + '</td><td>' + esc(p.revisa || '—') + '</td><td>' + esc(p.aprueba) + '</td></tr>'; }).join('') +
       '</tbody></table></div><p class="qbj-sub">Registrar empleados: quien tenga acceso a ORH. Eliminarlos: ORH y ADG desde N5. Datos sensibles: solo la Alta Dirección. La auditoría de DST la ve solo ADG.</p></section>' +
       '<section class="qbj-caja"><h3>Reglas de la jerarquía</h3><ol>' + (d.reglas || []).map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ol></section></div>' +
+
+      ((d.normas || []).length ? '<section class="qbj-caja"><div><h3>Normas ISO y quién responde</h3><p class="qbj-sub">QUBIRA aplica ISO/IEC 27001, ISO/IEC 27002 e ISO 31000. Las demás son propuestas con un cargo ya mapeado.</p></div><div class="qbj-tabla"><table><thead><tr><th>Norma</th><th>Para qué</th><th>Área dueña</th><th>Cargo responsable</th><th>Estado</th></tr></thead><tbody>' +
+        d.normas.map(function (n) { return '<tr><td><b>' + esc(n.norma) + '</b></td><td>' + esc(n.para) + '</td><td>' + esc(n.area) + '</td><td>' + esc(n.cargo) + '</td><td>' + (n.aplica ? '<b>Aplica</b>' : '<span class="no">Propuesta</span>') + '</td></tr>'; }).join('') +
+        '</tbody></table></div></section>' : '') +
 
       '<section class="qbj-caja"><div><h3>Comunicación entre áreas</h3><p class="qbj-sub">Cada área se encarga de lo suyo y le pide a la responsable lo que no le toca.</p></div><div>' +
       (d.flujos || []).map(function (f) { return '<div class="qbj-flujo"><span class="t">' + esc(f.titulo) + '</span>' +
@@ -271,10 +276,11 @@
       var cx = M.LK.filter(function (k) { return k.a === x || k.b === x; });
       q('.qbj-ficha-in').innerHTML =
         '<div class="qbj-ficha-top"><div style="display:grid;gap:8px"><div class="qbj-tags"><span class="qbj-bd" style="--c:' + color(x.nivel) + ';font-size:11.5px;line-height:20px;padding:0 7px">N' + x.nivel + ' · ' + esc(l.principal || l.base) + '</span>' +
-        (x.tipo ? '<span class="qbj-tipo">' + (x.tipo === 'pre' ? 'Pre-profesional' : 'Profesional') + '</span>' : '') + '</div><h3 id="' + uid + '-ft">' + esc(x.nombre) + '</h3></div>' +
+        (x.tipo ? '<span class="qbj-tipo">' + (x.tipo === 'pre' ? 'Pre-profesional' : 'Profesional') + '</span>' : '') + (x.porCrear ? '<span class="qbj-pc" style="margin:0">Por crear en ORH</span>' : '') + '</div><h3 id="' + uid + '-ft">' + esc(x.nombre) + '</h3></div>' +
         '<button type="button" class="qbj-tb" data-cerrar="1">Cerrar</button></div>' +
         '<div class="qbj-tags"><span>' + esc(x.a.etiqueta) + ' · ' + esc(x.a.nombre) + '</span>' + (x.subarea ? '<span style="color:var(--qbj-mint)">' + esc(x.subarea) + '</span>' : '') + '</div>' +
         '<dl><dt>Función</dt><dd>' + (x.funcion ? esc(x.funcion) : '<span class="no">Sin función registrada en ORH.</span>') + '</dd>' +
+        (x.porCrear ? '<dt>Mientras se cubre</dt><dd>' + (x.suplente ? esc(x.suplente) + ' <span class="no">(suplente temporal; deja de actuar cuando ORH asigna a la persona)</span>' : '<span class="no">Su equipo reporta al cargo de arriba más cercano que esté cubierto.</span>') + '</dd>' : '') +
         '<dt>Jefe inmediato</dt><dd>' + (x.padre ? enlace(x.padre) + (x.padre.area !== x.area ? ' <span class="no">(' + esc(x.padre.a.etiqueta) + ')</span>' : '') : (x.jefeNombre ? esc(x.jefeNombre) : '<span class="no">Cúspide de la empresa</span>')) + '</dd>' +
         '<dt>Equipo directo</dt><dd>' + (x.k.length ? '<ul>' + x.k.map(function (y) { return '<li>' + enlace(y) + (y.area !== x.area ? ' <span class="no">(' + esc(y.a.etiqueta) + ')</span>' : '') + '</li>'; }).join('') + '</ul>' + (bajo(x.k) > x.k.length ? '<span class="no">' + bajo(x.k) + ' cargos en toda su línea.</span>' : '') : '<span class="no">No dirige personas.</span>') + '</dd>' +
         '<dt>Se conecta con</dt><dd>' + (cx.length ? '<ul>' + cx.map(function (k) { var o = k.a === x ? k.b : k.a; var fl = k.dos ? '⇄' : (k.a === x ? '→' : '←');
@@ -502,7 +508,7 @@
           (!qq || norm(x.nombre + ' ' + x.funcion + ' ' + (x.subarea || '') + ' ' + x.a.etiqueta + ' ' + x.a.nombre).indexOf(qq) >= 0);
       }).sort(function (a, b) { return a.nivel - b.nivel || M.areas.indexOf(a.a) - M.areas.indexOf(b.a); });
       tbody.innerHTML = filas.map(function (x) {
-        return '<tr data-ficha="' + x.i + '" tabindex="0"><td>' + (x.tipo ? '<span class="qbj-tipo">' + (x.tipo === 'pre' ? 'Pre' : 'Pro') + '</span>' : '') + '<b style="font-weight:600">' + esc(x.nombre) + '</b>' + (x.funcion ? '<div class="fn">' + esc(x.funcion) + '</div>' : '') + '</td>' +
+        return '<tr data-ficha="' + x.i + '" tabindex="0"><td>' + (x.tipo ? '<span class="qbj-tipo">' + (x.tipo === 'pre' ? 'Pre' : 'Pro') + '</span>' : '') + '<b style="font-weight:600">' + esc(x.nombre) + '</b>' + (x.porCrear ? '<span class="qbj-pc">Por crear</span>' : '') + (x.suplente ? '<div class="fn">Mientras se cubre: ' + esc(x.suplente) + '</div>' : '') + (x.funcion ? '<div class="fn">' + esc(x.funcion) + '</div>' : '') + '</td>' +
           '<td><span class="qbj-bd" style="--c:' + color(x.nivel) + ';font-size:11px;line-height:20px">N' + x.nivel + '</span> <span class="no">' + esc(baseDe(M, x)) + '</span></td>' +
           '<td><b>' + esc(x.a.etiqueta) + '</b></td><td>' + esc(x.subarea || '—') + '</td><td>' + esc(x.padre ? x.padre.nombre : (x.jefeNombre || '—')) + '</td></tr>';
       }).join('');

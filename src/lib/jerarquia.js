@@ -34,8 +34,9 @@ const NIVEL_POR_NOMBRE = {
 };
 const nivelDeNombre = n => NIVEL_POR_NOMBRE[String(n || '').trim().toUpperCase()] || null;
 
-// Estructura oficial aprobada el 19/11/2026 (lib/estructura.json): 209 cargos con
-// área, nivel, sub-área, jefe inmediato y función, más las conexiones entre áreas.
+// Estructura oficial (lib/estructura.json, versión 2026-11-20): 209 cargos con área, nivel,
+// sub-área, jefe inmediato, función, estado «por crear» y suplente temporal, más las
+// conexiones entre áreas. Coincide con las páginas «Estructura de Cargos» y «Flujo de Proyectos».
 // Es la semilla del catálogo; después lo administra ORH.
 const ESTRUCTURA = require('./estructura.json');
 
@@ -58,8 +59,8 @@ const REPORTA = { ADG: null, GG: 'ADG', DST: 'ADG' };
 const reportaA = clave => (clave in REPORTA ? REPORTA[clave] : 'GG');
 
 const FLUJOS = [
-  { pasos: ['OCM', 'ODN', 'OPP', 'ADG/GG', 'ODACL'], titulo: 'Venta', texto: 'Marketing atrae al cliente, ODN arma la proforma, OPP valoriza costos y precio, ADG/GG revisan y aprueban la proforma con OPP, y ODACL redacta el contrato.' },
-  { pasos: ['ADG', 'GG', 'OTI', '⇄ DST', 'GG (calidad)', 'OCOS'], titulo: 'Desarrollo', texto: 'ADG/GG aprueba el proyecto y crea su carpeta; GG lo asigna a OTI, que lo construye mientras DST revisa su seguridad; OTI lo presenta a GG para la revisión de calidad: si hay observaciones vuelve a OTI y, si se aprueba, pasa a OCOS.' },
+  { pasos: ['OCM', 'ODN', 'OPP', 'GG', 'ODN', 'ODACL', 'ADG'], titulo: 'Venta', texto: 'Marketing atrae al cliente, ODN arma la proforma, OPP valoriza costos y precio, GG la aprueba con OPP (y ADG si es una venta grande), ODN genera el contrato, ODACL lo revisa y ADG lo aprueba.' },
+  { pasos: ['ADG/GG', 'GG (PMO)', 'OTI', '⇄ DST · ODACL', 'Comisión de prueba', 'Especialistas', 'Auditorías DST · GG · ODACL', 'OCOS'], titulo: 'Desarrollo', texto: 'ADG/GG aprueba el proyecto y el PMO abre la carpeta y lo asigna a OTI, que lo construye con Scrum mientras DST y ODACL orientan. La versión completa pasa por la comisión de prueba (un representante de OCOS, ODN, OPP, ODACL y DST, más el área usuaria si es de uso interno; OCM y ORH solo si el producto los toca), la reunión de especialistas y tres auditorías en paralelo: seguridad (DST), calidad de software (GG) y reglas de negocio (ODACL). Una observación devuelve el proyecto a OTI; con las tres actas aprobadas, el Jefe de OCOS recibe el traspaso.' },
   { pasos: ['OTI', 'OCOS', '⇄ Cliente'], titulo: 'Entrega y postventa', texto: 'OTI entrega a OCOS, que implementa y da soporte de bajo y alto nivel al cliente; los errores de fondo vuelven a OTI.' },
   { pasos: ['Todas', 'OCOS'], titulo: 'Soporte interno', texto: 'Cualquier área pide ayuda de bajo nivel a OCOS: equipos, accesos y problemas del día a día.' },
   { pasos: ['Todas', 'DST', 'ADG'], titulo: 'Seguridad', texto: 'Cualquier área reporta a DST un incidente o intento de intrusión; DST lo contiene y lo informa a la Alta Dirección.' },
@@ -79,16 +80,36 @@ const REGLAS = [
   'Cada oficina tiene al menos un par de practicantes (pre-profesional y profesional), los dos en N9. Las oficinas con más de un frente técnico pueden tener un par por sub-área; por ejemplo, OTI tiene uno en Desarrollo y otro en QA.',
   'ADG y GG no tienen jefes de oficina ni practicantes: solo directivos y gerentes más su equipo de apoyo.',
   'DST reporta al Director General (CEO): vigila la seguridad de todos los sistemas, pero no ve los datos de trabajo de otras áreas. GG solo recibe sus reportes e indicadores de seguridad.',
+  'Aprueba desde N3 dentro de su área; revisa desde N5, o desde N6–N7 como revisor técnico de su especialidad cuando el flujo lo designa. Nadie aprueba lo que creó.',
+  'Cada paso de un flujo tiene un cargo titular aunque todavía esté por crear. Mientras ORH no lo cubre, lo hace su suplente temporal; cuando entra la persona, el suplente deja de actuar sin cambiar el flujo.',
+  'QUBIRA aplica ISO/IEC 27001, ISO/IEC 27002 e ISO 31000. Los accesos se dan por el mínimo necesario según el nivel y el área, y se retiran al cambiar o dejar el cargo (ISO/IEC 27002, 5.15 y 5.18). Cada jefe de oficina es dueño de los riesgos de su área y los reporta al mapa de riesgos de la empresa.',
 ];
 
 const PERMISOS = [
-  { niveles: 'N1', ve: 'Todas las áreas', dirige: 'Toda la empresa', auditoria: 'Todas', aprueba: 'Todo' },
-  { niveles: 'N2', ve: 'Todas las oficinas bajo su mando; de DST, solo reportes e indicadores de seguridad', dirige: 'Jefes de oficina', auditoria: 'Su línea (la de DST, no)', aprueba: 'Operación' },
-  { niveles: 'N3', ve: 'Su oficina', dirige: 'Su oficina', auditoria: 'Su área', aprueba: 'Su área' },
-  { niveles: 'N4', ve: 'Su oficina', dirige: 'Su proceso', auditoria: 'Su área', aprueba: '—' },
-  { niveles: 'N5', ve: 'Su oficina', dirige: 'Su equipo', auditoria: 'Su área', aprueba: '—' },
-  { niveles: 'N6–N7', ve: 'Su oficina', dirige: '—', auditoria: '—', aprueba: '—' },
-  { niveles: 'N8–N9', ve: 'Lo asignado', dirige: '—', auditoria: '—', aprueba: '—' },
+  { niveles: 'N1', ve: 'Todas las áreas', dirige: 'Toda la empresa', auditoria: 'Todas', revisa: 'Todo', aprueba: 'Todo' },
+  { niveles: 'N2', ve: 'Todas las oficinas bajo su mando; de DST, solo reportes e indicadores de seguridad', dirige: 'Jefes de oficina', auditoria: 'Su línea (la de DST, no)', revisa: 'Todo, menos la operación de DST', aprueba: 'Operación' },
+  { niveles: 'N3', ve: 'Su oficina', dirige: 'Su oficina', auditoria: 'Su área', revisa: 'Su área', aprueba: 'Su área' },
+  { niveles: 'N4', ve: 'Su oficina', dirige: 'Su proceso', auditoria: 'Su área', revisa: 'Su área', aprueba: '—' },
+  { niveles: 'N5', ve: 'Su oficina', dirige: 'Su equipo', auditoria: 'Su área', revisa: 'Su área', aprueba: '—' },
+  { niveles: 'N6–N7', ve: 'Su oficina', dirige: '—', auditoria: '—', revisa: 'Solo como revisor técnico de su especialidad, cuando el flujo lo designa', aprueba: '—' },
+  { niveles: 'N8–N9', ve: 'Lo asignado', dirige: '—', auditoria: '—', revisa: '—', aprueba: '—' },
+];
+
+// Normas ISO: las tres primeras se aplican; las demás son propuestas con un cargo ya mapeado
+const NORMAS = [
+  { norma: 'ISO/IEC 27001', para: 'Sistema de gestión de seguridad de la información (SGSI): política, riesgos, Declaración de Aplicabilidad, auditoría interna y revisión por la dirección.', area: 'DST', cargo: 'Oficial de Seguridad de la Información (ISO 27001), bajo el Jefe de DST (CISO). La revisión por la dirección la hace ADG.', aplica: true },
+  { norma: 'ISO/IEC 27002', para: 'Los controles de seguridad: organizacionales, de personas, físicos y tecnológicos.', area: 'DST con todas las áreas', cargo: 'DST: tecnológicos · ORH: de personas · GG: físicos · ODACL: legales y de proveedores · OTI: desarrollo seguro (8.25 a 8.33).', aplica: true },
+  { norma: 'ISO 31000', para: 'Gestión del riesgo de toda la empresa: identificar, analizar, valorar, tratar, seguir y reportar.', area: 'ADG fija la política; cada jefe es dueño de los riesgos de su área', cargo: 'Coordinador de Riesgos y Continuidad (DST) consolida el mapa de riesgos; Auditor Interno Senior lo verifica.', aplica: true },
+  { norma: 'ISO/IEC 27005', para: 'Método para el riesgo de seguridad de la información; une ISO/IEC 27001 con ISO 31000.', area: 'DST', cargo: 'Analista de Riesgos y Cumplimiento TI', aplica: false },
+  { norma: 'ISO 9001', para: 'Sistema de gestión de calidad.', area: 'GG', cargo: 'Especialista en Gestión de Calidad (ISO 9001)', aplica: false },
+  { norma: 'ISO/IEC 25010', para: 'Modelo de calidad del producto software.', area: 'GG con OTI', cargo: 'Especialista en Gestión de Calidad (ISO 9001) · Líder de QA', aplica: false },
+  { norma: 'ISO/IEC 27701', para: 'Gestión de la privacidad (versión 2025: norma independiente que se integra con el SGSI); apoya el cumplimiento de la Ley 29733.', area: 'ODACL', cargo: 'Oficial de Protección de Datos Personales', aplica: false },
+  { norma: 'ISO 22301', para: 'Continuidad del negocio.', area: 'DST', cargo: 'Especialista en Continuidad de Negocio', aplica: false },
+  { norma: 'ISO/IEC 20000-1', para: 'Gestión de servicios TI: mesa de ayuda, incidentes y niveles de servicio.', area: 'OCOS', cargo: 'Supervisor de Postventa y Niveles de Servicio (SLA) · Supervisor de Mesa de Ayuda', aplica: false },
+  { norma: 'ISO 37301', para: 'Sistema de gestión de compliance.', area: 'ODACL', cargo: 'Oficial de Cumplimiento (Compliance)', aplica: false },
+  { norma: 'ISO 45001', para: 'Seguridad y salud en el trabajo, junto con la Ley 29783.', area: 'ORH', cargo: 'Especialista en Seguridad y Salud en el Trabajo (SST)', aplica: false },
+  { norma: 'ISO 19011', para: 'Guía para auditar sistemas de gestión.', area: 'ADG', cargo: 'Auditor Interno Senior', aplica: false },
+  { norma: 'ISO/IEC 27017 y 27018', para: 'Seguridad y datos personales en la nube.', area: 'DST', cargo: 'Especialista en Seguridad Cloud', aplica: false },
 ];
 
 /* ─── Esquema y semilla (una sola vez) ─────────────────────────────── */
@@ -103,7 +124,9 @@ function asegurarJerarquia() {
       ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS subarea TEXT;
       ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS jefe TEXT;
       ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS funcion TEXT;
-      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS nombre_completo TEXT;`);
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS nombre_completo TEXT;
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS por_crear BOOLEAN NOT NULL DEFAULT false;
+      ALTER TABLE rrhh.catalogos ADD COLUMN IF NOT EXISTS suplente TEXT;`);
     // Cargos principales: los existentes reciben su nivel; los que faltan se crean
     const { rows: cargos } = await pool.query("SELECT id, nombre, nivel FROM rrhh.catalogos WHERE catalogo = 'cargos'");
     const porNivel = {};
@@ -129,6 +152,7 @@ function asegurarJerarquia() {
       }
     }
     await migrarEstructura(porNivel);
+    await actualizarEstructura();
   })().catch(e => { lista = null; throw e; });
   return lista;
 }
@@ -190,6 +214,38 @@ async function migrarEstructura(porNivel) {
   } finally { cx.release(); }
 }
 
+/* ─── Estructura del 20/11/2026 ────────────────────────────────────────
+   Corre UNA sola vez, en UNA transacción, marcada en doc.migraciones. A cada
+   cargo oficial que siga en el catálogo le pone su función actualizada, su
+   estado «por crear» y su suplente temporal. No crea ni borra cargos. */
+const CLAVE_ESTRUCTURA_V2 = 'estructura-cargos-2026-11-20';
+async function actualizarEstructura() {
+  const { rows: hecha } = await pool.query('SELECT 1 FROM doc.migraciones WHERE clave = $1', [CLAVE_ESTRUCTURA_V2]);
+  if (hecha.length) return;
+  const cx = await pool.connect();
+  try {
+    await cx.query('BEGIN');
+    await cx.query('LOCK TABLE rrhh.catalogos IN SHARE ROW EXCLUSIVE MODE');
+    const { rows: otra } = await cx.query('SELECT 1 FROM doc.migraciones WHERE clave = $1', [CLAVE_ESTRUCTURA_V2]);
+    if (otra.length) { await cx.query('ROLLBACK'); return; }
+    const { rows: subs } = await cx.query("SELECT id, nombre, area FROM rrhh.catalogos WHERE catalogo = 'subcargos'");
+    const existentes = new Map(subs.map(r => [canonArea(r.area) + '|' + normNombre(r.nombre), r]));
+    const resumen = { actualizados: 0, porCrear: 0, conSuplente: 0, noEstan: [] };
+    for (const c of ESTRUCTURA.cargos) {
+      const previo = existentes.get(c.area + '|' + normNombre(c.nombre));
+      if (!previo) { resumen.noEstan.push(c.nombre); continue; }
+      await cx.query('UPDATE rrhh.catalogos SET funcion = $2, por_crear = $3, suplente = $4 WHERE id = $1', [previo.id, c.funcion, !!c.porCrear, c.suplente || null]);
+      resumen.actualizados++; if (c.porCrear) resumen.porCrear++; if (c.suplente) resumen.conSuplente++;
+    }
+    await cx.query('INSERT INTO doc.migraciones (clave, resumen) VALUES ($1, $2)', [CLAVE_ESTRUCTURA_V2, JSON.stringify(resumen)]);
+    await cx.query('COMMIT');
+    console.log('[jerarquia] Estructura 2026-11-20 aplicada:', JSON.stringify(resumen));
+  } catch (e) {
+    await cx.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally { cx.release(); }
+}
+
 /* ─── Cargo y nivel de una cuenta ──────────────────────────────────── */
 async function infoCargo(username) {
   if (!username) return null;
@@ -219,12 +275,14 @@ async function normalizarCargoEmpleado(data) {
 async function datosJerarquia() {
   await asegurarJerarquia();
   const [{ rows: cat }, areas] = await Promise.all([
-    pool.query("SELECT id, catalogo, nombre, parent_id, nivel, area, subarea, jefe, funcion FROM rrhh.catalogos WHERE catalogo IN ('cargos', 'subcargos') ORDER BY nivel NULLS LAST, nombre"),
+    pool.query(`SELECT c.id, c.catalogo, c.nombre, c.parent_id, c.nivel, c.area, c.subarea, c.jefe, c.funcion, c.por_crear, c.suplente,
+      EXISTS (SELECT 1 FROM rrhh.empleados e WHERE e.subcargo_id = c.id) AS ocupado
+      FROM rrhh.catalogos c WHERE c.catalogo IN ('cargos', 'subcargos') ORDER BY c.nivel NULLS LAST, c.nombre`),
     listarAreas(),
   ]);
   const principales = cat.filter(c => c.catalogo === 'cargos');
   const nivelDe = id => (principales.find(p => p.id === id) || {}).nivel;
-  const subcargos = cat.filter(c => c.catalogo === 'subcargos').map(s => ({ nombre: s.nombre, nivel: s.nivel || nivelDe(s.parent_id), area: canonArea(s.area), subarea: s.subarea || null, jefe: s.jefe || null, funcion: s.funcion || null }));
+  const subcargos = cat.filter(c => c.catalogo === 'subcargos').map(s => ({ nombre: s.nombre, nivel: s.nivel || nivelDe(s.parent_id), area: canonArea(s.area), subarea: s.subarea || null, jefe: s.jefe || null, funcion: s.funcion || null, porCrear: !!s.por_crear && !s.ocupado, suplente: (s.por_crear && !s.ocupado && s.suplente) || null }));
   const claves = new Set(areas.map(a => a.clave));
   // Las áreas con sub-cargos se muestran aunque no estén en el catálogo de áreas (ej. GG)
   subcargos.forEach(s => { if (s.area && !claves.has(s.area)) { claves.add(s.area); areas.push({ clave: s.area, etiqueta: etiquetaArea(s.area) }); } });
@@ -243,7 +301,7 @@ async function datosJerarquia() {
       // Orden de la estructura oficial (así se arman los árboles); los creados después por ORH van al final, por nivel
       cargos: subcargos.filter(s => s.area === a.clave).sort((x, y) => (ordenOficial(x) - ordenOficial(y)) || (x.nivel - y.nivel) || x.nombre.localeCompare(y.nombre)),
     })),
-    flujos: FLUJOS, reglas: REGLAS, permisos: PERMISOS,
+    flujos: FLUJOS, reglas: REGLAS, permisos: PERMISOS, normas: NORMAS,
     // Conexiones de trabajo entre cargos de distintas áreas (solo las de cargos que siguen en el catálogo)
     tiposConexion: ESTRUCTURA.flujos,
     conexiones: ESTRUCTURA.conexiones.filter(c => {

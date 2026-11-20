@@ -1,5 +1,5 @@
 {
- "version": "2026-11-19",
+ "version": "2026-11-20",
  "areas": [
   {
    "clave": "ADG",
@@ -7,7 +7,7 @@
    "nombre": "Alta Dirección Gerencial",
    "reporta": "Cúspide",
    "jefeRaiz": "Junta General de Accionistas",
-   "funcion": "Cúspide de la empresa: define la estrategia, aprueba proyectos e inversiones y supervisa a la Gerencia General. DST reporta al Director General (CEO)."
+   "funcion": "Cúspide de la empresa: define la estrategia, aprueba proyectos e inversiones, fija la política de riesgos (ISO 31000), hace la revisión por la dirección del SGSI (ISO/IEC 27001) y supervisa a la Gerencia General. DST reporta al Director General (CEO)."
   },
   {
    "clave": "GG",
@@ -15,7 +15,7 @@
    "nombre": "Gerencia General",
    "reporta": "Reporta a ADG",
    "jefeRaiz": "Director General (CEO)",
-   "funcion": "Ejecuta la estrategia de ADG, dirige a los jefes de oficina, coordina a todas las áreas, revisa la calidad de los entregables antes de pasar a OCOS y lleva la administración y logística."
+   "funcion": "Ejecuta la estrategia de ADG, dirige a los jefes de oficina, coordina a todas las áreas, audita la calidad de software (acta GG-ACT) y, con el PMO, abre y controla los proyectos y lleva la administración y logística."
   },
   {
    "clave": "DST",
@@ -23,7 +23,7 @@
    "nombre": "Desarrollo de Seguridad y Tecnología",
    "reporta": "Reporta al CEO (ADG)",
    "jefeRaiz": "Director General (CEO)",
-   "funcion": "Seguridad e integridad de alto nivel: crea los sistemas de seguridad y ciberseguridad de la empresa y defiende sus activos y sistemas internos frente a intrusiones y robo de información."
+   "funcion": "Seguridad e integridad de alto nivel: crea los sistemas de seguridad y ciberseguridad de la empresa y defiende sus activos y sistemas internos frente a intrusiones y robo de información. Responde por el SGSI (ISO/IEC 27001 y 27002) y el riesgo tecnológico (ISO 31000)."
   },
   {
    "clave": "TI",
@@ -63,7 +63,7 @@
    "nombre": "Oficina de Asuntos Corporativos y Legales",
    "reporta": "Reporta a GG",
    "jefeRaiz": "Gerente General",
-   "funcion": "Asuntos legales: contratos, cumplimiento normativo, protección de datos, convenios de prácticas y consultas jurídicas."
+   "funcion": "Asuntos legales: revisa los contratos con clientes (los genera ODN) y redacta los de proveedores; cumplimiento normativo, auditoría de reglas de negocio, protección de datos, convenios de prácticas y consultas jurídicas."
   },
   {
    "clave": "RRHH",
@@ -90,7 +90,8 @@
    "subarea": null,
    "jefe": null,
    "funcion": "Preside el directorio, aprueba la estrategia y el presupuesto anual y representa a los accionistas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -99,7 +100,8 @@
    "subarea": null,
    "jefe": "Presidente del Directorio",
    "funcion": "Dirige la empresa, fija las metas anuales y responde por los resultados ante el directorio.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -108,7 +110,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Define la estrategia operativa, los estándares de servicio y las metas de eficiencia de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -117,7 +120,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Define la política financiera, aprueba inversiones y supervisa presupuestos, tesorería y contabilidad.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -126,7 +130,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Define la estrategia tecnológica de los productos y supervisa la arquitectura y a OTI.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -135,7 +140,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Define la estrategia de ventas y mercados y supervisa a ODN y OCM.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -144,7 +150,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Define la política de personas, cultura y compensaciones y supervisa a ORH.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ADG",
@@ -153,7 +160,9 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Responde por el riesgo legal de la empresa y supervisa a ODACL.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Jefe Legal"
   },
   {
    "area": "ADG",
@@ -161,8 +170,9 @@
    "nivel": 6,
    "subarea": "Auditoría Interna",
    "jefe": "Presidente del Directorio",
-   "funcion": "Revisa de forma independiente procesos, gastos y controles de todas las áreas e informa al directorio.",
-   "practica": null
+   "funcion": "Revisa de forma independiente procesos, gastos y controles de todas las áreas, incluida la auditoría interna del SGSI (ISO/IEC 27001), e informa al directorio.",
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ADG",
@@ -171,7 +181,8 @@
    "subarea": "Auditoría Interna",
    "jefe": "Auditor Interno Senior",
    "funcion": "Ejecuta las pruebas de auditoría y documenta hallazgos y recomendaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ADG",
@@ -180,7 +191,8 @@
    "subarea": "Apoyo a la Dirección",
    "jefe": "Presidente del Directorio",
    "funcion": "Prepara análisis y propuestas para las decisiones del directorio.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -189,7 +201,8 @@
    "subarea": "Apoyo a la Dirección",
    "jefe": "Presidente del Directorio",
    "funcion": "Asesora al directorio en acuerdos, actas y responsabilidad de los directores.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ADG",
@@ -198,7 +211,8 @@
    "subarea": "Apoyo a la Dirección",
    "jefe": "Presidente del Directorio",
    "funcion": "Lleva la agenda, la correspondencia y las actas de la Alta Dirección.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ADG",
@@ -207,7 +221,8 @@
    "subarea": "Apoyo a la Dirección",
    "jefe": "Presidente del Directorio",
    "funcion": "Coordina viajes, reuniones y documentos de los directores.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -216,7 +231,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Ejecuta la estrategia aprobada por ADG, dirige a los jefes de oficina y resuelve los cruces entre áreas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "GG",
@@ -225,7 +241,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Reemplaza al Gerente General en su ausencia y sigue los proyectos que este le delega.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "GG",
@@ -234,7 +251,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Hace cumplir en el día a día los estándares que fija el COO y sigue los indicadores de cada oficina.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "GG",
@@ -243,7 +261,9 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige la cartera de proyectos: prioridades, plazos, recursos y riesgos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Gerente General"
   },
   {
    "area": "GG",
@@ -252,7 +272,8 @@
    "subarea": null,
    "jefe": "Gerente de Proyectos (PMO)",
    "funcion": "Define la metodología de proyectos y controla el avance de cada uno.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "GG",
@@ -261,7 +282,9 @@
    "subarea": "Gestión y Control",
    "jefe": "Gerente General",
    "funcion": "Mantiene el sistema de gestión de calidad y prepara las auditorías de certificación.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Analista de Control de Gestión"
   },
   {
    "area": "GG",
@@ -270,7 +293,8 @@
    "subarea": "Gestión y Control",
    "jefe": "Gerente General",
    "funcion": "Mide los indicadores de cada oficina y prepara el tablero de la gerencia.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "GG",
@@ -279,7 +303,8 @@
    "subarea": "Gestión y Control",
    "jefe": "Gerente General",
    "funcion": "Documenta los procesos, detecta cuellos de botella y propone mejoras.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -288,7 +313,8 @@
    "subarea": "Administración y Logística",
    "jefe": "Gerente General",
    "funcion": "Organiza compras, proveedores, almacén, local y servicios generales.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -297,7 +323,8 @@
    "subarea": "Administración y Logística",
    "jefe": "Coordinador de Administración y Logística",
    "funcion": "Cotiza, compara y emite órdenes de compra a proveedores.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -306,7 +333,8 @@
    "subarea": "Administración y Logística",
    "jefe": "Coordinador de Administración y Logística",
    "funcion": "Recibe, registra y despacha bienes y controla el inventario.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -315,7 +343,8 @@
    "subarea": "Administración y Logística",
    "jefe": "Coordinador de Administración y Logística",
    "funcion": "Atiende visitas, llamadas y correspondencia de la oficina.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -324,7 +353,8 @@
    "subarea": "Administración y Logística",
    "jefe": "Coordinador de Administración y Logística",
    "funcion": "Mantiene en orden el local: limpieza, mensajería y pequeñas reparaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "GG",
@@ -333,7 +363,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Lleva la agenda, los documentos y el seguimiento de pendientes de la gerencia.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -342,7 +373,8 @@
    "subarea": null,
    "jefe": "Director General (CEO)",
    "funcion": "Dirige la seguridad de la información de la empresa y reporta riesgos e incidentes a la Alta Dirección.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -351,7 +383,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Jefe de DST (CISO)",
    "funcion": "Planifica la defensa de la empresa y coordina el SOC y la respuesta a incidentes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -360,7 +393,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Coordinador de Ciberseguridad",
    "funcion": "Dirige el monitoreo continuo de alertas y asigna los casos al equipo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -369,7 +403,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Configura y afina firewalls, antivirus empresarial (EDR), SIEM y demás defensas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -378,7 +413,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Busca de forma activa atacantes ocultos que las alertas no detectaron.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -387,7 +423,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Revisa alertas, descarta falsos positivos y escala los incidentes reales.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -396,7 +433,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Sigue campañas de ataque y vulnerabilidades nuevas que pueden afectar a QUBIRA.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -405,7 +443,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Vigila consolas y paneles y registra los eventos de seguridad.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -414,7 +453,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Estudiante que aprende y apoya en monitoreo y análisis de seguridad bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -423,7 +463,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Supervisor del Centro de Operaciones de Seguridad (SOC)",
    "funcion": "Egresado que asume tareas reales de monitoreo y análisis de seguridad con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -432,7 +473,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Coordinador de Ciberseguridad",
    "funcion": "Dirige la contención, limpieza y recuperación ante un ataque.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -441,7 +483,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Líder de Respuesta a Incidentes",
    "funcion": "Recoge y analiza evidencias digitales para saber qué pasó y cómo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -450,7 +493,8 @@
    "subarea": "Ciberseguridad y SOC",
    "jefe": "Líder de Respuesta a Incidentes",
    "funcion": "Ejecuta los planes de respuesta y documenta cada incidente.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -459,7 +503,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Jefe de DST (CISO)",
    "funcion": "Asegura que los sistemas propios y de clientes se construyan seguros desde el diseño.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -468,7 +513,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Diseña la arquitectura de seguridad de redes, nube y aplicaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -477,7 +523,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Integra pruebas de seguridad automáticas en los procesos de despliegue de OTI.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -486,7 +533,9 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Revisa código y diseño de las aplicaciones y guía a los desarrolladores.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Pentester (Hacking Ético)"
   },
   {
    "area": "DST",
@@ -495,7 +544,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Protege las cuentas, redes y servicios en la nube.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -504,7 +554,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Ataca de forma autorizada los sistemas para encontrar fallas antes que otros.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -513,7 +564,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Escanea los sistemas, prioriza vulnerabilidades y sigue su corrección.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -522,7 +574,8 @@
    "subarea": "Desarrollo Seguro y Arquitectura",
    "jefe": "Coordinador de Desarrollo Seguro",
    "funcion": "Programa las herramientas internas de seguridad de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -530,8 +583,10 @@
    "nivel": 4,
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Jefe de DST (CISO)",
-   "funcion": "Gestiona el riesgo de seguridad, las normas y los planes de continuidad.",
-   "practica": null
+   "funcion": "Consolida el mapa de riesgos de la empresa con ISO 31000, gestiona el riesgo de seguridad de la información y coordina los planes de continuidad.",
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Jefe de DST (CISO)"
   },
   {
    "area": "DST",
@@ -540,7 +595,8 @@
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Coordinador de Riesgos y Continuidad",
    "funcion": "Define quién accede a qué y gestiona altas, bajas y permisos de cuentas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -548,8 +604,10 @@
    "nivel": 6,
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Coordinador de Riesgos y Continuidad",
-   "funcion": "Mantiene las políticas y el sistema de gestión de seguridad de la información.",
-   "practica": null
+   "funcion": "Mantiene el SGSI según ISO/IEC 27001: políticas, Declaración de Aplicabilidad de los controles de ISO/IEC 27002, auditoría interna y revisión por la dirección.",
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Analista de Riesgos y Cumplimiento TI"
   },
   {
    "area": "DST",
@@ -558,7 +616,8 @@
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Coordinador de Riesgos y Continuidad",
    "funcion": "Diseña y prueba los planes para seguir operando ante desastres.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -566,8 +625,9 @@
    "nivel": 7,
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Coordinador de Riesgos y Continuidad",
-   "funcion": "Evalúa riesgos tecnológicos y verifica el cumplimiento de controles.",
-   "practica": null
+   "funcion": "Evalúa riesgos tecnológicos y verifica el cumplimiento de los controles de ISO/IEC 27002.",
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "DST",
@@ -576,7 +636,8 @@
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Coordinador de Riesgos y Continuidad",
    "funcion": "Atiende solicitudes de acceso y revisa los permisos cada cierto tiempo.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "DST",
@@ -585,7 +646,8 @@
    "subarea": "Identidades, Riesgos y Continuidad",
    "jefe": "Coordinador de Riesgos y Continuidad",
    "funcion": "Ejecuta y verifica las copias de respaldo y las pruebas de restauración.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -594,7 +656,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige el desarrollo de los productos para clientes: prioridades, equipo y calidad técnica.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -603,7 +666,8 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Jefe de OTI",
    "funcion": "Planifica los proyectos de desarrollo y controla plazos, alcance y recursos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -612,7 +676,8 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Coordinador de Proyectos TI",
    "funcion": "Facilita el trabajo ágil del equipo y quita los bloqueos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -621,7 +686,8 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Coordinador de Proyectos TI",
    "funcion": "Actualiza cronogramas, reportes de avance y riesgos de los proyectos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -630,7 +696,8 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Jefe de OTI",
    "funcion": "Decide qué se construye y en qué orden según el valor para el cliente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -639,7 +706,9 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Product Owner",
    "funcion": "Levanta requisitos con el cliente y los convierte en historias de usuario.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Analista de Sistemas"
   },
   {
    "area": "TI",
@@ -648,7 +717,8 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Product Owner",
    "funcion": "Diseña la solución funcional y los flujos del sistema.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -657,7 +727,8 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Product Owner",
    "funcion": "Diseña la experiencia y las pantallas de los productos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -666,7 +737,9 @@
    "subarea": "Proyectos y Producto",
    "jefe": "Product Owner",
    "funcion": "Escribe manuales, documentación técnica y guías de usuario.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Analista de Sistemas"
   },
   {
    "area": "TI",
@@ -675,7 +748,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Jefe de OTI",
    "funcion": "Guía técnicamente al equipo, revisa código y decide la arquitectura de cada proyecto.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -684,7 +758,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Define la estructura técnica, tecnologías y estándares de los sistemas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -693,7 +768,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Construye las partes críticas y guía a los desarrolladores con menos experiencia.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -702,7 +778,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Diseña e integra modelos de IA en los productos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -711,7 +788,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Programa la parte visible y la parte de servidor de las aplicaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -720,7 +798,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Programa las interfaces web que usa el cliente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -729,7 +808,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Programa servicios, APIs y lógica de negocio.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -738,7 +818,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Programa las aplicaciones para Android e iOS.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -747,7 +828,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Conecta los sistemas con servicios externos, pasarelas de pago y ERP.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -756,7 +838,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Programa tareas acotadas con revisión de un desarrollador mayor.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -765,7 +848,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Estudiante que aprende y apoya en programación bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -774,7 +858,8 @@
    "subarea": "Desarrollo de Software",
    "jefe": "Líder Técnico (Tech Lead)",
    "funcion": "Egresado que asume tareas reales de programación con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -783,7 +868,8 @@
    "subarea": "Calidad (QA)",
    "jefe": "Jefe de OTI",
    "funcion": "Define la estrategia de pruebas y decide si una versión está lista para entregar.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -792,7 +878,8 @@
    "subarea": "Calidad (QA)",
    "jefe": "Líder de QA",
    "funcion": "Programa pruebas automáticas que corren en cada versión.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -801,7 +888,8 @@
    "subarea": "Calidad (QA)",
    "jefe": "Líder de QA",
    "funcion": "Diseña y ejecuta casos de prueba y reporta los errores.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -810,7 +898,8 @@
    "subarea": "Calidad (QA)",
    "jefe": "Líder de QA",
    "funcion": "Mide cómo responden los sistemas con muchos usuarios a la vez.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -819,7 +908,8 @@
    "subarea": "Calidad (QA)",
    "jefe": "Líder de QA",
    "funcion": "Estudiante que aprende y apoya en pruebas de software bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -828,7 +918,8 @@
    "subarea": "Calidad (QA)",
    "jefe": "Líder de QA",
    "funcion": "Egresado que asume tareas reales de pruebas de software con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -837,7 +928,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Jefe de OTI",
    "funcion": "Dirige los servidores, la nube y las bases de datos de los productos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -846,7 +938,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Líder de Infraestructura y Datos",
    "funcion": "Automatiza despliegues y administra la infraestructura en la nube.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -855,7 +948,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Líder de Infraestructura y Datos",
    "funcion": "Diseña, protege y optimiza las bases de datos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "TI",
@@ -864,7 +958,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Líder de Infraestructura y Datos",
    "funcion": "Construye los flujos que recogen, limpian y preparan los datos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -873,7 +968,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Líder de Infraestructura y Datos",
    "funcion": "Analiza datos y crea modelos predictivos para los productos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -882,7 +978,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Líder de Infraestructura y Datos",
    "funcion": "Arma reportes y tableros con los datos de los productos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "TI",
@@ -891,7 +988,8 @@
    "subarea": "Infraestructura y Datos",
    "jefe": "Líder de Infraestructura y Datos",
    "funcion": "Instala y mantiene servidores y entornos de desarrollo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -900,7 +998,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige el soporte interno y el servicio a los clientes que usan los productos de QUBIRA.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -909,7 +1008,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Jefe de OCOS",
    "funcion": "Organiza la implementación, el soporte y la postventa de cada cliente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -918,7 +1018,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Coordinador de Servicios al Cliente",
    "funcion": "Vigila que se cumplan los tiempos de atención pactados con cada cliente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -927,7 +1028,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
    "funcion": "Resuelve los problemas más complejos de los clientes y los escala a OTI si es un error de fondo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -936,7 +1038,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
    "funcion": "Dirige la puesta en marcha de los sistemas en el cliente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -945,7 +1048,9 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
    "funcion": "Prepara y dicta las capacitaciones a los usuarios de los clientes.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Especialista en Implementación"
   },
   {
    "area": "SOPORTE",
@@ -954,7 +1059,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
    "funcion": "Configura el sistema y migra los datos del cliente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -963,7 +1069,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
    "funcion": "Controla equipos y servicios alquilados: entregas, estado y renovaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -972,7 +1079,8 @@
    "subarea": "Servicios al Cliente y Postventa",
    "jefe": "Supervisor de Postventa y Niveles de Servicio (SLA)",
    "funcion": "Mide la satisfacción y los indicadores de atención y propone mejoras.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "SOPORTE",
@@ -981,7 +1089,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Jefe de OCOS",
    "funcion": "Organiza el soporte a los empleados: equipos, cuentas y redes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -990,7 +1099,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Coordinador de Soporte Interno",
    "funcion": "Dirige la mesa de ayuda y reparte los tickets.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -999,7 +1109,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Resuelve los casos que el nivel 1 no pudo cerrar.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -1008,7 +1119,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Atiende la primera llamada o ticket y resuelve lo frecuente.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -1017,7 +1129,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Instala y repara equipos y programas de los empleados.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -1026,7 +1139,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Registra cada pedido de ayuda y lo asigna al técnico que corresponde.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "SOPORTE",
@@ -1035,7 +1149,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Atiende en el local del cliente o en otras sedes.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "SOPORTE",
@@ -1044,7 +1159,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Estudiante que aprende y apoya en soporte técnico bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "SOPORTE",
@@ -1053,7 +1169,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Supervisor de Mesa de Ayuda",
    "funcion": "Egresado que asume tareas reales de soporte técnico con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "SOPORTE",
@@ -1062,7 +1179,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Coordinador de Soporte Interno",
    "funcion": "Mantiene la red, el wifi, la telefonía y la conexión a internet de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "SOPORTE",
@@ -1071,7 +1189,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Coordinador de Soporte Interno",
    "funcion": "Administra el correo, los servidores internos y las cuentas de los empleados.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "SOPORTE",
@@ -1080,7 +1199,8 @@
    "subarea": "Soporte Interno y Mesa de Ayuda",
    "jefe": "Coordinador de Soporte Interno",
    "funcion": "Lleva el inventario de equipos, licencias y garantías.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1089,7 +1209,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige las ventas y alquileres: metas, cartera de clientes y equipo comercial.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1098,7 +1219,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Jefe Comercial",
    "funcion": "Organiza la cartera de clientes y el seguimiento de las oportunidades.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1107,7 +1229,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Coordinador de Cuentas",
    "funcion": "Dirige al equipo de ventas y controla sus metas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1116,7 +1239,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Atiende a los clientes más grandes y hace crecer su relación con QUBIRA.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1125,7 +1249,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Abre mercados y sectores nuevos para la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1134,7 +1259,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Prospecta, visita y cierra ventas con nuevos clientes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1143,7 +1269,9 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Acompaña al cliente después de la venta para que renueve y amplíe.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Ejecutivo de Cuentas Senior (KAM)"
   },
   {
    "area": "COMERCIAL",
@@ -1152,7 +1280,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Responde consultas comerciales por teléfono, correo y redes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1161,7 +1290,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Estudiante que aprende y apoya en ventas bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1170,7 +1300,8 @@
    "subarea": "Ventas y Cuentas",
    "jefe": "Supervisor de Ventas",
    "funcion": "Egresado que asume tareas reales de ventas con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1179,7 +1310,8 @@
    "subarea": "Preventa y Propuestas",
    "jefe": "Jefe Comercial",
    "funcion": "Organiza las demostraciones y las propuestas técnicas y económicas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1188,7 +1320,8 @@
    "subarea": "Preventa y Propuestas",
    "jefe": "Coordinador de Preventa",
    "funcion": "Entiende la necesidad del cliente y diseña la solución que se le propone.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1197,7 +1330,8 @@
    "subarea": "Preventa y Propuestas",
    "jefe": "Coordinador de Preventa",
    "funcion": "Analiza ventas, precios y competencia y mantiene el CRM al día.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1206,7 +1340,9 @@
    "subarea": "Preventa y Propuestas",
    "jefe": "Coordinador de Preventa",
    "funcion": "Redacta proformas y propuestas con los costos que valoriza OPP.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Consultor de Preventa"
   },
   {
    "area": "COMERCIAL",
@@ -1215,7 +1351,8 @@
    "subarea": "Preventa y Propuestas",
    "jefe": "Coordinador de Preventa",
    "funcion": "Prepara documentos, citas y seguimientos del equipo comercial.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "COMERCIAL",
@@ -1224,7 +1361,8 @@
    "subarea": "Licitaciones y Sector Público",
    "jefe": "Jefe Comercial",
    "funcion": "Prepara y presenta las ofertas a procesos de compra pública.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1233,7 +1371,8 @@
    "subarea": "Licitaciones y Sector Público",
    "jefe": "Especialista en Contrataciones con el Estado",
    "funcion": "Revisa las bases, arma los expedientes y sigue los plazos de cada proceso.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1242,7 +1381,8 @@
    "subarea": "Alianzas y Canales",
    "jefe": "Jefe Comercial",
    "funcion": "Consigue y gestiona socios y distribuidores que venden con QUBIRA.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "COMERCIAL",
@@ -1251,7 +1391,8 @@
    "subarea": "Alianzas y Canales",
    "jefe": "Coordinador de Alianzas y Canales",
    "funcion": "Atiende a los socios, los capacita y sigue sus ventas.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1260,7 +1401,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige presupuestos, costos, planeamiento, contabilidad y tesorería.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1269,7 +1411,8 @@
    "subarea": "Presupuestos y Costos",
    "jefe": "Jefe de OPP",
    "funcion": "Arma el presupuesto anual y controla su ejecución por área.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1278,7 +1421,8 @@
    "subarea": "Presupuestos y Costos",
    "jefe": "Coordinador de Presupuestos",
    "funcion": "Calcula el costo real de cada producto y proyecto.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1287,7 +1431,8 @@
    "subarea": "Presupuestos y Costos",
    "jefe": "Coordinador de Presupuestos",
    "funcion": "Compara lo presupuestado con lo gastado y avisa las desviaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1296,7 +1441,9 @@
    "subarea": "Presupuestos y Costos",
    "jefe": "Coordinador de Presupuestos",
    "funcion": "Valoriza cada proforma antes de que ODN la envíe.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Especialista en Costos"
   },
   {
    "area": "OPP",
@@ -1305,7 +1452,8 @@
    "subarea": "Presupuestos y Costos",
    "jefe": "Coordinador de Presupuestos",
    "funcion": "Analiza rentabilidad, flujo de caja y estados financieros.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1314,7 +1462,8 @@
    "subarea": "Planeamiento",
    "jefe": "Jefe de OPP",
    "funcion": "Traduce la estrategia de ADG en metas y planes anuales medibles.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1323,7 +1472,8 @@
    "subarea": "Planeamiento",
    "jefe": "Especialista en Planeamiento",
    "funcion": "Proyecta ingresos, gastos y escenarios.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1332,7 +1482,9 @@
    "subarea": "Planeamiento",
    "jefe": "Especialista en Planeamiento",
    "funcion": "Evalúa si una inversión o proyecto es rentable antes de aprobarlo.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Especialista en Planeamiento"
   },
   {
    "area": "OPP",
@@ -1341,7 +1493,8 @@
    "subarea": "Contabilidad y Tributación",
    "jefe": "Jefe de OPP",
    "funcion": "Responde por la contabilidad, los estados financieros y las declaraciones a SUNAT.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1350,7 +1503,8 @@
    "subarea": "Contabilidad y Tributación",
    "jefe": "Contador General",
    "funcion": "Registra operaciones, concilia cuentas y prepara los cierres mensuales.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1359,7 +1513,9 @@
    "subarea": "Contabilidad y Tributación",
    "jefe": "Contador General",
    "funcion": "Calcula los impuestos y prepara las declaraciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Analista Financiero"
   },
   {
    "area": "OPP",
@@ -1368,7 +1524,8 @@
    "subarea": "Contabilidad y Tributación",
    "jefe": "Contador General",
    "funcion": "Ordena comprobantes y registra documentos contables.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1377,7 +1534,8 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Jefe de OPP",
    "funcion": "Controla pagos, cobros, bancos y facturación.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1386,7 +1544,8 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Supervisor de Finanzas y Tesorería",
    "funcion": "Emite las facturas electrónicas y controla que se cobren.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1395,7 +1554,8 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Supervisor de Finanzas y Tesorería",
    "funcion": "Programa pagos, maneja las cuentas bancarias y controla la caja.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1404,7 +1564,9 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Supervisor de Finanzas y Tesorería",
    "funcion": "Sigue las facturas por cobrar y gestiona a los clientes morosos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Analista de Facturación"
   },
   {
    "area": "OPP",
@@ -1413,7 +1575,8 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Supervisor de Finanzas y Tesorería",
    "funcion": "Prepara pagos, depósitos y conciliaciones bancarias.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OPP",
@@ -1422,7 +1585,8 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Supervisor de Finanzas y Tesorería",
    "funcion": "Estudiante que aprende y apoya en finanzas y contabilidad bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "OPP",
@@ -1431,7 +1595,8 @@
    "subarea": "Finanzas y Tesorería",
    "jefe": "Supervisor de Finanzas y Tesorería",
    "funcion": "Egresado que asume tareas reales de finanzas y contabilidad con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1440,7 +1605,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige los asuntos legales y el cumplimiento normativo de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1449,7 +1615,8 @@
    "subarea": null,
    "jefe": "Jefe Legal",
    "funcion": "Reparte los casos legales y sigue plazos, contratos y obligaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1458,7 +1625,8 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Coordinador Legal y de Cumplimiento",
    "funcion": "Lleva los casos y contratos más complejos y revisa el trabajo del equipo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1467,7 +1635,8 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
    "funcion": "Asesora en temas societarios, poderes y acuerdos de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1475,8 +1644,9 @@
    "nivel": 7,
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
-   "funcion": "Redacta y revisa contratos con clientes y proveedores.",
-   "practica": null
+   "funcion": "Revisa los contratos con clientes que genera ODN y redacta los contratos con proveedores.",
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1485,7 +1655,8 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
    "funcion": "Asesora a ORH en contratos de trabajo, ceses e inspecciones de SUNAFIL.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1494,7 +1665,9 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
    "funcion": "Protege marcas, software y licencias de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": true,
+   "suplente": "Abogado Corporativo"
   },
   {
    "area": "ODACL",
@@ -1503,7 +1676,8 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
    "funcion": "Revisa la parte legal de las licitaciones públicas.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1512,7 +1686,8 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
    "funcion": "Estudiante que aprende y apoya en asuntos legales bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1521,7 +1696,8 @@
    "subarea": "Legal Corporativo y Contratos",
    "jefe": "Abogado Senior",
    "funcion": "Egresado que asume tareas reales de asuntos legales con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1530,7 +1706,8 @@
    "subarea": "Cumplimiento y Protección de Datos",
    "jefe": "Coordinador Legal y de Cumplimiento",
    "funcion": "Vigila que la empresa cumpla leyes, normas y su código de ética.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1539,7 +1716,8 @@
    "subarea": "Cumplimiento y Protección de Datos",
    "jefe": "Oficial de Cumplimiento (Compliance)",
    "funcion": "Revisa controles, capacita al personal y documenta el cumplimiento.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1548,7 +1726,8 @@
    "subarea": "Cumplimiento y Protección de Datos",
    "jefe": "Coordinador Legal y de Cumplimiento",
    "funcion": "Asegura que los datos personales se traten según la Ley 29733.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "ODACL",
@@ -1557,7 +1736,8 @@
    "subarea": "Cumplimiento y Protección de Datos",
    "jefe": "Oficial de Protección de Datos Personales",
    "funcion": "Registra los bancos de datos, atiende pedidos de los titulares y revisa consentimientos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1566,7 +1746,8 @@
    "subarea": "Trámites y Archivo Legal",
    "jefe": "Coordinador Legal y de Cumplimiento",
    "funcion": "Custodia contratos, poderes y expedientes legales.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1575,7 +1756,8 @@
    "subarea": "Trámites y Archivo Legal",
    "jefe": "Coordinador Legal y de Cumplimiento",
    "funcion": "Hace trámites ante notarías, registros públicos y entidades.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "ODACL",
@@ -1584,7 +1766,8 @@
    "subarea": null,
    "jefe": "Coordinador Legal y de Cumplimiento",
    "funcion": "Prepara documentos, agenda audiencias y archiva expedientes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1593,7 +1776,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige la gestión de personas y administra el catálogo de áreas y cargos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1602,7 +1786,8 @@
    "subarea": "Talento Humano",
    "jefe": "Jefe de ORH",
    "funcion": "Organiza el reclutamiento, la capacitación y el desarrollo del personal.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1611,7 +1796,8 @@
    "subarea": "Talento Humano",
    "jefe": "Coordinador de Talento Humano",
    "funcion": "Diseña la evaluación de desempeño y los planes de carrera.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1620,7 +1806,8 @@
    "subarea": "Talento Humano",
    "jefe": "Coordinador de Talento Humano",
    "funcion": "Publica vacantes, entrevista y presenta candidatos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1629,7 +1816,8 @@
    "subarea": "Talento Humano",
    "jefe": "Coordinador de Talento Humano",
    "funcion": "Detecta necesidades de formación y organiza los cursos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1638,7 +1826,8 @@
    "subarea": "Talento Humano",
    "jefe": "Coordinador de Talento Humano",
    "funcion": "Mantiene el catálogo de cargos, los perfiles de puesto y los organigramas.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1647,7 +1836,8 @@
    "subarea": "Talento Humano",
    "jefe": "Coordinador de Talento Humano",
    "funcion": "Estudiante que aprende y apoya en gestión de personas bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1656,7 +1846,8 @@
    "subarea": "Talento Humano",
    "jefe": "Coordinador de Talento Humano",
    "funcion": "Egresado que asume tareas reales de gestión de personas con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1665,7 +1856,8 @@
    "subarea": "Compensaciones y Planillas",
    "jefe": "Jefe de ORH",
    "funcion": "Controla que la planilla y los beneficios se paguen bien y a tiempo.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1674,7 +1866,8 @@
    "subarea": "Compensaciones y Planillas",
    "jefe": "Supervisor de Planillas",
    "funcion": "Define bandas salariales, bonos y beneficios.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1683,7 +1876,8 @@
    "subarea": "Compensaciones y Planillas",
    "jefe": "Supervisor de Planillas",
    "funcion": "Calcula la planilla, CTS, gratificaciones y aportes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1692,7 +1886,8 @@
    "subarea": "Compensaciones y Planillas",
    "jefe": "Supervisor de Planillas",
    "funcion": "Compara sueldos con el mercado y administra los beneficios.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1701,7 +1896,8 @@
    "subarea": "Compensaciones y Planillas",
    "jefe": "Supervisor de Planillas",
    "funcion": "Registra asistencia, vacaciones y descansos médicos.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1710,7 +1906,8 @@
    "subarea": "Bienestar y Seguridad en el Trabajo",
    "jefe": "Jefe de ORH",
    "funcion": "Organiza el bienestar, el clima laboral y la seguridad en el trabajo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1719,7 +1916,8 @@
    "subarea": "Bienestar y Seguridad en el Trabajo",
    "jefe": "Coordinador de Bienestar",
    "funcion": "Cumple la Ley 29783: riesgos, comité de SST, capacitaciones e incidentes.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1728,7 +1926,8 @@
    "subarea": "Bienestar y Seguridad en el Trabajo",
    "jefe": "Coordinador de Bienestar",
    "funcion": "Hace los exámenes médicos ocupacionales y sigue la salud del personal.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1737,7 +1936,8 @@
    "subarea": "Bienestar y Seguridad en el Trabajo",
    "jefe": "Coordinador de Bienestar",
    "funcion": "Mide el clima laboral y propone acciones para mejorarlo.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "RRHH",
@@ -1746,7 +1946,8 @@
    "subarea": "Bienestar y Seguridad en el Trabajo",
    "jefe": "Coordinador de Bienestar",
    "funcion": "Atiende casos personales, subsidios y beneficios sociales.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1755,7 +1956,8 @@
    "subarea": "Bienestar y Seguridad en el Trabajo",
    "jefe": "Coordinador de Bienestar",
    "funcion": "Inspecciona los puestos, registra incidentes y lleva los registros obligatorios.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1764,7 +1966,8 @@
    "subarea": "Administración de Personal",
    "jefe": "Jefe de ORH",
    "funcion": "Lleva legajos, contratos, altas y bajas en el T-Registro.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1773,7 +1976,8 @@
    "subarea": "Administración de Personal",
    "jefe": "Jefe de ORH",
    "funcion": "Atiende reclamos, temas disciplinarios y la relación con los representantes de los trabajadores.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "RRHH",
@@ -1782,7 +1986,8 @@
    "subarea": "Administración de Personal",
    "jefe": "Jefe de ORH",
    "funcion": "Apoya con documentos, constancias y atención al personal.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1791,7 +1996,8 @@
    "subarea": null,
    "jefe": "Gerente General",
    "funcion": "Dirige la marca, la comunicación y el marketing de la empresa.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1800,7 +2006,8 @@
    "subarea": "Marketing Digital",
    "jefe": "Jefe de OCM",
    "funcion": "Planifica las campañas y controla su presupuesto y resultados.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1809,7 +2016,8 @@
    "subarea": "Marketing Digital",
    "jefe": "Coordinador de Marketing",
    "funcion": "Define canales, públicos y mensajes de las campañas digitales.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1818,7 +2026,8 @@
    "subarea": "Marketing Digital",
    "jefe": "Coordinador de Marketing",
    "funcion": "Posiciona la web en buscadores y maneja la publicidad pagada.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1827,7 +2036,8 @@
    "subarea": "Marketing Digital",
    "jefe": "Coordinador de Marketing",
    "funcion": "Arma flujos de correo para convertir interesados en clientes.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1836,7 +2046,8 @@
    "subarea": "Marketing Digital",
    "jefe": "Coordinador de Marketing",
    "funcion": "Mide los resultados de las campañas y del embudo de ventas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1845,7 +2056,8 @@
    "subarea": "Marketing Digital",
    "jefe": "Coordinador de Marketing",
    "funcion": "Diseña y mantiene la web y las páginas de campaña.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1854,7 +2066,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Jefe de OCM",
    "funcion": "Organiza la comunicación interna y externa y la relación con la prensa.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1863,7 +2076,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Coordinador de Comunicaciones",
    "funcion": "Planifica el calendario de contenidos y revisa lo que se publica.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1872,7 +2086,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Supervisor de Contenidos",
    "funcion": "Gestiona las redes sociales y responde a la comunidad.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1881,7 +2096,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Supervisor de Contenidos",
    "funcion": "Diseña piezas gráficas para campañas, redes y documentos.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1890,7 +2106,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Supervisor de Contenidos",
    "funcion": "Graba y edita videos, fotos y animaciones.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   },
   {
    "area": "OCM",
@@ -1899,7 +2116,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Supervisor de Contenidos",
    "funcion": "Escribe los textos de la web, redes, campañas y blog.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1908,7 +2126,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Supervisor de Contenidos",
    "funcion": "Estudiante que aprende y apoya en marketing y comunicación bajo la guía de su tutor.",
-   "practica": "pre"
+   "practica": "pre",
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1917,7 +2136,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Supervisor de Contenidos",
    "funcion": "Egresado que asume tareas reales de marketing y comunicación con supervisión de su tutor.",
-   "practica": "pro"
+   "practica": "pro",
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1926,7 +2146,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Coordinador de Comunicaciones",
    "funcion": "Mantiene informado y conectado al personal.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1935,7 +2156,8 @@
    "subarea": "Comunicaciones y Contenidos",
    "jefe": "Coordinador de Comunicaciones",
    "funcion": "Gestiona notas de prensa, voceros y reputación.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1944,7 +2166,8 @@
    "subarea": "Marca y Eventos",
    "jefe": "Jefe de OCM",
    "funcion": "Cuida la identidad visual y el manual de marca.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1953,7 +2176,8 @@
    "subarea": "Marca y Eventos",
    "jefe": "Especialista de Marca (Brand)",
    "funcion": "Organiza ferias, lanzamientos y eventos con clientes.",
-   "practica": null
+   "practica": null,
+   "porCrear": true
   },
   {
    "area": "OCM",
@@ -1962,7 +2186,8 @@
    "subarea": null,
    "jefe": "Jefe de OCM",
    "funcion": "Apoya con materiales, proveedores y seguimiento de campañas.",
-   "practica": null
+   "practica": null,
+   "porCrear": false
   }
  ],
  "flujos": [
@@ -2106,7 +2331,7 @@
    "a": "Analista de Contratos",
    "aArea": "ODACL",
    "flujo": "venta",
-   "texto": "Pide el contrato cuando el cliente acepta la proforma aprobada.",
+   "texto": "Envía el contrato generado desde la proforma aceptada para su revisión legal.",
    "dosVias": false
   },
   {
@@ -2182,21 +2407,48 @@
    "dosVias": true
   },
   {
-   "de": "Jefe de OTI",
+   "de": "Líder de QA",
    "deArea": "TI",
-   "a": "Gerente General",
+   "a": "Especialista en Gestión de Calidad (ISO 9001)",
    "aArea": "GG",
    "flujo": "des",
-   "texto": "Presenta el entregable para la revisión de calidad; si hay observaciones, vuelve a OTI.",
+   "texto": "Entrega la versión, las pruebas y la cobertura para la auditoría de calidad; las observaciones vuelven a OTI.",
    "dosVias": true
   },
   {
-   "de": "Líder de QA",
+   "de": "Jefe de OTI",
    "deArea": "TI",
-   "a": "Coordinador de Servicios al Cliente",
+   "a": "Gerente de Proyectos (PMO)",
+   "aArea": "GG",
+   "flujo": "des",
+   "texto": "Recibe la carpeta asignada y reporta el avance del proyecto.",
+   "dosVias": true
+  },
+  {
+   "de": "Líder Técnico (Tech Lead)",
+   "deArea": "TI",
+   "a": "Analista de Cumplimiento",
+   "aArea": "ODACL",
+   "flujo": "des",
+   "texto": "Consulta las reglas de negocio durante el desarrollo; lo que responde queda en las historias de usuario.",
+   "dosVias": true
+  },
+  {
+   "de": "Oficial de Cumplimiento (Compliance)",
+   "deArea": "ODACL",
+   "a": "Líder Técnico (Tech Lead)",
+   "aArea": "TI",
+   "flujo": "des",
+   "texto": "Audita las reglas de negocio y devuelve las observaciones a OTI.",
+   "dosVias": false
+  },
+  {
+   "de": "Jefe de OTI",
+   "deArea": "TI",
+   "a": "Jefe de OCOS",
    "aArea": "SOPORTE",
    "flujo": "des",
-   "texto": "Entrega la versión aprobada por GG para implementarla en el cliente.",
+   "texto": "Entrega la versión con las tres actas aprobadas, el manual y los accesos; sin eso, OCOS no la recibe.",
    "dosVias": false
   },
   {
@@ -2369,6 +2621,33 @@
    "flujo": "seg",
    "texto": "Revisa los controles y el cumplimiento normativo.",
    "dosVias": false
+  },
+  {
+   "de": "Auditor Interno Senior",
+   "deArea": "ADG",
+   "a": "Oficial de Seguridad de la Información (ISO 27001)",
+   "aArea": "DST",
+   "flujo": "seg",
+   "texto": "Hace la auditoría interna del SGSI (ISO/IEC 27001, cláusula 9.2).",
+   "dosVias": false
+  },
+  {
+   "de": "Coordinador de Riesgos y Continuidad",
+   "deArea": "DST",
+   "a": "Director General (CEO)",
+   "aArea": "ADG",
+   "flujo": "seg",
+   "texto": "Presenta el mapa de riesgos (ISO 31000) y el estado del SGSI para la revisión por la dirección.",
+   "dosVias": false
+  },
+  {
+   "de": "Oficial de Seguridad de la Información (ISO 27001)",
+   "deArea": "DST",
+   "a": "Analista de Administración de Personal",
+   "aArea": "RRHH",
+   "flujo": "per",
+   "texto": "Aplican los controles de personas de ISO/IEC 27002 (6.1 a 6.6): verificación, confidencialidad, concienciación y bajas.",
+   "dosVias": true
   },
   {
    "de": "Analista de Riesgos y Cumplimiento TI",
