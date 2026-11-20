@@ -321,6 +321,8 @@ function rutaPara(tipo, doc) {
   let pasos = Array.isArray(def) ? def : (def[doc.area] || def['*'] || []);
   pasos = pasos.map(p => ({ ...p, area: p.area === 'DUENA' ? doc.area : p.area === 'DESTINO' ? doc.area_destino : p.area }))
     .filter(p => p.area);
+  // Acta elevada: la aprobación del área dueña pasa a ADG (ej. calidad de un proyecto que pidió GG → la aprueba el CTO)
+  if (doc.elevar_adg && tipo.sigla === 'ACT') pasos = pasos.map(p => (p.accion === 'APRUEBA' && p.area === doc.area ? { ...p, area: 'ADG' } : p));
   if (doc.elevar_adg && (tipo.opciones || {}).elevable && !pasos.some(p => p.area === 'ADG' && p.accion === 'APRUEBA')) {
     pasos.push({ area: 'ADG', accion: 'APRUEBA', nivel_min: 3 });
   }

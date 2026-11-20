@@ -9,6 +9,7 @@ const { requireAuth } = require('../middleware/auth');
 const { getEmployeeArea } = require('../lib/employeeArea');
 const { requireModuleAccess } = require('../lib/moduleAccess');
 const DM = require('../lib/docModulo'); // códigos del registro de documentos (CODIFICACION.md)
+const { infoCargo } = require('../lib/jerarquia');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -1968,7 +1969,18 @@ router.delete('/tech-plan-info/:id', async (req, res) => {
    del acta se guarda en `datos` (JSON) y `resumen` lleva los conteos
    de hallazgos para listar sin abrir cada acta.
    ============================================================ */
-const TIPOS_ACTA = { seguridad: 'SEC', calidad: 'CAL', reglas: 'RN' };
+const TIPOS_ACTA = { seguridad: 'SEC', calidad: 'CAL', reglas: 'RN', comision: 'COM' };
+/* Quién emite cada acta y con qué documento («Flujo de Proyectos QUBIRA»):
+   seguridad → DST (aprueba el Jefe de DST), calidad de software → GG (aprueba el
+   Gerente General), reglas de negocio → ODACL (aprueba el Jefe Legal) y el informe de
+   la comisión de prueba → OTI (revisa el Líder de QA, aprueba el Jefe de OTI).
+   Las actas emitidas antes como OTI-ACT conservan su código. */
+const ACTA_DOC = {
+  seguridad: { area: 'DST', tipo: 'ACT', nombre: 'Acta de auditoría de seguridad', detalle: 'Seguridad' },
+  calidad: { area: 'GG', tipo: 'ACT', nombre: 'Acta de auditoría de calidad de software', detalle: 'Calidad de software' },
+  reglas: { area: 'ODACL', tipo: 'ACT', nombre: 'Acta de auditoría de reglas de negocio', detalle: 'Reglas de negocio' },
+  comision: { area: 'OTI', tipo: 'INF', nombre: 'Informe de la comisión de prueba', detalle: 'Comisión de prueba' },
+};
 const ESTADOS_ACTA = ['borrador', 'en_revision', 'emitida', 'cerrada'];
 let _calidadLista = null;
 function ensureCalidad() {
@@ -2066,7 +2078,7 @@ router.post('/calidad/actas', async (req, res) => {
     if (!TIPOS_ACTA[tipo]) return res.status(400).json({ error: 'Tipo de acta inválido' });
     if (project_id && !(await canAccessProject(req, project_id))) return res.status(403).json({ error: 'No tienes acceso a este proyecto' });
     /* El borrador no lleva código: se guarda con uno provisional «BORRADOR-…» y recibe
-       el suyo (OTI-ACT / DST-ACT) al enviarse a revisión. */
+       el suyo (DST-ACT / GG-ACT / ODACL-ACT / OTI-INF) al enviarse a revisión. */
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -2076,7 +2088,7 @@ router.post('/calidad/actas', async (req, res) => {
       await client.query(`INSERT INTO ti.auditorias_calidad (id, codigo, tipo, project_id, datos, resumen, fecha_emision, created_by, updated_by)
         VALUES ($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7,$8,$8)`, [id, codigo, tipo, project_id || null, JSON.stringify(d), JSON.stringify(resumenActa(d)), d.fecha_emision || new Date().toISOString().slice(0, 10), req.user.id]);
       await client.query('COMMIT');
-      if (project_id) await logActivity(project_id, req.user.id, 'audit_created', `${req.user.nombre || req.user.username} abrió el acta de auditoría ${codigo} (${tipo === 'seguridad' ? 'seguridad' : tipo === 'calidad' ? 'calidad' : 'reglas de negocio'})`);
+      if (project_id) await logActivity(project_id, req.user.id, 'audit_created', `${req.user.nombre || req.user.username} abrió el acta ${codigo} (${ACTA_DOC[tipo].detalle.toLowerCase()})`);
       res.status(201).json({ id, codigo });
     } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2097,19 +2109,22 @@ router.put('/calidad/actas/:id', async (req, res) => {
     const version = String(b.version || acta.version || '1.0').slice(0, 10);
     const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(datos.fecha_emision || '')) ? datos.fecha_emision : acta.fecha_emision;
     if (acta.estado === 'anulada') return res.status(409).json({ error: `El acta ${acta.codigo} está anulada.` });
-    // Al salir de borrador recibe su código (seguridad → DST, calidad y reglas → OTI) y entra en ruta
+    // Al salir de borrador recibe el código del área que audita (ver ACTA_DOC) y entra en ruta
     let codigo = acta.codigo;
     const esBorrador = /^BORRADOR-/.test(acta.codigo);
     const yaEmitida = esBorrador ? await DM.docDe('TI-ACTAS', acta.id) : null; // reintento tras un error: no emitir dos veces
     if (yaEmitida) codigo = yaEmitida.codigo;
     else if (esBorrador && estado !== 'borrador') {
-      const seg = acta.tipo === 'seguridad';
+      const cfg = ACTA_DOC[acta.tipo] || ACTA_DOC.seguridad;
+      const proy = projectId ? (await pool.query('SELECT p.name, u.username FROM ti.projects p LEFT JOIN public.usuarios u ON u.id::text = p.created_by::text WHERE p.id = $1', [projectId])).rows[0] : null;
+      // Nadie aprueba lo que su área pidió: si el proyecto lo pidió GG, el acta de calidad la aprueba ADG (CTO)
+      const pidioGG = acta.tipo === 'calidad' && !!(proy && proy.username) && ((await infoCargo(proy.username).catch(() => null)) || {}).area === 'GG';
       codigo = (await DM.emitirRegistro(req.user, {
-        tipo: 'ACT', area: seg ? 'DST' : 'OTI', titulo: `Acta de auditoría de ${seg ? 'seguridad' : acta.tipo === 'calidad' ? 'calidad' : 'reglas de negocio'}${projectId ? ' – ' + ((await pool.query('SELECT name FROM ti.projects WHERE id=$1', [projectId])).rows[0] || {}).name : ''}`,
-        detalle: seg ? 'Seguridad' : acta.tipo === 'calidad' ? 'Calidad' : 'Reglas de negocio', modulo: 'TI-ACTAS', id_origen: acta.id,
+        tipo: cfg.tipo, area: cfg.area, titulo: `${cfg.nombre}${proy ? ' – ' + proy.name : ''}`,
+        detalle: cfg.detalle, elevar_adg: pidioGG, modulo: 'TI-ACTAS', id_origen: acta.id,
       })).codigo;
     }
-    // Emitida o cerrada solo cuando el acta terminó su ruta (la aprueba el N3 de su área)
+    // Emitida o cerrada solo cuando el acta terminó su ruta (la aprueba el N3+ del área que audita, o ADG)
     if (['emitida', 'cerrada'].includes(estado) && estado !== acta.estado) await DM.exigirAprobado('TI-ACTAS', acta.id, 'emítela');
     const { rows: out } = await pool.query(`UPDATE ti.auditorias_calidad SET datos=$2::jsonb, resumen=$3::jsonb, estado=$4, project_id=$5, version=$6, fecha_emision=$7,
       updated_by=$8, codigo=$9, updated_at=NOW() WHERE id=$1 RETURNING id, codigo, estado, resumen, updated_at`,

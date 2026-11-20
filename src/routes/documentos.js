@@ -149,6 +149,30 @@ router.get('/por-codigo/:codigo', manejar(async (req, res) => {
   res.json({ ok: true, data: salida(d, ruta) });
 }));
 
+/* Contenido de un documento que nace en otro módulo, para quien debe revisarlo o aprobarlo
+   desde su propio módulo (ej. DST u ODACL aprueban un acta sin tener el módulo de TI). */
+router.get('/:codigo/contenido', manejar(async (req, res) => {
+  const quien = await C.quienEs(req.user);
+  const d = await docPorCodigo(req.params.codigo);
+  if (!d) throw new Rechazo(404, 'No existe un documento con ese código');
+  const ruta = await rutaDe(d.id);
+  if (!puedeVer(quien, d, ruta)) throw new Rechazo(403, 'No tienes acceso a este documento');
+  let contenido = null;
+  if (d.modulo === 'TI-ACTAS' && d.id_origen) {
+    const { rows } = await pool.query(`SELECT a.tipo, a.estado, a.version, to_char(a.fecha_emision, 'YYYY-MM-DD') AS fecha_emision, a.resumen,
+        a.datos->>'auditor' AS auditor, a.datos->'hallazgos' AS hallazgos, a.datos->'controles' AS controles, p.name AS proyecto, p.code AS proyecto_codigo
+      FROM ti.auditorias_calidad a LEFT JOIN ti.projects p ON p.id = a.project_id WHERE a.id = $1`, [d.id_origen]).catch(() => ({ rows: [] }));
+    const a = rows[0];
+    if (a) contenido = {
+      clase: 'acta', tipo: a.tipo, estado: a.estado, version: a.version, fecha_emision: a.fecha_emision, auditor: a.auditor,
+      proyecto: a.proyecto, proyecto_codigo: a.proyecto_codigo, resumen: a.resumen || {},
+      hallazgos: (Array.isArray(a.hallazgos) ? a.hallazgos : []).map(h => ({ id: h.id, titulo: h.titulo, severidad: h.severidad, estado: h.estado, fecha_limite: h.fecha_limite })),
+      controles: (Array.isArray(a.controles) ? a.controles : []).map(x => ({ dominio: x.dominio, items: (x.items || []).map(i => ({ ref: i.ref, control: i.control, cumple: i.cumple })) })),
+    };
+  }
+  res.json({ ok: true, data: { documento: salida(d, ruta), contenido } });
+}));
+
 /* ─── Crear borrador ───────────────────────────────────────────────── */
 async function crearBorrador(cli, quien, b) {
   const tipo = await C.tipoPorSigla(b.tipo);
