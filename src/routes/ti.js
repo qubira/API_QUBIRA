@@ -2177,9 +2177,9 @@ router.delete('/calidad/actas/:id', async (req, res) => {
 });
 
 /* ============================================================
-   INFORMES DE ESTADO DEL PROYECTO (IT-IE)
-   Código: IT000XXX-IE  |  Área emisora: OTI
-   Revisores: ODN, OPP  |  Aprueba: ADG
+   INFORMES DE ESTADO DEL PROYECTO (OTI-INF)
+   Formato código: OTI-INF-{YYYY}-{NNN}  |  Área emisora: OTI
+   Revisores: N5+ OTI, N3+ OTI  |  Opción elevar: ADG
    ============================================================ */
 
 let _informesListo = null;
@@ -2189,6 +2189,11 @@ function ensureInformes() {
       CREATE TABLE IF NOT EXISTS ti.informes_estado (
         id TEXT PRIMARY KEY,
         codigo TEXT UNIQUE NOT NULL,
+        area TEXT NOT NULL DEFAULT 'OTI',
+        tipo_doc TEXT NOT NULL DEFAULT 'INF',
+        anio INTEGER NOT NULL,
+        numero INTEGER NOT NULL,
+        detalle TEXT NOT NULL DEFAULT 'Estado de Proyecto',
         project_id TEXT REFERENCES ti.projects(id) ON DELETE SET NULL,
         titulo TEXT NOT NULL,
         estado TEXT NOT NULL DEFAULT 'borrador',
@@ -2202,24 +2207,28 @@ function ensureInformes() {
         datos JSONB NOT NULL DEFAULT '{}'::jsonb,
         updated_by INTEGER,
         created_at TIMESTAMPTZ DEFAULT NOW(),
-        updated_at TIMESTAMPTZ DEFAULT NOW()
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(area, tipo_doc, anio, numero)
       );
       CREATE INDEX IF NOT EXISTS informes_estado_project_idx ON ti.informes_estado(project_id);
       CREATE INDEX IF NOT EXISTS informes_estado_estado_idx ON ti.informes_estado(estado);
+      CREATE INDEX IF NOT EXISTS informes_estado_anio_idx ON ti.informes_estado(anio, numero);
     `).catch(e => { _informesListo = null; throw e; });
   }
   return _informesListo;
 }
 
-/* Generar código automático IT000XXX-IE */
+/* Generar código atómico OTI-INF-{YYYY}-{NNN} (correlativo anual) */
 async function generarCodigoInforme() {
-  const { rows } = await pool.query(`SELECT codigo FROM ti.informes_estado ORDER BY created_at DESC LIMIT 1`);
-  if (!rows.length) return 'IT000001-IE';
-  const last = rows[0].codigo; // IT000027-IE
-  const match = last.match(/IT0*(\d+)-IE/);
-  if (!match) return 'IT000001-IE';
-  const next = parseInt(match[1], 10) + 1;
-  return 'IT' + String(next).padStart(6, '0') + '-IE';
+  // Año de Lima (UTC-5)
+  const anio = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' })).getFullYear();
+  const { rows } = await pool.query(
+    `SELECT COALESCE(MAX(numero), 0) + 1 AS siguiente FROM ti.informes_estado WHERE area='OTI' AND tipo_doc='INF' AND anio=$1`,
+    [anio]
+  );
+  const numero = rows[0].siguiente;
+  const codigo = `OTI-INF-${anio}-${String(numero).padStart(3, '0')}`;
+  return { codigo, anio, numero };
 }
 
 /* GET /informes-estado — listar todos */
@@ -2270,15 +2279,15 @@ router.post('/informes-estado', async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'ADG'))) return;
     await ensureInformes();
-    const { project_id, titulo, fecha_limite, datos = {} } = req.body;
+    const { project_id, titulo, fecha_limite, detalle = 'Estado de Proyecto', datos = {} } = req.body;
     if (!titulo) return res.status(400).json({ error: 'El título es requerido' });
     const id = uid();
-    const codigo = await generarCodigoInforme();
+    const { codigo, anio, numero } = await generarCodigoInforme();
     await pool.query(`
       INSERT INTO ti.informes_estado
-        (id, codigo, project_id, titulo, estado, version, fecha_limite, elaborado_por, datos)
-      VALUES ($1,$2,$3,$4,'borrador','1.0',$5,$6,$7::jsonb)
-    `, [id, codigo, project_id || null, titulo, fecha_limite || null, req.user.id, JSON.stringify(datos)]);
+        (id, codigo, area, tipo_doc, anio, numero, detalle, project_id, titulo, estado, version, fecha_limite, elaborado_por, datos)
+      VALUES ($1,$2,'OTI','INF',$3,$4,$5,$6,$7,'borrador','1.0',$8,$9,$10::jsonb)
+    `, [id, codigo, anio, numero, detalle, project_id || null, titulo, fecha_limite || null, req.user.id, JSON.stringify(datos)]);
     await logActivity(project_id, req.user.id, 'updated', `${req.user.nombre || req.user.username} creó el informe de estado ${codigo} – ${titulo}`);
     const { rows } = await pool.query('SELECT * FROM ti.informes_estado WHERE id=$1', [id]);
     res.status(201).json(rows[0]);
