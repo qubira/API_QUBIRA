@@ -32,6 +32,7 @@ const proyectoFlujoRouter = require('./src/routes/proyectoFlujo');
 const casosDerivadosRouter = require('./src/routes/casosDerivados');
 const notificacionesRouter = require('./src/routes/notificaciones');
 const scrumRouter = require('./src/routes/scrum');
+const sgiRouter = require('./src/routes/sgi');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -141,6 +142,7 @@ app.use('/api/documentos', documentosRouter); // registro central de documentos 
 app.use('/api/proyecto-flujo', proyectoFlujoRouter);
 app.use('/api/casos-derivados', casosDerivadosRouter);
 app.use('/api/notificaciones', notificacionesRouter);
+app.use('/api/sgi', sgiRouter); // sistema de gestión: normas ISO, mapa de riesgos, revisión por la dirección
 app.use('/api/scrum', scrumRouter); // tablero Scrum de cada proyecto // campana de cada módulo // soporte escalado a OTI, DST y ODACL // etapas y puertas de cada proyecto (Flujo de Proyectos QUBIRA)
 app.use('/api/public/constancias', constanciasPublicRouter);
 app.use('/api/public/cases',       casesPublicRouter);
@@ -183,6 +185,7 @@ app.use((err, req, res, next) => {
     console.log(`[SERVER] Orígenes permitidos: ${allowedOrigins.join(', ') || '(todos en dev)'}`);
     mantenerDespierto();
     estadoRoutes.iniciarMedicion();
+    require('./src/lib/tareasDiarias').programar(); // renovaciones, cobros y revisión por la dirección
     require('./src/lib/jerarquia').asegurarJerarquia().then(() => console.log('[JERARQUIA] lista')).catch(e => console.warn('[JERARQUIA]', e.message));
     require('./src/lib/employeeArea').iniciarAreas()
       .then(() => require('./src/lib/codificacion').asegurarCodificacion())

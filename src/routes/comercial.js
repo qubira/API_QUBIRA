@@ -434,6 +434,37 @@ router.get('/contracts', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+/* Renovaciones (Customer Success): contratos vigentes que vencen en 90 días o
+   vencieron hace menos de 60. El seguimiento lo lleva ODN (N7 o superior). */
+const ESTADOS_RENOV = ['pendiente', 'contactado', 'renovado', 'no_renueva'];
+router.get('/renovaciones', async (req, res) => {
+  try {
+    await pool.query('ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS renovacion JSONB');
+    const { rows } = await pool.query(`SELECT id, cliente_nombre, producto_nombre, moneda, monto, responsable, estado,
+        to_char(fecha_inicio,'YYYY-MM-DD') fecha_inicio, to_char(fecha_fin,'YYYY-MM-DD') fecha_fin, (fecha_fin - CURRENT_DATE) AS dias, renovacion
+      FROM comercial.contratos WHERE estado IN ('vigente', 'finalizado') AND fecha_fin IS NOT NULL
+        AND fecha_fin <= CURRENT_DATE + 90 AND fecha_fin >= CURRENT_DATE - 60 ORDER BY fecha_fin`);
+    res.json({ ok: true, data: rows });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+router.post('/renovaciones/:id', async (req, res) => {
+  try {
+    const C = require('../lib/codificacion');
+    const q = await C.quienEs(req.user);
+    if (!(q.esADG || (q.sigla === 'ODN' && q.nivel <= 7))) return res.status(403).json({ ok: false, error: 'El seguimiento de renovaciones lo lleva ODN (Customer Success)' });
+    const estado = ESTADOS_RENOV.includes(req.body?.estado) ? req.body.estado : null;
+    if (!estado) return res.status(400).json({ ok: false, error: 'Estado no válido' });
+    const nota = String(req.body?.nota || '').trim().slice(0, 600);
+    await pool.query('ALTER TABLE comercial.contratos ADD COLUMN IF NOT EXISTS renovacion JSONB');
+    const { rows } = await pool.query(`UPDATE comercial.contratos SET renovacion = COALESCE(renovacion, '{}'::jsonb)
+        || jsonb_build_object('estado', $2::text, 'nota', $3::text, 'por', $4::text, 'en', now()::text)
+        || jsonb_build_object('historial', COALESCE(renovacion->'historial', '[]'::jsonb) || jsonb_build_array(jsonb_build_object('estado', $2::text, 'nota', $3::text, 'por', $4::text, 'en', now()::text)))
+      WHERE id = $1 AND estado IN ('vigente', 'finalizado') RETURNING id, renovacion`, [req.params.id, estado, nota, q.nombre]);
+    if (!rows.length) return res.status(404).json({ ok: false, error: 'Contrato no encontrado o no vigente' });
+    res.json({ ok: true, data: rows[0] });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 router.get('/contracts/:id', async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM comercial.contratos WHERE id = $1', [req.params.id]);

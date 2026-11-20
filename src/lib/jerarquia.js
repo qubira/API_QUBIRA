@@ -97,19 +97,19 @@ const PERMISOS = [
 
 // Normas ISO: las tres primeras se aplican; las demás son propuestas con un cargo ya mapeado
 const NORMAS = [
-  { norma: 'ISO/IEC 27001', para: 'Sistema de gestión de seguridad de la información (SGSI): política, riesgos, Declaración de Aplicabilidad, auditoría interna y revisión por la dirección.', area: 'DST', cargo: 'Oficial de Seguridad de la Información (ISO 27001), bajo el Jefe de DST (CISO). La revisión por la dirección la hace ADG.', aplica: true },
-  { norma: 'ISO/IEC 27002', para: 'Los controles de seguridad: organizacionales, de personas, físicos y tecnológicos.', area: 'DST con todas las áreas', cargo: 'DST: tecnológicos · ORH: de personas · GG: físicos · ODACL: legales y de proveedores · OTI: desarrollo seguro (8.25 a 8.33).', aplica: true },
-  { norma: 'ISO 31000', para: 'Gestión del riesgo de toda la empresa: identificar, analizar, valorar, tratar, seguir y reportar.', area: 'ADG fija la política; cada jefe es dueño de los riesgos de su área', cargo: 'Coordinador de Riesgos y Continuidad (DST) consolida el mapa de riesgos; Auditor Interno Senior lo verifica.', aplica: true },
-  { norma: 'ISO/IEC 27005', para: 'Método para el riesgo de seguridad de la información; une ISO/IEC 27001 con ISO 31000.', area: 'DST', cargo: 'Analista de Riesgos y Cumplimiento TI', aplica: false },
-  { norma: 'ISO 9001', para: 'Sistema de gestión de calidad.', area: 'GG', cargo: 'Especialista en Gestión de Calidad (ISO 9001)', aplica: false },
-  { norma: 'ISO/IEC 25010', para: 'Modelo de calidad del producto software.', area: 'GG con OTI', cargo: 'Especialista en Gestión de Calidad (ISO 9001) · Líder de QA', aplica: false },
-  { norma: 'ISO/IEC 27701', para: 'Gestión de la privacidad (versión 2025: norma independiente que se integra con el SGSI); apoya el cumplimiento de la Ley 29733.', area: 'ODACL', cargo: 'Oficial de Protección de Datos Personales', aplica: false },
-  { norma: 'ISO 22301', para: 'Continuidad del negocio.', area: 'DST', cargo: 'Especialista en Continuidad de Negocio', aplica: false },
-  { norma: 'ISO/IEC 20000-1', para: 'Gestión de servicios TI: mesa de ayuda, incidentes y niveles de servicio.', area: 'OCOS', cargo: 'Supervisor de Postventa y Niveles de Servicio (SLA) · Supervisor de Mesa de Ayuda', aplica: false },
-  { norma: 'ISO 37301', para: 'Sistema de gestión de compliance.', area: 'ODACL', cargo: 'Oficial de Cumplimiento (Compliance)', aplica: false },
-  { norma: 'ISO 45001', para: 'Seguridad y salud en el trabajo, junto con la Ley 29783.', area: 'ORH', cargo: 'Especialista en Seguridad y Salud en el Trabajo (SST)', aplica: false },
-  { norma: 'ISO 19011', para: 'Guía para auditar sistemas de gestión.', area: 'ADG', cargo: 'Auditor Interno Senior', aplica: false },
-  { norma: 'ISO/IEC 27017 y 27018', para: 'Seguridad y datos personales en la nube.', area: 'DST', cargo: 'Especialista en Seguridad Cloud', aplica: false },
+  { norma: 'ISO/IEC 27001', para: 'Sistema de gestión de seguridad de la información (SGSI): política, riesgos, Declaración de Aplicabilidad, auditoría interna y revisión por la dirección.', area: 'DST', cargo: 'Oficial de Seguridad de la Información (ISO 27001), bajo el Jefe de DST (CISO). La revisión por la dirección la hace ADG.', aplica: true, estado: 'aplica', motivo: 'Base del SGSI de QUBIRA.' },
+  { norma: 'ISO/IEC 27002', para: 'Los controles de seguridad: organizacionales, de personas, físicos y tecnológicos.', area: 'DST con todas las áreas', cargo: 'DST: tecnológicos · ORH: de personas · GG: físicos · ODACL: legales y de proveedores · OTI: desarrollo seguro (8.25 a 8.33).', aplica: true, estado: 'aplica', motivo: 'Catálogo de controles del SGSI.' },
+  { norma: 'ISO 31000', para: 'Gestión del riesgo de toda la empresa: identificar, analizar, valorar, tratar, seguir y reportar.', area: 'ADG fija la política; cada jefe es dueño de los riesgos de su área', cargo: 'Coordinador de Riesgos y Continuidad (DST) consolida el mapa de riesgos; Auditor Interno Senior lo verifica.', aplica: true, estado: 'aplica', motivo: 'Mapa de riesgos de la empresa en «Sistema de gestión».' },
+  { norma: 'ISO/IEC 27005', para: 'Método para el riesgo de seguridad de la información; une ISO/IEC 27001 con ISO 31000.', area: 'DST', cargo: 'Analista de Riesgos y Cumplimiento TI', aplica: true, estado: 'aplica', motivo: 'Se adopta: es el método de riesgo que une 27001 con 31000 (mapa de riesgos y riesgos de proyectos).' },
+  { norma: 'ISO 9001', para: 'Sistema de gestión de calidad.', area: 'GG', cargo: 'Especialista en Gestión de Calidad (ISO 9001)', aplica: true, estado: 'aplica', motivo: 'Se adopta: auditoría de calidad antes de entregar, revisión por la dirección y mejora continua.' },
+  { norma: 'ISO/IEC 25010', para: 'Modelo de calidad del producto software.', area: 'GG con OTI', cargo: 'Especialista en Gestión de Calidad (ISO 9001) · Líder de QA', aplica: true, estado: 'aplica', motivo: 'Se adopta: criterios de calidad del software en el acta de calidad y la Definición de Hecho de Scrum.' },
+  { norma: 'ISO/IEC 27701', para: 'Gestión de la privacidad (versión 2025: norma independiente que se integra con el SGSI); apoya el cumplimiento de la Ley 29733.', area: 'ODACL', cargo: 'Oficial de Protección de Datos Personales', aplica: true, estado: 'aplica', motivo: 'Se adopta: privacidad y Ley 29733; los incidentes con datos personales van a ODACL.' },
+  { norma: 'ISO 22301', para: 'Continuidad del negocio.', area: 'DST', cargo: 'Especialista en Continuidad de Negocio', aplica: false, estado: 'no', motivo: 'Por ahora no: se activa cuando se cubra el Especialista en Continuidad de Negocio; mientras, el riesgo de continuidad va en el mapa de riesgos.' },
+  { norma: 'ISO/IEC 20000-1', para: 'Gestión de servicios TI: mesa de ayuda, incidentes y niveles de servicio.', area: 'OCOS', cargo: 'Supervisor de Postventa y Niveles de Servicio (SLA) · Supervisor de Mesa de Ayuda', aplica: true, estado: 'aplica', motivo: 'Se adopta: niveles de soporte OCOS N1–N3 → OTI, incidentes de seguridad a DST.' },
+  { norma: 'ISO 37301', para: 'Sistema de gestión de compliance.', area: 'ODACL', cargo: 'Oficial de Cumplimiento (Compliance)', aplica: false, estado: 'no', motivo: 'Por ahora no: lo cubren 27001, 27701 y la ley peruana; se revisa en la próxima revisión por la dirección.' },
+  { norma: 'ISO 45001', para: 'Seguridad y salud en el trabajo, junto con la Ley 29783.', area: 'ORH', cargo: 'Especialista en Seguridad y Salud en el Trabajo (SST)', aplica: false, estado: 'no', motivo: 'Por ahora no: la Ley 29783 ya es obligatoria y ORH la cumple.' },
+  { norma: 'ISO 19011', para: 'Guía para auditar sistemas de gestión.', area: 'ADG', cargo: 'Auditor Interno Senior', aplica: true, estado: 'aplica', motivo: 'Se adopta: guía para las auditorías internas y las actas de auditoría.' },
+  { norma: 'ISO/IEC 27017 y 27018', para: 'Seguridad y datos personales en la nube.', area: 'DST', cargo: 'Especialista en Seguridad Cloud', aplica: true, estado: 'guia', motivo: 'Como guía sin certificar: los sistemas corren en la nube (Render, Neon, Vercel, Cloudinary).' },
 ];
 
 /* ─── Esquema y semilla (una sola vez) ─────────────────────────────── */
@@ -333,4 +333,4 @@ async function validarJerarquiaEmpleado(ficha, empleadoId) {
   return null;
 }
 
-module.exports = { validarJerarquiaEmpleado, reportaA, NIVELES, nivelDeNombre, asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia };
+module.exports = { NORMAS, validarJerarquiaEmpleado, reportaA, NIVELES, nivelDeNombre, asegurarJerarquia, infoCargo, normalizarCargoEmpleado, datosJerarquia };

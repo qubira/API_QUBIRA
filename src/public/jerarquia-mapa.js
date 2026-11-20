@@ -249,8 +249,8 @@
       '</tbody></table></div><p class="qbj-sub">Registrar empleados: quien tenga acceso a ORH. Eliminarlos: ORH y ADG desde N5. Datos sensibles: solo la Alta Dirección. La auditoría de DST la ve solo ADG.</p></section>' +
       '<section class="qbj-caja"><h3>Reglas de la jerarquía</h3><ol>' + (d.reglas || []).map(function (r) { return '<li>' + esc(r) + '</li>'; }).join('') + '</ol></section></div>' +
 
-      ((d.normas || []).length ? '<section class="qbj-caja"><div><h3>Normas ISO y quién responde</h3><p class="qbj-sub">QUBIRA aplica ISO/IEC 27001, ISO/IEC 27002 e ISO 31000. Las demás son propuestas con un cargo ya mapeado.</p></div><div class="qbj-tabla"><table><thead><tr><th>Norma</th><th>Para qué</th><th>Área dueña</th><th>Cargo responsable</th><th>Estado</th></tr></thead><tbody>' +
-        d.normas.map(function (n) { return '<tr><td><b>' + esc(n.norma) + '</b></td><td>' + esc(n.para) + '</td><td>' + esc(n.area) + '</td><td>' + esc(n.cargo) + '</td><td>' + (n.aplica ? '<b>Aplica</b>' : '<span class="no">Propuesta</span>') + '</td></tr>'; }).join('') +
+      ((d.normas || []).length ? '<section class="qbj-caja"><div><h3>Normas ISO y quién responde</h3><p class="qbj-sub">Decisión de la dirección (2026-11-20): normas que QUBIRA aplica, las que usa como guía y las que quedan para más adelante, con el motivo.</p></div><div class="qbj-tabla"><table><thead><tr><th>Norma</th><th>Para qué</th><th>Área dueña</th><th>Cargo responsable</th><th>Estado</th></tr></thead><tbody>' +
+        d.normas.map(function (n) { return '<tr><td><b>' + esc(n.norma) + '</b></td><td>' + esc(n.para) + '</td><td>' + esc(n.area) + '</td><td>' + esc(n.cargo) + '</td><td>' + (n.estado === 'guia' ? '<b>Guía</b>' : n.aplica ? '<b>Aplica</b>' : '<span class="no">Por ahora no</span>') + (n.motivo ? '<br><small>' + esc(n.motivo) + '</small>' : '') + '</td></tr>'; }).join('') +
         '</tbody></table></div></section>' : '') +
 
       '<section class="qbj-caja"><div><h3>Comunicación entre áreas</h3><p class="qbj-sub">Cada área se encarga de lo suyo y le pide a la responsable lo que no le toca.</p></div><div>' +
