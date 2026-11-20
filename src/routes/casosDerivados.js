@@ -16,6 +16,7 @@ const { requireAuth } = require('../middleware/auth');
 const DM = require('../lib/docModulo');
 const C = require('../lib/codificacion');
 const { util: U } = require('./soporteCasos');
+const N = require('../lib/notificar');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -68,6 +69,7 @@ async function accion(req, res, tipo) {
       const { rows: [act] } = await cx.query('UPDATE soporte.casos SET escalamiento = $2::jsonb, updated_at = NOW() WHERE codigo = $1 RETURNING *', [c.codigo, JSON.stringify(esc)]);
       return act;
     });
+    N.aAreas(tipo === 'nota' ? [['DST', 5]] : [['OCOS', 6]], { titulo: tipo === 'nota' ? `${out.codigo}: ODACL registró su evaluación legal` : `${out.codigo}: volvió a OCOS N3`, texto: comentario.slice(0, 300), modulo: 'SOPORTE', tipo: tipo === 'nota' ? 'NOTA' : 'DEVUELVE', referencia: out.codigo }, req.user.username);
     res.json({ ok: true, caso: vista(q, out) });
   } catch (e) { DM.responder(res, e, '[CASOS] acción:'); }
 }

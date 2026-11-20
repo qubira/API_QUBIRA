@@ -59,6 +59,7 @@ const MAPA_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'jerarquia-
 const BANDEJA_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'bandeja-docs.js'), 'utf8');
 const FLUJO_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'flujo-proyecto.js'), 'utf8');
 const CASOS_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'casos-derivados.js'), 'utf8');
+const NOTIF_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'notificaciones.js'), 'utf8');
 let cacheJer = { t: 0, d: null };
 publico.get('/jerarquia', async (req, res) => {
   try {
@@ -85,6 +86,11 @@ publico.get('/flujo-proyecto.js', (req, res) => {
 publico.get('/casos-derivados.js', (req, res) => {
   res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
   res.send(CASOS_JS);
+});
+// Campana de notificaciones (todos los módulos)
+publico.get('/notificaciones.js', (req, res) => {
+  res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
+  res.send(NOTIF_JS);
 });
 
 module.exports = { publico };

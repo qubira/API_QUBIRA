@@ -124,7 +124,8 @@ function asegurarCodificacion() {
         motivo TEXT,
         fecha TIMESTAMPTZ
       );
-      CREATE INDEX IF NOT EXISTS ruta_documento_ix ON doc.ruta (documento_id, ronda, orden);`);
+      CREATE INDEX IF NOT EXISTS ruta_documento_ix ON doc.ruta (documento_id, ronda, orden);
+      ALTER TABLE doc.ruta ADD COLUMN IF NOT EXISTS cargo TEXT;`);
     for (const [sigla, nombre, clase, anio, ruta, nivelEmite, opciones] of TIPOS_INICIALES) {
       await pool.query(`INSERT INTO doc.tipos (sigla, nombre, clase, lleva_anio, ruta_defecto, emite_nivel_min, opciones)
         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (sigla) DO NOTHING`,
@@ -326,9 +327,9 @@ function rutaPara(tipo, doc) {
   pasos = pasos.map(p => ({ ...p, area: p.area === 'DUENA' ? doc.area : p.area === 'DESTINO' ? doc.area_destino : p.area }))
     .filter(p => p.area);
   // Acta elevada: la aprobación del área dueña pasa a ADG (ej. calidad de un proyecto que pidió GG → la aprueba el CTO)
-  if (doc.elevar_adg && tipo.sigla === 'ACT') pasos = pasos.map(p => (p.accion === 'APRUEBA' && p.area === doc.area ? { ...p, area: 'ADG' } : p));
+  if (doc.elevar_adg && tipo.sigla === 'ACT') pasos = pasos.map(p => (p.accion === 'APRUEBA' && p.area === doc.area ? { ...p, area: 'ADG', cargo: 'Director de Tecnología (CTO)' } : p));
   if (doc.elevar_adg && (tipo.opciones || {}).elevable && !pasos.some(p => p.area === 'ADG' && p.accion === 'APRUEBA')) {
-    pasos.push({ area: 'ADG', accion: 'APRUEBA', nivel_min: 3 });
+    pasos.push({ area: 'ADG', accion: 'APRUEBA', nivel_min: 3, ...(tipo.sigla === 'PRF' ? { cargo: 'Director Comercial (CCO)' } : {}) }); // venta grande: el Director Comercial
   }
   return pasos;
 }
@@ -378,6 +379,14 @@ async function puedeActuar(quien, paso, doc) {
   // Quien aprobó la venta grande (ADG) no aprueba su contrato: lo aprueba otra persona de ADG (Director General)
   if (paso.accion === 'APRUEBA' && doc.no_aprueba && quien.usuario.toLowerCase() === String(doc.no_aprueba).toLowerCase()) {
     return { ok: false, error: 'Quien aprobó la venta grande no aprueba su contrato: lo aprueba el Director General (otra persona de ADG).' };
+  }
+  /* Paso con cargo exacto (CTO, Director Comercial, Director General…): si el cargo está cubierto,
+     solo su titular; si no, actúa quien corresponda por área y nivel (suplente). */
+  if (paso.cargo) {
+    const tit = await require('./notificar').titulares(paso.cargo, doc.creado_por);
+    if (tit.length && !tit.some(u => u.toLowerCase() === quien.usuario.toLowerCase())) {
+      return { ok: false, error: `Este paso le corresponde al ${paso.cargo}.` };
+    }
   }
   const claveArea = canonArea(paso.area);
   if (quien.clave === claveArea) {

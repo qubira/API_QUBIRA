@@ -11,6 +11,33 @@
 const crypto = require('crypto');
 const { pool } = require('../db');
 const C = require('./codificacion');
+const N = require('./notificar');
+
+/* Cargo titular de cada puerta (página «Flujo de Proyectos»). Si el cargo está por crear o sin
+   persona asignada, actúa su suplente temporal (rrhh.catalogos.suplente). */
+const PUERTA_TITULAR = {
+  evaluacion: 'Director General (CEO)', venta: 'Gerente General', apertura: 'Gerente de Proyectos (PMO)', desarrollo: 'Líder de QA',
+  comision: 'Jefe de OTI', especialistas: 'Gerente de Proyectos (PMO)', auditorias: 'Gerente de Proyectos (PMO)', precio: 'Jefe de OPP',
+  liberacion: 'Director Financiero (CFO)', entrega: 'Jefe de OCOS',
+};
+async function creadorDe(p) {
+  const { rows } = await pool.query('SELECT username FROM public.usuarios WHERE id::text = $1::text', [String(p.created_by || '')]).catch(() => ({ rows: [] }));
+  return rows[0] ? rows[0].username : null;
+}
+/* Nadie aprueba lo que propuso: si el proyecto lo propuso el Director General, lo aprueba el Presidente del Directorio */
+async function cargoRequerido(p) {
+  if (p.flujo_etapa !== 'evaluacion') return null;
+  const u = await creadorDe(p);
+  const info = u ? await require('./jerarquia').infoCargo(u).catch(() => null) : null;
+  return info && /^Director General \(CEO\)$/i.test(info.subcargo || '') ? 'Presidente del Directorio' : null;
+}
+async function titularPuerta(p) {
+  const cargo = (await cargoRequerido(p)) || PUERTA_TITULAR[p.flujo_etapa];
+  if (!cargo) return null;
+  const tit = await N.titulares(cargo);
+  const { rows } = await pool.query("SELECT suplente FROM rrhh.catalogos WHERE catalogo = 'subcargos' AND lower(nombre) = lower($1) LIMIT 1", [cargo]).catch(() => ({ rows: [] }));
+  return { cargo, cubierto: tit.length > 0, suplente: tit.length ? null : (rows[0] && rows[0].suplente) || null };
+}
 
 const ETAPAS = {
   evaluacion: { nombre: 'Evaluación', quien: 'ADG aprueba el proyecto, su modalidad y el presupuesto máximo' },
@@ -70,13 +97,22 @@ function asegurarFlujo() {
       id BIGSERIAL PRIMARY KEY, project_id TEXT NOT NULL, etapa TEXT, a_etapa TEXT, accion TEXT NOT NULL,
       usuario TEXT, usuario_nombre TEXT, area TEXT, comentario TEXT, fecha TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS proyecto_flujo_hist_idx ON ti.proyecto_flujo_hist(project_id, fecha);
-    CREATE TABLE IF NOT EXISTS ti.flujo_config (clave TEXT PRIMARY KEY, valor JSONB NOT NULL);
-    INSERT INTO ti.flujo_config (clave, valor) VALUES ('alerta_pct', '15'), ('venta_grande', 'null'), ('venta_grande_moneda', '"USD"') ON CONFLICT (clave) DO NOTHING;`)
+    `)
     .catch(e => { listo = null; throw e; });
   return listo;
 }
+/* La configuración no depende de la tabla de proyectos (la usa también la venta en ODN) */
+let cfgLista = null;
+function asegurarConfig() {
+  if (!cfgLista) cfgLista = pool.query(`
+    CREATE SCHEMA IF NOT EXISTS ti;
+    CREATE TABLE IF NOT EXISTS ti.flujo_config (clave TEXT PRIMARY KEY, valor JSONB NOT NULL);
+    INSERT INTO ti.flujo_config (clave, valor) VALUES ('alerta_pct', '15'), ('venta_grande', 'null'), ('venta_grande_moneda', '"USD"') ON CONFLICT (clave) DO NOTHING;`)
+    .catch(e => { cfgLista = null; throw e; });
+  return cfgLista;
+}
 async function config() {
-  await asegurarFlujo();
+  await asegurarConfig();
   const { rows } = await pool.query('SELECT clave, valor FROM ti.flujo_config');
   const c = Object.fromEntries(rows.map(r => [r.clave, r.valor]));
   return { alerta_pct: Number(c.alerta_pct) >= 0 ? Number(c.alerta_pct) : 15, venta_grande: c.venta_grande == null ? null : Number(c.venta_grande), venta_grande_moneda: c.venta_grande_moneda === 'PEN' ? 'PEN' : 'USD' };
@@ -189,10 +225,17 @@ async function vista(p, quien, conDetalle = true) {
     puedo_aprobar: !!(etapa && PUERTA[etapa] && cumple(quien, PUERTA[etapa]) && !(etapa === 'evaluacion' && String(p.created_by) === String(quien.id))),
   };
   if (!conDetalle) return base;
+  const titular = etapa ? await titularPuerta(p) : null;
+  const requerido = await cargoRequerido(p);
+  if (requerido && base.puedo_aprobar) {
+    const tit = await N.titulares(requerido, null);
+    if (tit.length && !tit.some(u => u.toLowerCase() === String(quien.usuario).toLowerCase())) base.puedo_aprobar = false;
+  }
   const { rows: hist } = await pool.query('SELECT etapa, a_etapa, accion, usuario_nombre, area, comentario, fecha FROM ti.proyecto_flujo_hist WHERE project_id = $1 ORDER BY fecha DESC LIMIT 100', [p.id]);
   return {
     ...base,
     secuencia: seq.map(k => ({ clave: k, nombre: ETAPAS[k].nombre })),
+    titular,
     requisitos: etapa ? requisitos(p, ctx) : [],
     puedo_devolver: DEVOLVIBLES.includes(etapa) && cumple(quien, DEVUELVEN),
     puedo_riesgos: cumple(quien, EDITAN_RIESGOS),
@@ -227,6 +270,7 @@ async function avanzar(id, quien, b = {}) {
   // Actas, contrato y costos se leen antes de bloquear el proyecto; dentro del bloqueo se confirma la etapa
   const previo = await cargar(id);
   const ctxPrevio = await contexto({ ...previo, contrato_codigo: texto(b.contrato_codigo, 40).toUpperCase() || previo.contrato_codigo });
+  ctxPrevio.requerido = await cargoRequerido(previo);
   return enTx(async cli => {
     const p = await cargar(id, cli, true);
     if (p.flujo_etapa !== previo.flujo_etapa) throw new Rechazo(409, 'El proyecto cambió de etapa mientras lo aprobabas. Actualiza la página.');
@@ -236,6 +280,10 @@ async function avanzar(id, quien, b = {}) {
     if (!PUERTA[etapa]) throw new Rechazo(409, 'El proyecto ya está en su última etapa');
     if (!cumple(quien, PUERTA[etapa])) throw new Rechazo(403, `Esta puerta la aprueba: ${ETAPAS[etapa].quien}.`);
     if (etapa === 'evaluacion' && String(p.created_by) === String(quien.id)) throw new Rechazo(403, 'Nadie aprueba lo que propuso: otra persona de ADG debe aprobar este proyecto (si lo propuso el Director General, el Presidente del Directorio).');
+    if (ctxPrevio.requerido) {
+      const tit = await N.titulares(ctxPrevio.requerido);
+      if (tit.length && !tit.some(u => u.toLowerCase() === String(quien.usuario).toLowerCase())) throw new Rechazo(403, `Este proyecto lo propuso el Director General: lo aprueba el ${ctxPrevio.requerido}.`);
+    }
     const datos = {
       modalidad: MODALIDADES.includes(b.modalidad) ? b.modalidad : undefined, presupuesto_max: num(b.presupuesto_max),
       contrato_codigo: texto(b.contrato_codigo, 40).toUpperCase() || undefined, end_date: /^\d{4}-\d{2}-\d{2}$/.test(String(b.end_date || '')) ? b.end_date : undefined,
@@ -380,8 +428,27 @@ async function traspaso(id, quien, accion, b = {}) {
   });
 }
 
+/* Avisos después de cada acción del flujo (no frenan la operación) */
+async function avisar(tipo, id, quien, extra = {}) {
+  const p = await cargar(id).catch(() => null);
+  if (!p) return;
+  const base = { modulo: 'FLUJO', referencia: p.code };
+  if (tipo === 'avanzar' && PUERTA[p.flujo_etapa]) {
+    N.aAreas(PUERTA[p.flujo_etapa], { ...base, tipo: 'PUERTA', titulo: `${p.name}: pasó a «${ETAPAS[p.flujo_etapa].nombre}»`, texto: ETAPAS[p.flujo_etapa].quien + '. Está en «Flujo de proyectos».' }, quien.usuario);
+  }
+  if (tipo === 'avanzar' && p.flujo_etapa === 'postventa') N.aAreas([['OCOS', 4], ['GG', 2]], { ...base, tipo: 'PUERTA', titulo: `${p.name}: en postventa`, texto: 'OCOS da soporte desde ahora.' }, quien.usuario);
+  if (tipo === 'devolver') N.aAreas([['OTI', 5]], { ...base, tipo: 'DEVUELVE', titulo: `${p.name}: devuelto a OTI`, texto: `${quien.nombre} (${quien.sigla || ''}): ${String(extra.comentario || '').slice(0, 300)}` }, quien.usuario);
+  if (tipo === 'costos' && alertaCosto(p, await config()).activa) N.aAreas([['GG', 2], ['ADG', 3]], { ...base, tipo: 'COSTO', titulo: `${p.name}: exceso de costo`, texto: 'El costo real supera el presupuesto máximo más el margen. El proyecto no avanza hasta que GG o ADG decidan.' });
+  if (tipo === 'traspaso') {
+    const t = p.traspaso || {};
+    if (extra.accion === 'entregar') N.aAreas([['OCOS', 4]], { ...base, tipo: 'TRASPASO', titulo: `${p.name}: traspaso de OTI por recibir`, texto: 'Manual, accesos y guía de soporte entregados. Recíbelo u obsérvalo en «Flujo de proyectos».' }, quien.usuario);
+    else N.aAreas([['OTI', 5]], { ...base, tipo: 'TRASPASO', titulo: `${p.name}: traspaso ${t.recibido_en ? 'recibido por OCOS' : 'observado por OCOS'}`, texto: t.observacion || 'OCOS ya puede dar soporte.' }, quien.usuario);
+  }
+  if (tipo === 'riesgo' && extra.alto) N.aAreas([['GG', 2]], { ...base, tipo: 'RIESGO', titulo: `${p.name}: riesgo alto registrado`, texto: String(extra.texto || '').slice(0, 300) }, quien.usuario);
+}
+
 async function guardarConfig(quien, b = {}) {
-  await asegurarFlujo();
+  await asegurarConfig();
   if (!(quien.esADG && quien.nivel <= 2)) throw new Rechazo(403, 'La configuración del flujo la cambia ADG (N1–N2)');
   if (b.alerta_pct !== undefined) { const v = num(b.alerta_pct); if (!(v >= 0 && v <= 100)) throw new Rechazo(400, 'El margen debe estar entre 0 y 100'); await pool.query("UPDATE ti.flujo_config SET valor = $1 WHERE clave = 'alerta_pct'", [JSON.stringify(v)]); }
   if (b.venta_grande !== undefined) { const v = b.venta_grande === null || b.venta_grande === '' ? null : num(b.venta_grande); if (v !== null && !(v > 0)) throw new Rechazo(400, 'El monto de venta grande debe ser mayor que cero'); await pool.query("UPDATE ti.flujo_config SET valor = $1 WHERE clave = 'venta_grande'", [JSON.stringify(v)]); }
@@ -393,4 +460,4 @@ async function guardarConfig(quien, b = {}) {
 const ANTES_DE_ABRIR = ['evaluacion', 'venta', 'apertura'];
 const ANTES_DE_AUDITAR = ['evaluacion', 'venta', 'apertura', 'desarrollo', 'comision', 'especialistas', 'auditorias'];
 
-module.exports = { traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };
+module.exports = { avisar, titularPuerta, PUERTA_TITULAR, traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };

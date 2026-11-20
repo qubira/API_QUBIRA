@@ -111,7 +111,8 @@ async function nuevaVersion(user, modulo, idOrigen, version, nota, { cli = null,
     await svc().anotar(c, d, quien, 'CREA', { ronda, orden: 0, area: d.area, comentario: `Versión ${version}${nota ? ' — ' + nota : ''}` });
     const pasos = C.rutaPara(tipo, { ...d, elevar_adg: elevar });
     let orden = 1;
-    for (const p of pasos) await c.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado) VALUES ($1,$2,$3,$4,$5,$6,true)', [d.id, ronda, orden++, p.area, p.accion, p.nivel_min || null]);
+    for (const p of pasos) await c.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado, cargo) VALUES ($1,$2,$3,$4,$5,$6,true,$7)', [d.id, ronda, orden++, p.area, p.accion, p.nivel_min || null, p.cargo || null]);
+    if (pasos.length) require('./notificar').pasoDocumento(d, pasos[0]); // versión nueva: avisa al primer paso
     await c.query('UPDATE doc.documentos SET version = $2, estado = $3, elevar_adg = $4, actualizado_en = now() WHERE id = $1', [d.id, version, pasos.length ? 'EN RUTA' : C.estadoFinal(tipo), elevar]);
     return { ...d, version, elevar_adg: elevar };
   });

@@ -8,6 +8,7 @@ const { pool } = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const { listarAreas } = require('../lib/employeeArea');
 const C = require('../lib/codificacion');
+const N = require('../lib/notificar');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -252,12 +253,13 @@ async function emitir(cli, quien, docId) {
   await anotar(cli, emitido, quien, 'CREA', { orden: 0, area: doc.area, comentario: doc.modulo === 'EXTERNO' ? 'Registrado como documento externo' : null });
   let orden = 1;
   for (const p of pasos) {
-    await cli.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado) VALUES ($1,1,$2,$3,$4,$5,true)',
-      [doc.id, orden++, p.area, p.accion, p.nivel_min || null]);
+    await cli.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado, cargo) VALUES ($1,1,$2,$3,$4,$5,true,$6)',
+      [doc.id, orden++, p.area, p.accion, p.nivel_min || null, p.cargo || null]);
   }
   if (tipo.sigla === 'FMT' && !pasos.length) {
     await cli.query("INSERT INTO doc.versiones (documento_id, version, estado, creado_por) VALUES ($1, 1, 'VIGENTE', $2)", [doc.id, quien.usuario]);
   }
+  if (pasos.length) N.pasoDocumento({ ...doc, codigo }, pasos[0]); // aviso a quien le toca el primer paso
   // Reemplazo: si el tipo no tiene ruta, el anterior se anula ya; si tiene, al aprobarse el nuevo
   if (doc.reemplaza_a && !pasos.length) await anularPorReemplazo(cli, quien, doc.reemplaza_a, codigo);
   return { ...(await docPorId(doc.id, cli)) };
@@ -371,8 +373,18 @@ router.post('/:codigo/ruta', manejar(async (req, res) => {
     return d.id;
   });
   const d = await docPorId(out);
-  res.json({ ok: true, data: salida(d, await rutaDe(d.id)) });
+  const rutaNueva = await rutaDe(d.id);
+  avisarTrasPaso(d, rutaNueva, accion, quien, comentario);
+  res.json({ ok: true, data: salida(d, rutaNueva) });
 }));
+
+/* Avisos después de actuar en la ruta: al siguiente paso, o a quien creó el documento */
+function avisarTrasPaso(d, ruta, accion, quien, comentario) {
+  const sig = pendiente(ruta);
+  if (['REVISA', 'APRUEBA'].includes(accion) && sig && d.estado === 'EN RUTA') return N.pasoDocumento(d, sig);
+  const que = accion === 'OBSERVA' ? 'tiene observaciones' : accion === 'RECHAZA' ? 'fue rechazado' : ['REVISA', 'APRUEBA'].includes(accion) ? `quedó ${String(d.estado).toLowerCase()}` : null;
+  if (que && d.creado_por) N.aUsuarios([d.creado_por], { titulo: `${d.codigo} ${que}`, texto: `${quien.nombre} (${quien.sigla || ''})${comentario ? ': ' + String(comentario).slice(0, 300) : ''}`, modulo: 'DOCUMENTOS', tipo: accion, referencia: d.codigo });
+}
 
 /* Quien creó un documento observado lo corrige y lo reenvía (conserva su código) */
 router.post('/:codigo/reenviar', manejar(async (req, res) => {
@@ -385,7 +397,9 @@ router.post('/:codigo/reenviar', manejar(async (req, res) => {
     await anotar(cli, d, quien, 'CREA', { ronda: paso ? paso.ronda : 1, orden: paso ? paso.orden : 0, area: d.area, comentario: limpio((req.body || {}).comentario) || 'Corregido y reenviado' });
     await cli.query("UPDATE doc.documentos SET estado = 'EN RUTA', actualizado_en = now() WHERE id = $1", [d.id]);
   });
-  res.json({ ok: true, data: salida(await docPorId(d.id), await rutaDe(d.id)) });
+  const rutaR = await rutaDe(d.id);
+  N.pasoDocumento(d, pendiente(rutaR)); // reenviado: avisa a quien le toca
+  res.json({ ok: true, data: salida(await docPorId(d.id), rutaR) });
 }));
 
 /* ─── Versiones (proformas y formatos) ─────────────────────────────── */
@@ -406,7 +420,7 @@ router.post('/:codigo/version', manejar(async (req, res) => {
     const ronda = Math.max(1, ...(await rutaDe(d.id, cli)).map(p => p.ronda)) + 1;
     await anotar(cli, d, quien, 'CREA', { ronda, orden: 0, area: d.area, comentario: limpio((req.body || {}).comentario) || `Versión ${version}` });
     let orden = 1;
-    for (const p of pasos) await cli.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado) VALUES ($1,$2,$3,$4,$5,$6,true)', [d.id, ronda, orden++, p.area, p.accion, p.nivel_min || null]);
+    for (const p of pasos) await cli.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado, cargo) VALUES ($1,$2,$3,$4,$5,$6,true,$7)', [d.id, ronda, orden++, p.area, p.accion, p.nivel_min || null, p.cargo || null]);
     await cli.query('UPDATE doc.documentos SET version = $2, estado = $3, actualizado_en = now() WHERE id = $1', [d.id, version, pasos.length ? 'EN RUTA' : C.estadoFinal(tipo)]);
     if (tipo.sigla === 'FMT' && !pasos.length) {
       await cli.query("UPDATE doc.versiones SET estado = 'OBSOLETA' WHERE documento_id = $1 AND estado = 'VIGENTE'", [d.id]);
@@ -415,7 +429,9 @@ router.post('/:codigo/version', manejar(async (req, res) => {
     return d.id;
   });
   const d = await docPorId(out);
-  res.json({ ok: true, data: salida(d, await rutaDe(d.id)) });
+  const rutaV = await rutaDe(d.id);
+  if (d.estado === 'EN RUTA') N.pasoDocumento(d, pendiente(rutaV)); // versión nueva: vuelve a aprobación
+  res.json({ ok: true, data: salida(d, rutaV) });
 }));
 
 /* Proforma aceptada por el cliente: la versión queda bloqueada */

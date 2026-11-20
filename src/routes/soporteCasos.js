@@ -14,6 +14,7 @@
 const { pool } = require('../db');
 const DM = require('../lib/docModulo');
 const C = require('../lib/codificacion');
+const N = require('../lib/notificar');
 
 /* Niveles de soporte (Flujo de Proyectos QUBIRA, fase 5): el caso sube en orden
    OCOS N1 → N2 → N3 → OTI (error de fondo). Un incidente de seguridad salta directo a
@@ -164,6 +165,7 @@ function montar(router) {
         const { rows: [act] } = await cx.query('UPDATE soporte.casos SET nivel = $2, area_actual = $3, escalamiento = $4::jsonb, updated_at = NOW() WHERE codigo = $1 RETURNING *', [c.codigo, nivel, area, JSON.stringify(esc)]);
         return act;
       });
+      if (out.area_actual === 'OTI') N.aAreas([['OTI', 5]], { titulo: `${out.codigo}: caso escalado a OTI`, texto: `${out.datos.titulo || ''} · error de fondo para corregir. Está en «Casos de soporte».`, modulo: 'SOPORTE', tipo: 'ESCALA', referencia: out.codigo });
       res.json({ ok: true, caso: salida(out) });
     } catch (e) { DM.responder(res, e, '[SOPORTE] escalar:'); }
   });
@@ -187,6 +189,8 @@ function montar(router) {
         const { rows: [act] } = await cx.query('UPDATE soporte.casos SET area_actual = \'DST\', seguridad = true, datos_personales = (datos_personales OR $2), escalamiento = $3::jsonb, updated_at = NOW() WHERE codigo = $1 RETURNING *', [c.codigo, dp, JSON.stringify(esc)]);
         return act;
       });
+      const aviso = { titulo: `${out.codigo}: incidente de seguridad`, texto: `${out.datos.titulo || ''}${out.datos_personales ? ' · expuso datos personales' : ''}. Lo atiende DST.`, modulo: 'SOPORTE', tipo: 'SEGURIDAD', referencia: out.codigo };
+      N.aAreas([['DST', 5], ['ADG', 1]].concat(out.datos_personales ? [['ODACL', 6]] : []), aviso);
       res.json({ ok: true, caso: salida(out) });
     } catch (e) { DM.responder(res, e, '[SOPORTE] incidente:'); }
   });

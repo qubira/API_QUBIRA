@@ -134,7 +134,8 @@
     if (p.etapa === 'entrega') campos = '<label>Acta de conformidad (código o referencia)<input data-c="acta_conformidad" placeholder="ODACL-FMT-03 firmada el …" value="' + esc(p.acta_conformidad || '') + '"></label>';
     var faltan = p.requisitos.filter(function (r) { return !r.ok; }).length;
     return '<section class="qbf-caja"><div><h4>Puerta actual: ' + esc(NOMBRE[p.etapa]) + (sig ? ' → ' + esc(NOMBRE[sig]) : '') + '</h4>' +
-      (p.pendiente ? '<p class="qbf-sub">La aprueba: ' + esc(p.pendiente) + '.</p>' : '<p class="qbf-sub">Etapa final del flujo.</p>') + '</div>' +
+      (p.pendiente ? '<p class="qbf-sub">La aprueba: ' + esc(p.pendiente) + '.</p>' : '<p class="qbf-sub">Etapa final del flujo.</p>') +
+      (p.titular ? '<p class="qbf-sub">Titular: <b>' + esc(p.titular.cargo) + '</b>' + (p.titular.cubierto ? '' : ' (cargo sin persona asignada' + (p.titular.suplente ? '; mientras se cubre actúa: <b>' + esc(p.titular.suplente) + '</b>' : '; actúa quien corresponda por área y nivel') + ')') + '</p>' : '') + '</div>' +
       (p.requisitos.length ? '<ul class="qbf-req">' + p.requisitos.map(function (r) { return '<li><span class="' + (r.ok ? 's' : 'n') + '">' + (r.ok ? '✓' : '✗') + '</span>' + esc(r.texto) + '</li>'; }).join('') + '</ul>' : '') +
       (sig && (p.puedo_aprobar || p.puedo_devolver) ? (campos ? '<div class="qbf-form">' + campos + '</div>' : '') +
         '<label>Comentario' + (p.etapa === 'especialistas' ? ' (resumen de la reunión)' : '') + '<textarea data-c="comentario"></textarea></label>' +

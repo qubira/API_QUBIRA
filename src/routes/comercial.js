@@ -469,6 +469,8 @@ router.post('/contracts', async (req, res) => {
       if (doc.referencia) {
         await cx.query(`UPDATE doc.documentos SET no_aprueba = (SELECT r.usuario FROM doc.ruta r JOIN doc.documentos p ON p.id = r.documento_id
           WHERE p.codigo = $2 AND r.area = 'ADG' AND r.accion = 'APRUEBA' AND r.planificado AND r.fecha IS NOT NULL ORDER BY r.fecha DESC LIMIT 1) WHERE id = $1`, [doc.id, doc.referencia]);
+        // Si hubo venta grande, el paso de ADG del contrato es del Director General
+        await cx.query("UPDATE doc.ruta SET cargo = 'Director General (CEO)' WHERE documento_id = $1 AND area = 'ADG' AND accion = 'APRUEBA' AND planificado AND fecha IS NULL AND EXISTS (SELECT 1 FROM doc.documentos WHERE id = $1 AND no_aprueba IS NOT NULL)", [doc.id]);
       }
       // El servidor pone el código en el texto del contrato (el navegador solo mostraba uno provisional)
       b.contenido_html = DM.ponerCodigo(b.contenido_html, id, b.codigo_provisional);

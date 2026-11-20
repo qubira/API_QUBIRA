@@ -8,7 +8,8 @@ const F = require('../lib/proyectoFlujo');
 
 const router = express.Router();
 router.use(requireAuth);
-router.use((req, res, next) => { F.asegurarFlujo().then(() => next()).catch(next); });
+// La configuración no necesita la tabla de proyectos (se puede ajustar aunque todavía no haya ninguno)
+router.use((req, res, next) => { if (req.path === '/config') return next(); F.asegurarFlujo().then(() => next()).catch(next); });
 
 const quienDe = async req => ({ ...(await F.C.quienEs(req.user)), id: req.user.id });
 const manejar = fn => async (req, res) => {
@@ -34,13 +35,13 @@ router.get('/', manejar(async (req, res, quien) => {
   res.json({ ok: true, data });
 }));
 router.get('/:id', manejar(async (req, res, quien) => detalle(res, req.params.id, quien)));
-router.post('/:id/avanzar', manejar(async (req, res, quien) => { await F.avanzar(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
-router.post('/:id/devolver', manejar(async (req, res, quien) => { await F.devolver(req.params.id, quien, (req.body || {}).comentario); await detalle(res, req.params.id, quien); }));
+router.post('/:id/avanzar', manejar(async (req, res, quien) => { await F.avanzar(req.params.id, quien, req.body || {}); F.avisar('avanzar', req.params.id, quien).catch(() => {}); await detalle(res, req.params.id, quien); }));
+router.post('/:id/devolver', manejar(async (req, res, quien) => { await F.devolver(req.params.id, quien, (req.body || {}).comentario); F.avisar('devolver', req.params.id, quien, req.body || {}).catch(() => {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/incorporar', manejar(async (req, res, quien) => { await F.incorporar(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
-router.put('/:id/costos', manejar(async (req, res, quien) => { await F.costos(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
+router.put('/:id/costos', manejar(async (req, res, quien) => { await F.costos(req.params.id, quien, req.body || {}); F.avisar('costos', req.params.id, quien).catch(() => {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/exceso', manejar(async (req, res, quien) => { await F.exceso(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
-router.post('/:id/traspaso/:accion', manejar(async (req, res, quien) => { await F.traspaso(req.params.id, quien, req.params.accion, req.body || {}); await detalle(res, req.params.id, quien); }));
-router.post('/:id/riesgos', manejar(async (req, res, quien) => { await F.riesgo(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
+router.post('/:id/traspaso/:accion', manejar(async (req, res, quien) => { await F.traspaso(req.params.id, quien, req.params.accion, req.body || {}); F.avisar('traspaso', req.params.id, quien, { accion: req.params.accion }).catch(() => {}); await detalle(res, req.params.id, quien); }));
+router.post('/:id/riesgos', manejar(async (req, res, quien) => { const b = req.body || {}; await F.riesgo(req.params.id, quien, b); F.avisar('riesgo', req.params.id, quien, { alto: (Number(b.probabilidad) * Number(b.impacto)) >= 15, texto: b.riesgo }).catch(() => {}); await detalle(res, req.params.id, quien); }));
 router.put('/:id/riesgos/:rid', manejar(async (req, res, quien) => { await F.riesgo(req.params.id, quien, req.body || {}, req.params.rid); await detalle(res, req.params.id, quien); }));
 
 module.exports = router;
