@@ -24,7 +24,7 @@ const manejar = fn => async (req, res) => {
 };
 const detalle = async (res, id, quien) => res.json({ ok: true, data: await F.vista(await F.cargar(id), quien) });
 
-router.get('/config', manejar(async (req, res) => res.json({ ok: true, data: { ...(await F.config()), etapas: F.ETAPAS } })));
+router.get('/config', manejar(async (req, res, quien) => res.json({ ok: true, data: { ...(await F.config()), etapas: F.ETAPAS, puedo_config: !!(quien.esADG && quien.nivel <= 2) } })));
 router.put('/config', manejar(async (req, res, quien) => res.json({ ok: true, data: await F.guardarConfig(quien, req.body || {}) })));
 
 // Proyectos en el flujo (los anteriores se piden con ?anteriores=1)

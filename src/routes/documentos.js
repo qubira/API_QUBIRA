@@ -170,6 +170,17 @@ router.get('/:codigo/contenido', manejar(async (req, res) => {
       controles: (Array.isArray(a.controles) ? a.controles : []).map(x => ({ dominio: x.dominio, items: (x.items || []).map(i => ({ ref: i.ref, control: i.control, cumple: i.cumple })) })),
     };
   }
+  if (d.modulo === 'COMERCIAL' && d.tipo && String(d.tipo).trim() === 'PRF') {
+    const { rows } = await pool.query('SELECT * FROM comercial.proformas WHERE id = $1', [d.id_origen || d.codigo]).catch(() => ({ rows: [] }));
+    const p = rows[0];
+    if (p) contenido = {
+      clase: 'proforma', cliente: p.cliente_nombre, producto: p.producto_nombre, tipo: p.tipo, moneda: p.moneda, version: p.version_actual || 1,
+      subtotal_neto: Number(p.subtotal_neto), igv: Number(p.igv_monto), total: Number(p.total), descuento_pct: Number(p.descuento_pct),
+      bajo_minimo: !!p.bajo_minimo, precio_minimo: p.precio_minimo == null ? null : Number(p.precio_minimo), justificacion_minimo: p.justificacion_minimo || null,
+      venta_grande: !!p.venta_grande,
+      items: (Array.isArray(p.items) ? p.items : []).map(i => ({ descripcion: i.descripcion, cantidad: i.cantidad, precio: i.precio, subtotal: i.subtotal })),
+    };
+  }
   res.json({ ok: true, data: { documento: salida(d, ruta), contenido } });
 }));
 

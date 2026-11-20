@@ -35,7 +35,7 @@ const TIPOS_INICIALES = [
   ['SOL', 'Solicitud', 'DOCUMENTO', true, [R('DUENA', 'APRUEBA', 3), R('DESTINO', 'REVISA', 5)], null, {}],
   ['PLN', 'Plan', 'DOCUMENTO', true, [R('DUENA', 'REVISA', 3), R('GG', 'APRUEBA', 3)], null, {}],
   ['CLG', 'Consulta legal', 'DOCUMENTO', true, [R('ODACL', 'REVISA', 5), R('ODACL', 'APRUEBA', 3)], null, {}],
-  ['PRF', 'Proforma', 'VERSIONADO', true, [R('OPP', 'REVISA', 5), R('DUENA', 'APRUEBA', 3)], null, {}],
+  ['PRF', 'Proforma', 'VERSIONADO', true, [R('OPP', 'REVISA', 5), R('GG', 'APRUEBA', 3)], null, { elevable: true }], // venta grande: + ADG
   ['FMT', 'Formato', 'VERSIONADO', false, [R('DUENA', 'APRUEBA', 3)], null, {}],
   ['CLI', 'Cliente', 'REGISTRO', false, [], null, {}],
   ['PRY', 'Proyecto', 'REGISTRO', false, [], null, {}],
@@ -97,6 +97,7 @@ function asegurarCodificacion() {
       );
       -- Áreas que revisan elegidas al crear (informes y planes): arman la ruta de ese documento
       ALTER TABLE doc.documentos ADD COLUMN IF NOT EXISTS revisores TEXT[];
+      ALTER TABLE doc.documentos ADD COLUMN IF NOT EXISTS no_aprueba TEXT;
       CREATE INDEX IF NOT EXISTS documentos_codigo_anterior_ix ON doc.documentos (codigo_anterior);
       CREATE INDEX IF NOT EXISTS documentos_area_tipo_ix ON doc.documentos (area, tipo, estado);
       CREATE UNIQUE INDEX IF NOT EXISTS documentos_origen_uq ON doc.documentos (modulo, id_origen) WHERE id_origen IS NOT NULL;
@@ -129,6 +130,9 @@ function asegurarCodificacion() {
         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (sigla) DO NOTHING`,
         [sigla, nombre, clase, anio, JSON.stringify(ruta), nivelEmite, JSON.stringify(opciones)]);
     }
+    // 20/11/2026: la proforma la revisa OPP y la aprueba GG; si es venta grande, también ADG (Flujo de Proyectos)
+    await pool.query(`UPDATE doc.tipos SET ruta_defecto = $1, opciones = COALESCE(opciones, '{}'::jsonb) || '{"elevable": true}'::jsonb
+      WHERE sigla = 'PRF' AND NOT ruta_defecto @> '[{"area": "GG"}]'::jsonb`, [JSON.stringify([R('OPP', 'REVISA', 5), R('GG', 'APRUEBA', 3)])]);
     // Firmante por defecto de las constancias: el Gerente que hoy las firma
     await pool.query(`UPDATE doc.tipos SET firmante = $1 WHERE sigla = 'CST' AND firmante IS NULL`,
       [JSON.stringify({ nombre: 'Abraham Aranda Cerna', cargo: 'Gerente', area: 'GG' })]);
@@ -370,6 +374,10 @@ async function puedeActuar(quien, paso, doc) {
   const nivelMin = paso.nivel_min || 3;
   if (['REVISA', 'APRUEBA', 'RECHAZA', 'OBSERVA'].includes(paso.accion) && quien.usuario.toLowerCase() === String(doc.creado_por).toLowerCase()) {
     return { ok: false, error: 'No puedes revisar ni aprobar un documento que tú creaste.' };
+  }
+  // Quien aprobó la venta grande (ADG) no aprueba su contrato: lo aprueba otra persona de ADG (Director General)
+  if (paso.accion === 'APRUEBA' && doc.no_aprueba && quien.usuario.toLowerCase() === String(doc.no_aprueba).toLowerCase()) {
+    return { ok: false, error: 'Quien aprobó la venta grande no aprueba su contrato: lo aprueba el Director General (otra persona de ADG).' };
   }
   const claveArea = canonArea(paso.area);
   if (quien.clave === claveArea) {

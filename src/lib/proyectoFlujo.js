@@ -64,7 +64,7 @@ function asegurarFlujo() {
       usuario TEXT, usuario_nombre TEXT, area TEXT, comentario TEXT, fecha TIMESTAMPTZ NOT NULL DEFAULT now());
     CREATE INDEX IF NOT EXISTS proyecto_flujo_hist_idx ON ti.proyecto_flujo_hist(project_id, fecha);
     CREATE TABLE IF NOT EXISTS ti.flujo_config (clave TEXT PRIMARY KEY, valor JSONB NOT NULL);
-    INSERT INTO ti.flujo_config (clave, valor) VALUES ('alerta_pct', '15'), ('venta_grande', 'null') ON CONFLICT (clave) DO NOTHING;`)
+    INSERT INTO ti.flujo_config (clave, valor) VALUES ('alerta_pct', '15'), ('venta_grande', 'null'), ('venta_grande_moneda', '"USD"') ON CONFLICT (clave) DO NOTHING;`)
     .catch(e => { listo = null; throw e; });
   return listo;
 }
@@ -72,7 +72,7 @@ async function config() {
   await asegurarFlujo();
   const { rows } = await pool.query('SELECT clave, valor FROM ti.flujo_config');
   const c = Object.fromEntries(rows.map(r => [r.clave, r.valor]));
-  return { alerta_pct: Number(c.alerta_pct) >= 0 ? Number(c.alerta_pct) : 15, venta_grande: c.venta_grande == null ? null : Number(c.venta_grande) };
+  return { alerta_pct: Number(c.alerta_pct) >= 0 ? Number(c.alerta_pct) : 15, venta_grande: c.venta_grande == null ? null : Number(c.venta_grande), venta_grande_moneda: c.venta_grande_moneda === 'PEN' ? 'PEN' : 'USD' };
 }
 
 /* ─── Datos del proyecto ─────────────────────────────────────────── */
@@ -347,6 +347,7 @@ async function guardarConfig(quien, b = {}) {
   if (!(quien.esADG && quien.nivel <= 2)) throw new Rechazo(403, 'La configuración del flujo la cambia ADG (N1–N2)');
   if (b.alerta_pct !== undefined) { const v = num(b.alerta_pct); if (!(v >= 0 && v <= 100)) throw new Rechazo(400, 'El margen debe estar entre 0 y 100'); await pool.query("UPDATE ti.flujo_config SET valor = $1 WHERE clave = 'alerta_pct'", [JSON.stringify(v)]); }
   if (b.venta_grande !== undefined) { const v = b.venta_grande === null || b.venta_grande === '' ? null : num(b.venta_grande); if (v !== null && !(v > 0)) throw new Rechazo(400, 'El monto de venta grande debe ser mayor que cero'); await pool.query("UPDATE ti.flujo_config SET valor = $1 WHERE clave = 'venta_grande'", [JSON.stringify(v)]); }
+  if (b.venta_grande_moneda !== undefined) { if (!['USD', 'PEN'].includes(b.venta_grande_moneda)) throw new Rechazo(400, 'La moneda debe ser USD o PEN'); await pool.query("UPDATE ti.flujo_config SET valor = $1 WHERE clave = 'venta_grande_moneda'", [JSON.stringify(b.venta_grande_moneda)]); }
   return config();
 }
 

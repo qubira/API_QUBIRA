@@ -117,6 +117,16 @@
           noCumplen.map(function (i) { return '<tr><td>' + esc(i.ref || '') + '</td><td>' + esc(i.control) + '</td><td>' + esc(i.dominio || '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
       }
       html += '</div>';
+    } else if (c && c.clase === 'proforma') {
+      var din = function (v) { return esc(c.moneda) + ' ' + Number(v || 0).toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); };
+      html += '<div style="display:grid;gap:8px"><h4>Proforma v' + esc(c.version) + ' · ' + esc(c.cliente || '') + '</h4>' +
+        '<p class="qbb-meta">' + esc(c.tipo || '') + (c.producto ? ' · ' + esc(c.producto) : '') + (c.descuento_pct ? ' · descuento ' + esc(c.descuento_pct) + ' %' : '') + '</p>' +
+        (c.bajo_minimo ? '<p class="qbb-err" style="font-weight:600">Bajo el precio mínimo de OPP (' + din(c.precio_minimo) + ' sin IGV). Justificación de ODN: «' + esc(c.justificacion_minimo || '') + '»</p>' : '') +
+        (c.venta_grande ? '<p class="qbb-meta" style="font-weight:600">Venta grande: después de GG la aprueba también ADG (Director Comercial).</p>' : '') +
+        '<div class="qbb-cifras"><div><b>' + din(c.subtotal_neto) + '</b><span>sin IGV</span></div><div><b>' + din(c.igv) + '</b><span>IGV</span></div><div><b>' + din(c.total) + '</b><span>total</span></div></div>' +
+        ((c.items || []).length ? '<div class="qbb-tabla"><table><thead><tr><th>Ítem</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead><tbody>' +
+          c.items.map(function (i) { return '<tr><td>' + esc(i.descripcion) + '</td><td>' + esc(i.cantidad) + '</td><td>' + din(i.precio) + '</td><td>' + din(i.subtotal) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '') +
+        '</div>';
     } else {
       html += '<p class="qbb-sub" style="margin:0">' + (doc.enlace_externo ? 'Documento externo: <a href="' + esc(doc.enlace_externo) + '" target="_blank" rel="noopener">abrir enlace</a>.' : 'El contenido completo se ve en el módulo donde se creó.') + '</p>';
     }

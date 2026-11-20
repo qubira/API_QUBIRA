@@ -93,16 +93,27 @@ async function estadoRegistro(user, modulo, idOrigen, estado, comentario, { cli 
 
 /* Versión nueva de una proforma o formato desde su módulo: mismo código, no gasta número.
    La aceptada queda bloqueada. */
-async function nuevaVersion(user, modulo, idOrigen, version, nota, { cli = null } = {}) {
+/* Versión nueva de una proforma: mismo código y vuelve a aprobación desde el inicio
+   (ronda nueva). Los pasos que quedaban pendientes de la versión anterior se descartan.
+   elevar_adg: venta grande (la aprueba también ADG); si no se indica, se conserva. */
+async function nuevaVersion(user, modulo, idOrigen, version, nota, { cli = null, elevar_adg } = {}) {
   const d = await docDe(modulo, idOrigen);
   if (!d) return null;
   if (d.estado === 'ACEPTADA') throw new ErrorModulo(409, `${d.codigo} ya fue aceptada por el cliente (v${d.version_aceptada}): su versión quedó bloqueada. Para negociar algo distinto, emite una proforma nueva.`);
   if (['ANULADO', 'RECHAZADO'].includes(d.estado)) throw new ErrorModulo(409, `${d.codigo} está ${d.estado.toLowerCase()}`);
   const quien = await C.quienEs(user);
   return enTransaccion(cli, async c => {
-    await c.query('UPDATE doc.documentos SET version = $2, actualizado_en = now() WHERE id = $1', [d.id, version]);
-    await svc().anotar(c, d, quien, 'CREA', { orden: 995, area: d.area, comentario: `Versión ${version}${nota ? ' — ' + nota : ''}` });
-    return { ...d, version };
+    const tipo = await C.tipoPorSigla(d.tipo);
+    const elevar = elevar_adg === undefined ? !!d.elevar_adg : !!elevar_adg;
+    const { rows: ruta } = await c.query('SELECT ronda FROM doc.ruta WHERE documento_id = $1', [d.id]);
+    const ronda = Math.max(1, ...ruta.map(p => p.ronda)) + 1;
+    await c.query('DELETE FROM doc.ruta WHERE documento_id = $1 AND planificado AND fecha IS NULL', [d.id]);
+    await svc().anotar(c, d, quien, 'CREA', { ronda, orden: 0, area: d.area, comentario: `Versión ${version}${nota ? ' — ' + nota : ''}` });
+    const pasos = C.rutaPara(tipo, { ...d, elevar_adg: elevar });
+    let orden = 1;
+    for (const p of pasos) await c.query('INSERT INTO doc.ruta (documento_id, ronda, orden, area, accion, nivel_min, planificado) VALUES ($1,$2,$3,$4,$5,$6,true)', [d.id, ronda, orden++, p.area, p.accion, p.nivel_min || null]);
+    await c.query('UPDATE doc.documentos SET version = $2, estado = $3, elevar_adg = $4, actualizado_en = now() WHERE id = $1', [d.id, version, pasos.length ? 'EN RUTA' : C.estadoFinal(tipo), elevar]);
+    return { ...d, version, elevar_adg: elevar };
   });
 }
 /* Antes de crear una versión: falla si la proforma ya fue aceptada */
@@ -112,7 +123,7 @@ async function puedeVersionar(modulo, idOrigen) {
   return d;
 }
 
-/* Proforma aceptada: necesita estar aprobada (OPP revisó y ODN aprobó) */
+/* Proforma aceptada: necesita estar aprobada (OPP revisó y GG aprobó; ADG también si es venta grande) */
 async function aceptar(user, modulo, idOrigen, { cli = null } = {}) {
   const d = await docDe(modulo, idOrigen);
   if (!d) return null;

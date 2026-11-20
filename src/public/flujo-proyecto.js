@@ -76,7 +76,8 @@
     if (!el) return; op = op || {}; estilos();
     var filtro = op._filtro || 'todos';
     el.innerHTML = '<div class="qbf"><p class="qbf-sub">Cargando los proyectos…</p></div>';
-    pedir(op, 'GET', filtro === 'anteriores' ? '/?anteriores=1' : '/').then(function (ps) {
+    Promise.all([pedir(op, 'GET', filtro === 'anteriores' ? '/?anteriores=1' : '/'), pedir(op, 'GET', '/config').catch(function () { return {}; })]).then(function (res) {
+      var ps = res[0], cfg = res[1] || {};
       var mios = ps.filter(function (p) { return p.puedo_aprobar; });
       var ver = filtro === 'mios' ? mios : ps;
       el.innerHTML = '<div class="qbf">' +
@@ -91,7 +92,20 @@
               '<td>' + (p.puedo_aprobar ? '<span class="qbf-chip tt">Te toca</span> ' : '') + '<span class="qbf-sub">' + esc(p.pendiente || (p.etapa ? 'Etapa final' : 'Incorporar al flujo')) + '</span></td></tr>';
           }).join('') + '</tbody></table></div>'
           : '<div class="qbf-caja"><p class="qbf-sub">' + (filtro === 'mios' ? 'No tienes puertas por aprobar.' : filtro === 'anteriores' ? 'No hay proyectos anteriores al flujo.' : 'Todavía no hay proyectos en el flujo. Los proyectos nuevos entran solos; los anteriores se incorporan desde «Anteriores al flujo».') + '</p></div>') +
+        (cfg.puedo_config ? '<details class="qbf-caja"><summary style="cursor:pointer;font-weight:700">Configuración del flujo (ADG)</summary>' +
+          '<div class="qbf-form" style="margin-top:10px"><label>Alerta de exceso de costo (%)<input data-c="cfg_pct" type="number" min="0" max="100" value="' + esc(cfg.alerta_pct) + '"></label>' +
+          '<label>Venta grande desde (vacío = desactivada)<input data-c="cfg_vg" type="number" min="0" step="0.01" value="' + esc(cfg.venta_grande == null ? '' : cfg.venta_grande) + '"></label>' +
+          '<label>Moneda del monto<select data-c="cfg_mon"><option' + (cfg.venta_grande_moneda !== 'PEN' ? ' selected' : '') + '>USD</option><option' + (cfg.venta_grande_moneda === 'PEN' ? ' selected' : '') + '>PEN</option></select></label>' +
+          '<button type="button" class="qbf-b pri" data-cfg="1">Guardar configuración</button></div>' +
+          '<p class="qbf-sub" style="margin-top:8px">Una proforma con total igual o mayor que la venta grande la aprueba también ADG (Director Comercial), después de GG.</p><div data-msg="cfg"></div></details>' : '') +
         '</div>';
+      var bc = el.querySelector('[data-cfg]');
+      if (bc) bc.addEventListener('click', function () {
+        bc.disabled = true;
+        pedir(op, 'PUT', '/config', { alerta_pct: v(el, '[data-c="cfg_pct"]'), venta_grande: v(el, '[data-c="cfg_vg"]') === '' ? null : v(el, '[data-c="cfg_vg"]'), venta_grande_moneda: v(el, '[data-c="cfg_mon"]') })
+          .then(function () { el.querySelector('[data-msg="cfg"]').innerHTML = '<p class="qbf-ok">Configuración guardada.</p>'; bc.disabled = false; })
+          .catch(function (e) { el.querySelector('[data-msg="cfg"]').innerHTML = '<p class="qbf-err">' + esc(e.message) + '</p>'; bc.disabled = false; });
+      });
       el.querySelectorAll('[data-filtro]').forEach(function (b) { b.addEventListener('click', function () { op._filtro = b.dataset.filtro; lista(el, op); }); });
       el.querySelectorAll('tr[data-id]').forEach(function (tr) {
         var abrir = function () { detalle(el, Object.assign({}, op, { id: tr.dataset.id, volver: function () { lista(el, op); } })); };

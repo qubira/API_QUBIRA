@@ -466,6 +466,10 @@ router.post('/contracts', async (req, res) => {
         referencia: b.proforma_id && /^[A-Z]{2,5}-PRF-/.test(b.proforma_id) ? b.proforma_id : null, referencia_version: proformaVersion,
       }, { cli: cx, idOrigenEsCodigo: true });
       const id = doc.codigo;
+      if (doc.referencia) {
+        await cx.query(`UPDATE doc.documentos SET no_aprueba = (SELECT r.usuario FROM doc.ruta r JOIN doc.documentos p ON p.id = r.documento_id
+          WHERE p.codigo = $2 AND r.area = 'ADG' AND r.accion = 'APRUEBA' AND r.planificado AND r.fecha IS NOT NULL ORDER BY r.fecha DESC LIMIT 1) WHERE id = $1`, [doc.id, doc.referencia]);
+      }
       // El servidor pone el código en el texto del contrato (el navegador solo mostraba uno provisional)
       b.contenido_html = DM.ponerCodigo(b.contenido_html, id, b.codigo_provisional);
       return cx.query(`
@@ -573,6 +577,51 @@ function calcularProforma(b) {
   return { items, subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total };
 }
 
+/* ─── Reglas de venta (Flujo de Proyectos QUBIRA, fase 4) ───
+   - Precio mínimo de OPP: si la proforma de un producto del catálogo queda por
+     debajo de su mínimo (sin IGV), exige una justificación que GG ve al aprobar.
+   - Venta grande: si el total llega al monto configurado por ADG, la proforma la
+     aprueba también ADG (Director Comercial). Sin monto configurado no se activa. */
+let colsVenta = null;
+const asegurarColsVenta = () => colsVenta || (colsVenta = pool.query(`ALTER TABLE comercial.proformas
+  ADD COLUMN IF NOT EXISTS bajo_minimo BOOLEAN NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS precio_minimo NUMERIC,
+  ADD COLUMN IF NOT EXISTS justificacion_minimo TEXT, ADD COLUMN IF NOT EXISTS venta_grande BOOLEAN NOT NULL DEFAULT false`).catch(e => { colsVenta = null; throw e; }));
+function esVentaGrande(cfg, total, moneda, tc) {
+  if (!(cfg.venta_grande > 0)) return false;
+  const mc = cfg.venta_grande_moneda || 'USD';
+  if (mc === moneda) return total >= cfg.venta_grande;
+  if (!(tc > 0)) return true; // sin tipo de cambio no se puede comparar: por seguridad también la aprueba ADG
+  return (mc === 'PEN' ? total * tc : total / tc) >= cfg.venta_grande; // tipo de cambio = soles por dólar
+}
+/* Config y columnas se preparan ANTES de abrir una transacción (ALTER TABLE con una fila
+   bloqueada por la misma operación se quedaría esperando). Dentro de una transacción se pasa
+   { cfg, db } y la búsqueda del producto usa esa misma conexión. */
+async function prepararVenta() {
+  await asegurarColsVenta();
+  return require('../lib/proyectoFlujo').config().catch(() => ({ venta_grande: null }));
+}
+async function controlVenta(b, calc, moneda, { cfg = null, db = pool } = {}) {
+  if (!cfg) cfg = await prepararVenta();
+  let minimo = null, bajo = false, prod = null;
+  const hayProyectos = (await db.query("SELECT to_regclass('ti.projects') IS NOT NULL AS hay")).rows[0].hay;
+  if (b.producto_nombre && hayProyectos) {
+    const { rows } = await db.query("SELECT p.name, to_jsonb(p)->>'sale_price_min' AS sale_price_min, to_jsonb(p)->>'rental_price_min' AS rental_price_min, to_jsonb(p)->>'commercial_price_currency' AS commercial_price_currency, (to_jsonb(p)->>'show_to_comercial')::boolean AS visible FROM ti.projects p WHERE lower(p.name) = lower($1) ORDER BY 5 DESC NULLS LAST LIMIT 1", [String(b.producto_nombre).trim()]);
+    if (rows[0] && !rows[0].visible) rows.length = 0; // solo productos liberados al catálogo
+    prod = rows[0] || null;
+  }
+  if (prod) {
+    const m = Number(/alquiler/i.test(b.tipo || '') ? prod.rental_price_min : prod.sale_price_min);
+    if (m > 0 && (!prod.commercial_price_currency || prod.commercial_price_currency === moneda)) { minimo = m; bajo = calc.subtotalNeto < m; }
+  }
+  const justificacion = String(b.justificacion_minimo || '').trim().slice(0, 500);
+  if (bajo && !justificacion) {
+    throw new DM.ErrorModulo(409, `El precio (${moneda} ${calc.subtotalNeto.toFixed(2)} sin IGV) está por debajo del precio mínimo de OPP para «${prod.name}» (${moneda} ${minimo.toFixed(2)}). Escribe la justificación: GG la verá al aprobar la proforma.`);
+  }
+  return { minimo, bajo, justificacion: bajo ? justificacion : null, grande: esVentaGrande(cfg, calc.total, moneda, Number(b.tipo_cambio) || null) };
+}
+const detalleVenta = (cv, b) => (cv.bajo ? `Bajo el precio mínimo de OPP (${cv.minimo}): ${cv.justificacion}` : (b.producto_nombre || b.tipo || null));
+const guardarFlagsVenta = (db, id, cv) => db.query('UPDATE comercial.proformas SET bajo_minimo = $2, precio_minimo = $3, justificacion_minimo = $4, venta_grande = $5 WHERE id = $1', [id, cv.bajo, cv.minimo, cv.justificacion, cv.grande]);
+
 router.post('/proformas', async (req, res) => {
   try {
     const b = req.body || {};
@@ -584,12 +633,13 @@ router.post('/proformas', async (req, res) => {
     const cli = cliRows[0];
 
     const { items, subtotal, descuentoPct, descuentoMonto, subtotalNeto, igvTipo, igvMonto, total } = calcularProforma(b);
+    const cv = await controlVenta(b, { subtotalNeto, total }, b.moneda || 'USD');
 
-    /* Proforma = ODN-PRF-AAAA-NNN (ruta: ODN crea → OPP revisa → ODN aprueba). Mismo código
-       para toda la negociación; cada versión nueva no gasta número. */
+    /* Proforma = ODN-PRF-AAAA-NNN (ruta: ODN crea → OPP revisa → GG aprueba; venta grande: + ADG).
+       Mismo código para toda la negociación; cada versión nueva vuelve a aprobación sin gastar número. */
     const proforma = await DM.enTransaccion(null, async cx => {
       const doc = await DM.emitirRegistro(req.user, {
-        tipo: 'PRF', area: 'ODN', titulo: `Proforma – ${cli.razon_social}`, detalle: b.producto_nombre || b.tipo || null, modulo: MOD,
+        tipo: 'PRF', area: 'ODN', titulo: `Proforma – ${cli.razon_social}`, detalle: detalleVenta(cv, b), elevar_adg: cv.grande, modulo: MOD,
       }, { cli: cx, idOrigenEsCodigo: true });
       const id = doc.codigo;
       return cx.query(`
@@ -619,7 +669,7 @@ router.post('/proformas', async (req, res) => {
       Number(b.tipo_cambio) > 0 ? Number(b.tipo_cambio) : null,
       b.tipo_cambio_info ? JSON.stringify(b.tipo_cambio_info) : null,
       JSON.stringify(limpiarRequerimientos(b.requerimientos)),
-    ]).then(r => r.rows[0]);
+    ]).then(async r => { await guardarFlagsVenta(cx, id, cv); return { ...r.rows[0], bajo_minimo: cv.bajo, precio_minimo: cv.minimo, justificacion_minimo: cv.justificacion, venta_grande: cv.grande }; });
     });
 
     res.status(201).json({ proforma });
@@ -632,9 +682,15 @@ router.put('/proformas/:id', async (req, res) => {
     if (!b.cliente_id || !Array.isArray(b.items) || !b.items.length) {
       return res.status(400).json({ error: 'Falta el cliente o al menos un ítem de la cotización.' });
     }
-    const { rows: existe } = await pool.query('SELECT id FROM comercial.proformas WHERE id=$1', [req.params.id]);
+    const { rows: existe } = await pool.query('SELECT * FROM comercial.proformas WHERE id=$1', [req.params.id]);
     if (!existe.length) return res.status(404).json({ error: 'Proforma no encontrada' });
-    await DM.puedeVersionar(MOD, req.params.id); // aceptada = bloqueada
+    const registro = await DM.puedeVersionar(MOD, req.params.id); // aceptada = bloqueada
+    const calcPrevio = calcularProforma(b);
+    await controlVenta(b, calcPrevio, b.moneda || 'USD'); // precio mínimo antes de guardar
+    // Cambio de precio en una proforma registrada: se guarda la versión original para que el cambio quede como versión nueva
+    if (registro && (Number(existe[0].total) !== Number(calcPrevio.total.toFixed(2)) || JSON.stringify(existe[0].items) !== JSON.stringify(calcPrevio.items))) {
+      await asegurarVersionInicial(pool, existe[0]);
+    }
     const { rows: cliRows } = await pool.query('SELECT * FROM comercial.clientes WHERE id=$1', [b.cliente_id]);
     if (!cliRows.length) return res.status(400).json({ error: 'El cliente seleccionado no existe.' });
     const cli = cliRows[0];
@@ -668,7 +724,7 @@ router.put('/proformas/:id', async (req, res) => {
     const { rows: ult } = await pool.query('SELECT items, requerimientos, extras FROM comercial.proforma_versiones WHERE proforma_id=$1 ORDER BY version DESC LIMIT 1', [proforma.id]);
     const cambioExtras = ult.length && ult[0].extras && JSON.stringify(ult[0].extras) !== JSON.stringify(extrasDe(proforma));
     if (ult.length && (cambioExtras || JSON.stringify(ult[0].items) !== JSON.stringify(proforma.items) || JSON.stringify(ult[0].requerimientos) !== JSON.stringify(proforma.requerimientos))) {
-      const r = await crearVersionProforma(proforma.id, { items: proforma.items, requerimientos: proforma.requerimientos, descuento_pct: proforma.descuento_pct, extras: extrasDe(proforma) }, 'Editada en Proformas', autorDe(req), req.user);
+      const r = await crearVersionProforma(proforma.id, { items: proforma.items, requerimientos: proforma.requerimientos, descuento_pct: proforma.descuento_pct, extras: extrasDe(proforma), justificacion_minimo: b.justificacion_minimo }, 'Editada en Proformas', autorDe(req), req.user);
       if (r.proforma) proforma = r.proforma;
     }
     res.json({ proforma });
@@ -712,6 +768,7 @@ async function listarVersiones(db, id) {
 
 // Guarda {items, requerimientos, descuento_pct} como versión nueva y la deja activa
 async function crearVersionProforma(id, datos, nota, autor, user) {
+  const cfgVenta = await prepararVenta(); // antes de bloquear la proforma
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
@@ -727,6 +784,7 @@ async function crearVersionProforma(id, datos, nota, autor, user) {
     });
     const reqs = limpiarRequerimientos(datos.requerimientos);
     const extras = limpiarExtras(datos.extras, extrasDe(p));
+    const cv = await controlVenta({ producto_nombre: p.producto_nombre, tipo: p.tipo, tipo_cambio: p.tipo_cambio, justificacion_minimo: datos.justificacion_minimo }, calc, p.moneda, { cfg: cfgVenta, db });
     const { rows: mx } = await db.query('SELECT COALESCE(MAX(version), 0) + 1 AS n FROM comercial.proforma_versiones WHERE proforma_id=$1', [id]);
     const n = mx[0].n;
     await db.query(`
@@ -742,9 +800,11 @@ async function crearVersionProforma(id, datos, nota, autor, user) {
       WHERE id=$1 RETURNING *`,
       [id, JSON.stringify(calc.items), JSON.stringify(reqs), calc.subtotal, calc.descuentoPct, calc.descuentoMonto,
        calc.subtotalNeto, calc.igvMonto, calc.total, n, ...CAMPOS_EXTRA_VERSION.map(k => extras[k])]);
-    if (user) await DM.nuevaVersion(user, MOD, id, n, nota, { cli: db }); // mismo código, versión n
+    await guardarFlagsVenta(db, id, cv);
+    if (user) await DM.nuevaVersion(user, MOD, id, n, nota, { cli: db, elevar_adg: cv.grande }); // mismo código, versión n, vuelve a aprobación
+    if (cv.bajo) await db.query("UPDATE doc.documentos SET detalle = $3 WHERE modulo = $1 AND id_origen = $2", [MOD, id, detalleVenta(cv, p)]);
     await db.query('COMMIT');
-    return { proforma: act[0], versiones: await listarVersiones(pool, id) };
+    return { proforma: { ...act[0], bajo_minimo: cv.bajo, precio_minimo: cv.minimo, justificacion_minimo: cv.justificacion, venta_grande: cv.grande }, versiones: await listarVersiones(pool, id) };
   } catch (e) {
     await db.query('ROLLBACK').catch(() => {});
     throw e;
