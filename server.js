@@ -28,6 +28,7 @@ const sitiosRoutes      = require('./src/routes/sitios');
 const estadoRoutes      = require('./src/routes/estado');
 const areasRoutes       = require('./src/routes/areas');
 const documentosRouter  = require('./src/routes/documentos');
+const proyectoFlujoRouter = require('./src/routes/proyectoFlujo');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -134,6 +135,7 @@ app.use('/api/opp',        oppRouter);
 app.use('/api/divisas',    divisasRouter);
 app.use('/api/odacl',      odaclRouter);
 app.use('/api/documentos', documentosRouter); // registro central de documentos (CODIFICACION.md)
+app.use('/api/proyecto-flujo', proyectoFlujoRouter); // etapas y puertas de cada proyecto (Flujo de Proyectos QUBIRA)
 app.use('/api/public/constancias', constanciasPublicRouter);
 app.use('/api/public/cases',       casesPublicRouter);
 app.use('/api/ocm',               ocmRoutes.router);

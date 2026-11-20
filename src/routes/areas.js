@@ -57,6 +57,7 @@ const path = require('path');
 const { datosJerarquia } = require('../lib/jerarquia');
 const MAPA_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'jerarquia-mapa.js'), 'utf8');
 const BANDEJA_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'bandeja-docs.js'), 'utf8');
+const FLUJO_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'flujo-proyecto.js'), 'utf8');
 let cacheJer = { t: 0, d: null };
 publico.get('/jerarquia', async (req, res) => {
   try {
@@ -73,6 +74,11 @@ publico.get('/jerarquia.js', (req, res) => {
 publico.get('/bandeja.js', (req, res) => {
   res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
   res.send(BANDEJA_JS);
+});
+// Panel del flujo de proyectos (etapas y puertas) para ADG, GG, OTI, OPP, ODACL, DST y OCOS
+publico.get('/flujo-proyecto.js', (req, res) => {
+  res.set({ 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=600' });
+  res.send(FLUJO_JS);
 });
 
 module.exports = { publico };

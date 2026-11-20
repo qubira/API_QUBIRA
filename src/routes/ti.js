@@ -10,6 +10,7 @@ const { getEmployeeArea } = require('../lib/employeeArea');
 const { requireModuleAccess } = require('../lib/moduleAccess');
 const DM = require('../lib/docModulo'); // códigos del registro de documentos (CODIFICACION.md)
 const { infoCargo } = require('../lib/jerarquia');
+const FLUJO = require('../lib/proyectoFlujo'); // etapas y puertas del proyecto
 
 const router = express.Router();
 router.use(requireAuth);
@@ -571,6 +572,11 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
     if (!name || !client) return res.status(400).json({ error: 'Nombre y cliente son requeridos' });
 
     const show_to_comercial_val = show_to_comercial === true || show_to_comercial === 'true';
+    // Nada se vende sin pasar por el flujo: ODN lo ve recién cuando ADG lo libera
+    if (show_to_comercial_val) return res.status(409).json({ error: 'Un proyecto nuevo se muestra a ODN recién cuando ADG lo libera (etapa Liberación). Desmarca «Mostrar a Comercial».' });
+    const rutaFlujo = req.body.ruta_flujo === 'B' ? 'B' : 'A';
+    const contratoFlujo = String(req.body.contrato_codigo || '').trim().toUpperCase().slice(0, 40) || null;
+    await FLUJO.asegurarFlujo();
     const show_on_web_val = show_on_web === true || show_on_web === 'true';
     const web_order_val = (web_order === undefined || web_order === '') ? 0 : parseInt(web_order, 10);
     const commercial_price_val = (commercial_price === undefined || commercial_price === '') ? null : Number(commercial_price);
@@ -602,6 +608,9 @@ router.post('/projects', upload.single('logo_file'), async (req, res) => {
         show_to_comercial_val, commercial_offer_type || null, commercial_price_val, commercial_price_currency || null, commercial_notes || null,
         show_on_web_val, web_metric || '100%', web_tagline || null, web_description || null, web_order_val]
     );
+    await cx.query('UPDATE ti.projects SET flujo_ruta = $2, flujo_etapa = $3, contrato_codigo = $4 WHERE id = $1', [id, rutaFlujo, rutaFlujo === 'B' ? 'venta' : 'evaluacion', contratoFlujo]);
+    await cx.query("INSERT INTO ti.proyecto_flujo_hist (project_id, etapa, a_etapa, accion, usuario, usuario_nombre, comentario) VALUES ($1, NULL, $2, 'CREA', $3, $4, $5)",
+      [id, rutaFlujo === 'B' ? 'venta' : 'evaluacion', req.user.username, [req.user.nombre, req.user.apellidos].filter(Boolean).join(' ') || req.user.username, rutaFlujo === 'B' ? 'Ruta B: proyecto para un cliente' : 'Ruta A: producto propio']);
     });
     await logActivity(id, req.user.id, 'created', `Proyecto "${name}" (${code}) creado por ${req.user.nombre || req.user.username}`);
     res.status(201).json({ id, code, name });
@@ -634,6 +643,7 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
       } else if (status === 'completed') {
         if (!AREAS_DIRECCION.includes(myArea) && !privileged) return res.status(403).json({ error: 'Solo ADG o GG pueden aprobar y completar un proyecto' });
         if (old.status !== 'finished_by_ti') return res.status(400).json({ error: 'El proyecto todavía no fue marcado como finalizado por OTI' });
+        if (old.flujo_etapa && FLUJO.ANTES_DE_AUDITAR.includes(old.flujo_etapa)) return res.status(409).json({ error: 'El proyecto todavía no pasó las auditorías finales (seguridad, calidad y reglas de negocio) en su flujo.' });
       }
     }
 
@@ -647,6 +657,9 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
 
     const show_to_comercial_val = (show_to_comercial === undefined || show_to_comercial === '')
       ? null : (show_to_comercial === true || show_to_comercial === 'true');
+    if (show_to_comercial_val && !old.show_to_comercial && old.flujo_etapa && !['liberacion', 'postventa'].includes(old.flujo_etapa)) {
+      return res.status(409).json({ error: 'Este proyecto todavía no está liberado: ODN lo ve cuando ADG aprueba la puerta de Liberación en el flujo del proyecto.' });
+    }
     const show_on_web_val = (show_on_web === undefined || show_on_web === '')
       ? null : (show_on_web === true || show_on_web === 'true');
     const web_order_val = (web_order === undefined || web_order === '') ? null : parseInt(web_order, 10);
@@ -750,8 +763,10 @@ router.put('/projects/:id', upload.single('logo_file'), async (req, res) => {
 router.post('/projects/:id/claim', async (req, res) => {
   try {
     if (!(await requireArea(req, res, 'TI'))) return;
-    const { rows } = await pool.query('SELECT status, name FROM ti.projects WHERE id = $1', [req.params.id]);
+    await FLUJO.asegurarFlujo();
+    const { rows } = await pool.query('SELECT status, name, flujo_etapa FROM ti.projects WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Proyecto no encontrado' });
+    if (FLUJO.ANTES_DE_ABRIR.includes(rows[0].flujo_etapa)) return res.status(409).json({ error: 'OTI toma el proyecto cuando GG aprueba su apertura en el flujo.' });
     if (rows[0].status !== 'pending') return res.status(400).json({ error: 'Este proyecto ya fue reclamado o no está pendiente' });
 
     await pool.query(
