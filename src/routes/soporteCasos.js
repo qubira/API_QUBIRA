@@ -13,6 +13,14 @@
    ============================================================ */
 const { pool } = require('../db');
 const DM = require('../lib/docModulo');
+const C = require('../lib/codificacion');
+
+/* Niveles de soporte (Flujo de Proyectos QUBIRA, fase 5): el caso sube en orden
+   OCOS N1 → N2 → N3 → OTI (error de fondo). Un incidente de seguridad salta directo a
+   DST desde cualquier nivel (y avisa a ODACL si hubo datos personales). Nivel y área van
+   en columnas propias: el panel guarda el caso completo y no debe poder pisarlos. */
+const NIVEL = { 1: 'OCOS N1 · mesa de ayuda', 2: 'OCOS N2 · soporte técnico', 3: 'OCOS N3 · especialista', 4: 'OTI · error de fondo' };
+const COLS_NIVEL = ['nivel', 'area_actual', 'seguridad', 'datos_personales', 'escalamiento'];
 
 let listo = null;
 function asegurar() {
@@ -28,7 +36,12 @@ function asegurar() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
-    CREATE INDEX IF NOT EXISTS soporte_casos_creado_ix ON soporte.casos (created_at DESC);`).catch(e => { listo = null; throw e; });
+    CREATE INDEX IF NOT EXISTS soporte_casos_creado_ix ON soporte.casos (created_at DESC);
+    ALTER TABLE soporte.casos ADD COLUMN IF NOT EXISTS nivel INT NOT NULL DEFAULT 1;
+    ALTER TABLE soporte.casos ADD COLUMN IF NOT EXISTS area_actual TEXT NOT NULL DEFAULT 'OCOS';
+    ALTER TABLE soporte.casos ADD COLUMN IF NOT EXISTS seguridad BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE soporte.casos ADD COLUMN IF NOT EXISTS datos_personales BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE soporte.casos ADD COLUMN IF NOT EXISTS escalamiento JSONB NOT NULL DEFAULT '[]'::jsonb;`).catch(e => { listo = null; throw e; });
   return listo;
 }
 
@@ -58,6 +71,7 @@ function limpiarCaso(c) {
   const { imagenes, ...resto } = c || {};
   const d = sanear(resto);
   delete d.id; delete d.codigoAnterior; delete d.sinEnviar;
+  COLS_NIVEL.forEach(k => { delete d[k]; }); delete d.areaActual; delete d.datosPersonales;
   // Las imágenes van como data-URL (capturas): solo imágenes reales, con tope razonable
   d.imagenes = (Array.isArray(imagenes) ? imagenes : []).filter(i => i && typeof i === 'object').slice(0, 10).map(i => {
     const type = /^[a-z]+\/[a-z0-9.+-]{1,60}$/i.test(String(i.type || '')) ? String(i.type) : 'application/octet-stream';
@@ -72,7 +86,11 @@ function limpiarCaso(c) {
   if (!Array.isArray(d.historial)) d.historial = [];
   return d;
 }
-const salida = r => ({ ...r.datos, id: r.codigo, codigoAnterior: r.codigo_local || null, estado: r.datos.estado || r.estado });
+const salida = r => ({ ...r.datos, id: r.codigo, codigoAnterior: r.codigo_local || null, estado: r.datos.estado || r.estado,
+  nivel: r.nivel || 1, nivelNombre: r.seguridad && r.area_actual === 'DST' ? 'DST · incidente de seguridad' : (NIVEL[r.nivel] || NIVEL[1]),
+  areaActual: r.area_actual || 'OCOS', seguridad: !!r.seguridad, datosPersonales: !!r.datos_personales, escalamiento: r.escalamiento || [] });
+const entrada = (quien, accion, de, a, comentario, extra = {}) => ({ fecha: new Date().toISOString(), accion, de, a, usuario: quien.nombre, area: quien.sigla, comentario: texto(comentario || '').slice(0, 2000), ...extra });
+const esDireccion = q => q.esADG || q.sigla === 'GG';
 
 async function emitirCaso(user, cx, c) {
   const titulo = String(c.titulo || c.tipoCaso || 'Caso de soporte').slice(0, 300);
@@ -82,7 +100,7 @@ async function emitirCaso(user, cx, c) {
   }, { cli: cx, idOrigenEsCodigo: true })).codigo;
 }
 
-module.exports = function montar(router) {
+function montar(router) {
   router.use('/casos', (req, res, next) => { asegurar().then(() => next()).catch(next); });
 
   router.get('/casos', async (req, res) => {
@@ -123,6 +141,56 @@ module.exports = function montar(router) {
     } catch (e) { DM.responder(res, e, '[SOPORTE] actualizar caso:'); }
   });
 
+  /* Escalar: N1 → N2 → N3 (cualquier persona de OCOS) y N3 → OTI (Especialista N3, N6 o superior) */
+  router.post('/casos/:codigo/escalar', async (req, res) => {
+    try {
+      const quien = await C.quienEs(req.user);
+      const comentario = String((req.body || {}).comentario || '').trim();
+      if (!comentario) return res.status(400).json({ ok: false, error: 'Escribe qué se intentó y por qué sube de nivel.' });
+      if (!(quien.sigla === 'OCOS' || esDireccion(quien))) return res.status(403).json({ ok: false, error: 'Escala casos el personal de OCOS.' });
+      const out = await DM.enTransaccion(null, async cx => {
+        const { rows } = await cx.query('SELECT * FROM soporte.casos WHERE codigo = $1 FOR UPDATE', [req.params.codigo]);
+        if (!rows.length) throw new DM.ErrorModulo(404, 'Caso no encontrado');
+        const c = rows[0];
+        if (c.area_actual !== 'OCOS') throw new DM.ErrorModulo(409, `El caso está en ${c.area_actual}: espera a que lo devuelva.`);
+        if (CERRADOS.includes(c.estado)) throw new DM.ErrorModulo(409, 'El caso está cerrado: reábrelo para escalarlo.');
+        let nivel = c.nivel || 1, area = 'OCOS';
+        if (nivel < 3) nivel += 1;
+        else {
+          if (!(esDireccion(quien) || (quien.sigla === 'OCOS' && quien.nivel && quien.nivel <= 6))) throw new DM.ErrorModulo(403, 'A OTI lo escala el Especialista de Soporte Nivel 3 (N6 o superior) de OCOS.');
+          nivel = 4; area = 'OTI';
+        }
+        const esc = [...(c.escalamiento || []), entrada(quien, 'ESCALA', NIVEL[c.nivel || 1], NIVEL[nivel], comentario, { a_area: area })];
+        const { rows: [act] } = await cx.query('UPDATE soporte.casos SET nivel = $2, area_actual = $3, escalamiento = $4::jsonb, updated_at = NOW() WHERE codigo = $1 RETURNING *', [c.codigo, nivel, area, JSON.stringify(esc)]);
+        return act;
+      });
+      res.json({ ok: true, caso: salida(out) });
+    } catch (e) { DM.responder(res, e, '[SOPORTE] escalar:'); }
+  });
+
+  /* Incidente de seguridad: salta directo a DST (desde cualquier nivel); ODACL lo ve si hubo datos personales */
+  router.post('/casos/:codigo/seguridad', async (req, res) => {
+    try {
+      const quien = await C.quienEs(req.user);
+      const b = req.body || {};
+      const comentario = String(b.comentario || '').trim();
+      if (!comentario) return res.status(400).json({ ok: false, error: 'Describe el incidente: qué pasó y qué se vio comprometido.' });
+      if (!(quien.sigla === 'OCOS' || esDireccion(quien))) return res.status(403).json({ ok: false, error: 'Lo reporta el personal de OCOS.' });
+      const out = await DM.enTransaccion(null, async cx => {
+        const { rows } = await cx.query('SELECT * FROM soporte.casos WHERE codigo = $1 FOR UPDATE', [req.params.codigo]);
+        if (!rows.length) throw new DM.ErrorModulo(404, 'Caso no encontrado');
+        const c = rows[0];
+        if (c.area_actual === 'DST') throw new DM.ErrorModulo(409, 'El incidente ya está en DST.');
+        const dp = !!b.datos_personales;
+        const avisos = ['DST', 'ADG (Director General)'].concat(dp ? ['ODACL (Oficial de Protección de Datos)'] : []);
+        const esc = [...(c.escalamiento || []), entrada(quien, 'INCIDENTE DE SEGURIDAD', c.area_actual === 'OTI' ? NIVEL[4] : NIVEL[c.nivel || 1], 'DST', comentario, { a_area: 'DST', avisos, datos_personales: dp })];
+        const { rows: [act] } = await cx.query('UPDATE soporte.casos SET area_actual = \'DST\', seguridad = true, datos_personales = (datos_personales OR $2), escalamiento = $3::jsonb, updated_at = NOW() WHERE codigo = $1 RETURNING *', [c.codigo, dp, JSON.stringify(esc)]);
+        return act;
+      });
+      res.json({ ok: true, caso: salida(out) });
+    } catch (e) { DM.responder(res, e, '[SOPORTE] incidente:'); }
+  });
+
   router.delete('/casos/:codigo', (req, res) => {
     res.status(409).json({ ok: false, error: 'Un caso no se elimina: se cierra (y se puede reabrir).' });
   });
@@ -152,4 +220,6 @@ module.exports = function montar(router) {
       res.json({ ok: true, enviados: resultado });
     } catch (e) { DM.responder(res, e, '[SOPORTE] enviar casos:'); }
   });
-};
+}
+module.exports = montar;
+module.exports.util = { asegurar, salida, entrada, NIVEL, CERRADOS, esDireccion };

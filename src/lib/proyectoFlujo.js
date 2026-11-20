@@ -40,6 +40,12 @@ const DEVUELVEN = [['GG', 2], ['OTI', 5], ['DST', 6], ['ODACL', 6]]; // y ADG
 const DEVOLVIBLES = ['comision', 'especialistas', 'auditorias'];
 const EDITAN_RIESGOS = [['GG', 6], ['DST', 6], ['OPP', 6], ['ODACL', 6], ['OTI', 5]];
 const VEN_FLUJO = ['ADG', 'GG', 'OTI', 'OPP', 'ODACL', 'DST', 'OCOS', 'ODN'];
+/* Traspaso de OTI a OCOS: OTI entrega manual, accesos y guía de soporte; OCOS lo recibe.
+   Se hace después de las auditorías y es requisito de Liberación (Ruta A) y de Entrega. */
+const ETAPAS_TRASPASO = ['precio', 'liberacion', 'entrega'];
+const ENTREGAN_TRASPASO = [['OTI', 5]];
+const RECIBEN_TRASPASO = [['OCOS', 4], ['GG', 2]];
+const traspasoRecibido = p => !!(p.traspaso && p.traspaso.recibido_en);
 
 class Rechazo extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const cumple = (quien, lista) => !!quien && (quien.esADG || lista.some(([a, n]) => quien.sigla === a && quien.nivel && quien.nivel <= n));
@@ -59,6 +65,7 @@ function asegurarFlujo() {
     ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS contrato_codigo TEXT;
     ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS acta_conformidad TEXT;
     ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS riesgos JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS traspaso JSONB;
     CREATE TABLE IF NOT EXISTS ti.proyecto_flujo_hist (
       id BIGSERIAL PRIMARY KEY, project_id TEXT NOT NULL, etapa TEXT, a_etapa TEXT, accion TEXT NOT NULL,
       usuario TEXT, usuario_nombre TEXT, area TEXT, comentario TEXT, fecha TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -148,8 +155,10 @@ function requisitos(p, ctx, datos = {}) {
     }
     case 'liberacion':
       R('Precio fijado por OPP', p.opp_pricing_status === 'priced');
+      R('Traspaso de OTI a OCOS recibido: manual, accesos y guía de soporte', traspasoRecibido(p));
       break;
     case 'entrega':
+      R('Traspaso de OTI a OCOS recibido: manual, accesos y guía de soporte', traspasoRecibido(p));
       R('Acta de conformidad registrada (ODACL-FMT-03)', !!texto(datos.acta_conformidad || p.acta_conformidad));
       break;
     default: break;
@@ -188,6 +197,9 @@ async function vista(p, quien, conDetalle = true) {
     puedo_devolver: DEVOLVIBLES.includes(etapa) && cumple(quien, DEVUELVEN),
     puedo_riesgos: cumple(quien, EDITAN_RIESGOS),
     mi_area: quien.sigla || null,
+    traspaso: p.traspaso || null,
+    puedo_entregar_traspaso: ETAPAS_TRASPASO.includes(p.flujo_etapa) && !traspasoRecibido(p) && cumple(quien, ENTREGAN_TRASPASO),
+    puedo_recibir_traspaso: !!(p.traspaso && p.traspaso.entregado_en && !p.traspaso.recibido_en) && cumple(quien, RECIBEN_TRASPASO),
     puedo_costo: cumple(quien, [['OPP', 6], ['GG', 2]]),
     puedo_presupuesto: !!quien.esADG,
     puedo_exceso: cumple(quien, [['GG', 2]]),
@@ -342,6 +354,32 @@ async function riesgo(id, quien, b = {}, rid = null) {
   });
 }
 
+async function traspaso(id, quien, accion, b = {}) {
+  await asegurarFlujo();
+  return enTx(async cli => {
+    const p = await cargar(id, cli, true);
+    const t = p.traspaso || {};
+    if (accion === 'entregar') {
+      if (!ETAPAS_TRASPASO.includes(p.flujo_etapa)) throw new Rechazo(409, 'El traspaso a OCOS se hace después de las auditorías finales');
+      if (!cumple(quien, ENTREGAN_TRASPASO)) throw new Rechazo(403, 'El traspaso lo entrega OTI (Jefe de OTI, Líder Técnico o Líder de QA)');
+      if (t.recibido_en) throw new Rechazo(409, 'OCOS ya recibió el traspaso');
+      const n = { manual: texto(b.manual, 500), accesos: texto(b.accesos, 1000), guia: texto(b.guia, 500) };
+      if (!n.manual || !n.accesos || !n.guia) throw new Rechazo(400, 'Completa el manual, cómo se entregan los accesos y la guía de soporte');
+      if (/(contrase(ñ|n)a|password|clave)\s*[:=]/i.test(n.accesos)) throw new Rechazo(400, 'No escribas contraseñas aquí: indica cómo y a quién se entregan los accesos (ISO/IEC 27002, 5.17)');
+      const nuevo = { ...n, entregado_por: quien.nombre, entregado_en: new Date().toISOString(), observacion: null };
+      await cli.query('UPDATE ti.projects SET traspaso = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify(nuevo)]);
+      await anotar(cli, p, quien, 'TRASPASO ENTREGADO', { comentario: 'Manual, accesos y guía de soporte entregados a OCOS' });
+    } else if (accion === 'recibir' || accion === 'observar') {
+      if (!t.entregado_en || t.recibido_en) throw new Rechazo(409, 'No hay un traspaso pendiente de recibir');
+      if (!cumple(quien, RECIBEN_TRASPASO)) throw new Rechazo(403, 'El traspaso lo recibe OCOS (Jefe o Coordinador de Servicios al Cliente) o GG');
+      if (accion === 'observar' && !texto(b.comentario)) throw new Rechazo(400, 'Escribe qué le falta al traspaso');
+      const nuevo = accion === 'recibir' ? { ...t, recibido_por: quien.nombre, recibido_en: new Date().toISOString() } : { ...t, entregado_en: null, observacion: texto(b.comentario, 1000) };
+      await cli.query('UPDATE ti.projects SET traspaso = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify(nuevo)]);
+      await anotar(cli, p, quien, accion === 'recibir' ? 'TRASPASO RECIBIDO' : 'TRASPASO OBSERVADO', { comentario: accion === 'recibir' ? 'OCOS recibió el producto para dar soporte' : b.comentario });
+    } else throw new Rechazo(400, 'Acción no válida');
+  });
+}
+
 async function guardarConfig(quien, b = {}) {
   await asegurarFlujo();
   if (!(quien.esADG && quien.nivel <= 2)) throw new Rechazo(403, 'La configuración del flujo la cambia ADG (N1–N2)');
@@ -355,4 +393,4 @@ async function guardarConfig(quien, b = {}) {
 const ANTES_DE_ABRIR = ['evaluacion', 'venta', 'apertura'];
 const ANTES_DE_AUDITAR = ['evaluacion', 'venta', 'apertura', 'desarrollo', 'comision', 'especialistas', 'auditorias'];
 
-module.exports = { ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };
+module.exports = { traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };

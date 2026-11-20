@@ -39,6 +39,7 @@ router.post('/:id/devolver', manejar(async (req, res, quien) => { await F.devolv
 router.post('/:id/incorporar', manejar(async (req, res, quien) => { await F.incorporar(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
 router.put('/:id/costos', manejar(async (req, res, quien) => { await F.costos(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/exceso', manejar(async (req, res, quien) => { await F.exceso(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
+router.post('/:id/traspaso/:accion', manejar(async (req, res, quien) => { await F.traspaso(req.params.id, quien, req.params.accion, req.body || {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/riesgos', manejar(async (req, res, quien) => { await F.riesgo(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
 router.put('/:id/riesgos/:rid', manejar(async (req, res, quien) => { await F.riesgo(req.params.id, quien, req.body || {}, req.params.rid); await detalle(res, req.params.id, quien); }));
 

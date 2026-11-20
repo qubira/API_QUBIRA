@@ -168,6 +168,23 @@
       '<p class="qbf-sub">Las actas se crean en la sección Calidad (ADG, GG u OTI) y se aprueban en «Pendientes» del área que audita.</p></section>';
   }
 
+  function traspaso(p) {
+    var t = p.traspaso;
+    if (!t && !p.puedo_entregar_traspaso) return '';
+    var estado = t && t.recibido_en ? '<span class="qbf-chip" style="color:var(--f-ok);border-color:var(--f-ok)">Recibido por OCOS</span>' : t && t.entregado_en ? '<span class="qbf-chip tt">Entregado, falta que OCOS lo reciba</span>' : '<span class="qbf-chip al">Pendiente de OTI</span>';
+    return '<section class="qbf-caja"><div class="qbf-fila" style="justify-content:space-between"><h4>Traspaso de OTI a OCOS</h4>' + estado + '</div>' +
+      '<p class="qbf-sub">Sin el traspaso recibido no se libera ni se entrega el producto: OCOS necesita el manual, los accesos y la guía para dar soporte.</p>' +
+      (t && t.observacion ? '<p class="qbf-err">Observación de OCOS: ' + esc(t.observacion) + '</p>' : '') +
+      (t && t.entregado_en ? '<ul class="qbf-req"><li><b>Manual:</b>&nbsp;' + esc(t.manual) + '</li><li><b>Accesos:</b>&nbsp;' + esc(t.accesos) + '</li><li><b>Guía de soporte:</b>&nbsp;' + esc(t.guia) + '</li></ul>' +
+        '<p class="qbf-sub">Entregó ' + esc(t.entregado_por || '') + ' · ' + esc(fecha(t.entregado_en)) + (t.recibido_en ? ' · recibió ' + esc(t.recibido_por || '') + ' · ' + esc(fecha(t.recibido_en)) : '') + '</p>' : '') +
+      (p.puedo_entregar_traspaso && !(t && t.entregado_en) ? '<div class="qbf-form"><label style="grid-column:1/-1">Manual de usuario (enlace o ubicación)<input data-c="t_manual" value="' + esc(t && t.manual || '') + '"></label>' +
+        '<label style="grid-column:1/-1">Accesos: cómo y a quién se entregan (no escribas contraseñas)<input data-c="t_accesos" value="' + esc(t && t.accesos || '') + '"></label>' +
+        '<label style="grid-column:1/-1">Guía de soporte (errores conocidos, contactos de OTI)<input data-c="t_guia" value="' + esc(t && t.guia || '') + '"></label>' +
+        '<button type="button" class="qbf-b pri" data-traspaso="entregar">Entregar a OCOS</button></div>' : '') +
+      (p.puedo_recibir_traspaso ? '<label>Comentario (obligatorio si lo observas)<textarea data-c="t_com"></textarea></label><div class="qbf-fila"><button type="button" class="qbf-b pri" data-traspaso="recibir">Recibir el traspaso</button><button type="button" class="qbf-b mal" data-traspaso="observar">Observar (devolver a OTI)</button></div>' : '') +
+      '<div data-msg="traspaso"></div></section>';
+  }
+
   function riesgos(p) {
     var nivel = function (r) { var n = r.probabilidad * r.impacto; return '<span class="qbf-niv ' + (n >= 15 ? 'r' : n >= 8 ? 'm' : 'b') + '">' + n + '</span>'; };
     return '<section class="qbf-caja"><div><h4>Registro de riesgos (ISO 31000)</h4><p class="qbf-sub">Nivel = probabilidad × impacto (1 a 5). Un riesgo de nivel 15 o más, abierto y sin tratamiento, bloquea las auditorías finales.</p></div>' +
@@ -202,7 +219,7 @@
       '<div><div class="qbf-fila"><span class="qbf-cod">' + esc(p.code) + '</span>' + (p.ruta ? '<span class="qbf-chip">' + esc(RUTA[p.ruta]) + '</span>' : '') + (p.modalidad ? '<span class="qbf-chip">' + esc(MODAL[p.modalidad]) + '</span>' : '') +
         (p.status === 'paused' ? '<span class="qbf-chip al">Pausado</span>' : '') + '</div><h3>' + esc(p.name) + '</h3><p class="qbf-sub">' + esc(p.client || '') + '</p></div>' +
       (p.etapa ? '<div class="qbf-et">' + seq.map(function (k, j) { return '<span class="' + (j < i ? 'h' : j === i ? 'a' : '') + '">' + (j < i ? '✓ ' : '') + esc(NOMBRE[k]) + '</span>'; }).join('') + '</div>' + puerta(p) : incorporar(p)) +
-      '<div class="qbf-dos">' + costos(p) + actas(p) + '</div>' + riesgos(p) +
+      '<div class="qbf-dos">' + costos(p) + actas(p) + '</div>' + traspaso(p) + riesgos(p) +
       '<section class="qbf-caja"><h4>Historial</h4><ul class="qbf-hist">' + (p.historial.length ? p.historial.map(function (h) {
         return '<li><b>' + esc(h.accion) + '</b> · ' + esc(h.usuario_nombre || '') + (h.area ? ' (' + esc(h.area) + ')' : '') + ' · ' + esc(fecha(h.fecha)) +
           (h.a_etapa ? ' · → ' + esc(NOMBRE[h.a_etapa] || h.a_etapa) : '') + (h.comentario ? '<div class="qbf-sub">' + esc(h.comentario) + '</div>' : '') + '</li>'; }).join('') : '<li class="qbf-sub">Sin movimientos.</li>') + '</ul></section>' +
@@ -238,6 +255,13 @@
         } else if (a === 'incorporar') {
           accion('incorporar', 'POST', '/incorporar', { ruta: v(el, '[data-c="i_ruta"]'), modalidad: v(el, '[data-c="i_mod"]') || undefined, etapa: v(el, '[data-c="i_etapa"]'), contrato_codigo: v(el, '[data-c="i_ctr"]') }, 'Proyecto incorporado al flujo.', b);
         }
+      });
+    });
+    el.querySelectorAll('[data-traspaso]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var a = b.dataset.traspaso;
+        var cuerpo = a === 'entregar' ? { manual: v(el, '[data-c="t_manual"]'), accesos: v(el, '[data-c="t_accesos"]'), guia: v(el, '[data-c="t_guia"]') } : { comentario: v(el, '[data-c="t_com"]') };
+        accion('traspaso', 'POST', '/traspaso/' + a, cuerpo, a === 'entregar' ? 'Traspaso entregado a OCOS.' : a === 'recibir' ? 'Traspaso recibido.' : 'Traspaso observado: vuelve a OTI.', b);
       });
     });
     el.querySelectorAll('[data-exceso]').forEach(function (b) {
