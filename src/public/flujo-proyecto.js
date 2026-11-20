@@ -131,11 +131,13 @@
       '<label>Presupuesto máximo<input data-c="presupuesto_max" type="number" min="0" step="0.01" value="' + esc(p.presupuesto_max || '') + '"></label>';
     if (p.etapa === 'venta') campos = '<label>Código del contrato<input data-c="contrato_codigo" placeholder="ODN-CTR-AAAA-NNN" value="' + esc(p.contrato_codigo || '') + '"></label>';
     if (p.etapa === 'apertura') campos = '<label>Plazo de entrega<input data-c="end_date" type="date" value="' + esc(String(p.end_date || '').slice(0, 10)) + '"></label>';
-    if (p.etapa === 'entrega') campos = '<label>Acta de conformidad (código o referencia)<input data-c="acta_conformidad" placeholder="ODACL-FMT-03 firmada el …" value="' + esc(p.acta_conformidad || '') + '"></label>';
+    if (p.etapa === 'entrega') campos = '<label>Acta de conformidad (código o referencia)<input data-c="acta_conformidad" placeholder="ODACL-FMT-03 firmada el …" value="' + esc(p.acta_conformidad || '') + '"></label>' +
+      (p.puedo_acta ? '<label>Archivo del acta firmada (PDF, PNG o JPG, máx. 10 MB)<input data-c="acta_archivo" type="file" accept="application/pdf,image/png,image/jpeg"></label><button type="button" class="qbf-b" data-subir-acta="1">Subir archivo</button>' : '');
     var faltan = p.requisitos.filter(function (r) { return !r.ok; }).length;
     return '<section class="qbf-caja"><div><h4>Puerta actual: ' + esc(NOMBRE[p.etapa]) + (sig ? ' → ' + esc(NOMBRE[sig]) : '') + '</h4>' +
       (p.pendiente ? '<p class="qbf-sub">La aprueba: ' + esc(p.pendiente) + '.</p>' : '<p class="qbf-sub">Etapa final del flujo.</p>') +
       (p.titular ? '<p class="qbf-sub">Titular: <b>' + esc(p.titular.cargo) + '</b>' + (p.titular.cubierto ? '' : ' (cargo sin persona asignada' + (p.titular.suplente ? '; mientras se cubre actúa: <b>' + esc(p.titular.suplente) + '</b>' : '; actúa quien corresponda por área y nivel') + ')') + '</p>' : '') + '</div>' +
+      (p.acta_archivo ? '<p class="qbf-sub">Acta firmada: ' + esc(p.acta_archivo.nombre) + ' · subió ' + esc(p.acta_archivo.subido_por || '') + ' <button type="button" class="qbf-b" data-ver-acta="1">Ver acta</button></p>' : '') +
       (p.requisitos.length ? '<ul class="qbf-req">' + p.requisitos.map(function (r) { return '<li><span class="' + (r.ok ? 's' : 'n') + '">' + (r.ok ? '✓' : '✗') + '</span>' + esc(r.texto) + '</li>'; }).join('') + '</ul>' : '') +
       (sig && (p.puedo_aprobar || p.puedo_devolver) ? (campos ? '<div class="qbf-form">' + campos + '</div>' : '') +
         '<label>Comentario' + (p.etapa === 'especialistas' ? ' (resumen de la reunión)' : '') + '<textarea data-c="comentario"></textarea></label>' +
@@ -186,6 +188,78 @@
       '<div data-msg="traspaso"></div></section>';
   }
 
+  /* ─── Comisión de prueba y reunión de especialistas ─── */
+  var AREAS_P = ['OCOS', 'ODN', 'OPP', 'ODACL', 'DST', 'OTI', 'GG', 'OCM', 'ORH', 'ADG', 'USUARIA'];
+  var NOMBRE_AREA = function (a) { return a === 'USUARIA' ? 'Área usuaria' : a; };
+  function filaPersona(x, conRes) {
+    return '<div class="qbf-form" data-fila="1" style="margin-bottom:6px"><label>Área<select data-f="area">' + AREAS_P.map(function (a) { return '<option value="' + a + '"' + (x.area === a ? ' selected' : '') + '>' + NOMBRE_AREA(a) + '</option>'; }).join('') + '</select></label>' +
+      '<label>Nombre<input data-f="nombre" value="' + esc(x.nombre || '') + '"></label><label>Cargo<input data-f="cargo" value="' + esc(x.cargo || '') + '"></label>' +
+      (conRes ? '<label>Resultado<select data-f="resultado"><option value="conforme"' + (x.resultado === 'observaciones' ? '' : ' selected') + '>Conforme</option><option value="observaciones"' + (x.resultado === 'observaciones' ? ' selected' : '') + '>Con observaciones</option></select></label><label>Comentario<input data-f="comentario" value="' + esc(x.comentario || '') + '"></label>' : '') + '</div>';
+  }
+  function personas(clave, lista, base, conRes) {
+    var filas = lista && lista.length ? lista : base.map(function (a) { return { area: a }; });
+    return '<div data-pers="' + clave + '">' + filas.map(function (x) { return filaPersona(x, conRes); }).join('') + '</div><button type="button" class="qbf-b" data-mas="' + clave + '" data-res="' + (conRes ? 1 : 0) + '">+ Agregar persona</button>';
+  }
+  function leerPersonas(el, clave) {
+    return [].slice.call(el.querySelectorAll('[data-pers="' + clave + '"] [data-fila]')).map(function (fl) {
+      var o = {}; fl.querySelectorAll('[data-f]').forEach(function (i) { o[i.dataset.f] = i.value; }); return o; });
+  }
+  function listaPersonas(lista) {
+    return '<ul class="qbf-req">' + lista.map(function (x) { return '<li><b>' + esc(NOMBRE_AREA(x.area)) + ':</b>&nbsp;' + esc(x.nombre) + (x.cargo ? ' · ' + esc(x.cargo) : '') + (x.resultado ? ' · ' + (x.resultado === 'conforme' ? 'conforme' : 'con observaciones') : '') + (x.comentario ? ' — ' + esc(x.comentario) : '') + '</li>'; }).join('') + '</ul>';
+  }
+  function comision(p) {
+    if (p.etapa !== 'comision' && !p.comision) return '';
+    var c = p.comision || {}, base = ['OCOS', 'ODN', 'OPP', 'ODACL', 'DST'].concat(p.modalidad === 'interno' ? ['USUARIA'] : []);
+    return '<section class="qbf-caja"><div><h4>Comisión de prueba</h4><p class="qbf-sub">Un representante de OCOS, ODN, OPP, ODACL y DST' + (p.modalidad === 'interno' ? ' y del área usuaria' : '') + ', designado por su jefe para este proyecto. OCM y ORH, si el producto los toca. Prueban con datos anonimizados.</p></div>' +
+      (c.integrantes ? listaPersonas(c.integrantes) + '<p class="qbf-sub">Registró ' + esc(c.registrado_por || '') + ' · ' + esc(fecha(c.fecha)) + '</p>' : '') +
+      (p.puedo_comision ? personas('comision', c.integrantes, base, true) + '<div><button type="button" class="qbf-b pri" data-guardar="comision">Guardar integrantes</button></div>' : '') +
+      '<div data-msg="comision"></div></section>';
+  }
+  function reunion(p) {
+    if (p.etapa !== 'especialistas' && !p.reunion) return '';
+    var r = p.reunion || {};
+    return '<section class="qbf-caja"><div><h4>Reunión previa de especialistas</h4><p class="qbf-sub">GG (Gestión de Calidad), ODACL (Cumplimiento), DST y OTI acuerdan qué verificará cada auditoría.</p></div>' +
+      (r.asistentes ? listaPersonas(r.asistentes) + '<p><b>Acuerdos (' + esc(r.fecha || '') + '):</b> ' + esc(r.acuerdos || '') + '</p>' : '') +
+      (p.puedo_reunion ? personas('reunion', r.asistentes, ['GG', 'ODACL', 'DST', 'OTI'], false) +
+        '<div class="qbf-form"><label>Fecha<input data-c="re_fecha" type="date" value="' + esc(r.fecha || '') + '"></label><label style="grid-column:1/-1">Acuerdos<textarea data-c="re_acuerdos">' + esc(r.acuerdos || '') + '</textarea></label></div>' +
+        '<div><button type="button" class="qbf-b pri" data-guardar="reunion">Guardar reunión</button></div>' : '') +
+      '<div data-msg="reunion"></div></section>';
+  }
+
+  /* ─── Cambios de alcance (ODACL-FMT-02) ─── */
+  var ESTADO_C = { solicitado: 'Por valorizar (OPP)', valorizado: 'Por decidir (GG)', aprobado: 'Aprobado', rechazado: 'Rechazado' };
+  function cambios(p) {
+    var lista = p.cambios || [];
+    if (!lista.length && !p.puedo_cambio_solicitar) return '';
+    return '<section class="qbf-caja"><div><h4>Cambios de alcance (ODACL-FMT-02)</h4><p class="qbf-sub">ODN u OTI lo solicitan, OPP lo valoriza y GG decide. Aprobado: suma el costo al presupuesto y los días al plazo' + (p.ruta === 'B' ? '; si cambia el precio al cliente, ODN firma una adenda' : '') + '.</p></div>' +
+      lista.map(function (c) {
+        return '<div class="qbf-caja" style="padding:12px" data-cambio="' + esc(c.id) + '"><div class="qbf-fila" style="justify-content:space-between"><b>' + esc(c.descripcion) + '</b><span class="qbf-chip' + (c.estado === 'aprobado' ? '' : c.estado === 'rechazado' ? ' al' : ' tt') + '">' + esc(ESTADO_C[c.estado] || c.estado) + '</span></div>' +
+          '<p class="qbf-sub">' + esc(c.solicitado_por || '') + ' (' + esc(c.area || '') + ') · ' + esc(fecha(c.fecha)) + (c.motivo ? ' · ' + esc(c.motivo) : '') + (c.dias ? ' · +' + esc(c.dias) + ' días' : '') +
+          (c.costo != null ? ' · costo ' + dinero(c.costo) : '') + (c.precio_cliente ? ' · precio al cliente ' + dinero(c.precio_cliente) : '') + (c.adenda ? ' · adenda ' + esc(c.adenda) : '') + (c.comentario ? ' · ' + esc(c.comentario) : '') + '</p>' +
+          (c.estado === 'solicitado' && p.puedo_cambio_valorizar ? '<div class="qbf-form"><label>Costo<input data-c="cv_costo" type="number" min="0" step="0.01"></label><label>Precio al cliente (0 si no cambia)<input data-c="cv_precio" type="number" min="0" step="0.01" value="0"></label><button type="button" class="qbf-b pri" data-cambio-acc="valorizar">Valorizar</button></div>' : '') +
+          (c.estado === 'valorizado' && p.puedo_cambio_decidir ? '<label>Comentario (obligatorio si se rechaza)<input data-c="cv_com"></label><div class="qbf-fila"><button type="button" class="qbf-b pri" data-cambio-acc="aprobar">Aprobar</button><button type="button" class="qbf-b mal" data-cambio-acc="rechazar">Rechazar</button></div>' : '') +
+          (c.estado === 'aprobado' && c.requiere_adenda && !c.adenda_aprobada && p.puedo_adenda ? '<div class="qbf-form"><label>Código de la adenda (contrato nuevo aprobado)<input data-c="cv_adenda" placeholder="ODN-CTR-AAAA-NNN"></label><button type="button" class="qbf-b pri" data-cambio-acc="adenda">Registrar adenda</button></div>' : '') +
+          '</div>';
+      }).join('') +
+      (p.puedo_cambio_solicitar ? '<div class="qbf-form"><label style="grid-column:1/-1">Cambio solicitado<input data-c="cs_desc" placeholder="Qué se agrega, quita o modifica"></label><label>Motivo<input data-c="cs_motivo"></label><label>Días adicionales<input data-c="cs_dias" type="number" min="0" value="0"></label><button type="button" class="qbf-b" data-guardar="cambio">Solicitar cambio</button></div>' : '') +
+      '<div data-msg="cambios"></div></section>';
+  }
+
+  /* ─── Facturación por etapa (Ruta B) ─── */
+  var HITO = { adelanto: 'Adelanto', saldo: 'Saldo', adenda: 'Adenda' };
+  function facturas(p) {
+    if (p.ruta !== 'B') return '';
+    var lista = p.facturas || [];
+    return '<section class="qbf-caja"><div><h4>Facturación del proyecto</h4><p class="qbf-sub">OPP registra el adelanto antes de abrir el proyecto, el saldo con la entrega y una factura por cada adenda; después, el cobro.</p></div>' +
+      (lista.length ? '<div class="qbf-tabla"><table><thead><tr><th>Hito</th><th>Factura</th><th>Monto</th><th>Fecha</th><th>Cobro</th></tr></thead><tbody>' + lista.map(function (x) {
+        return '<tr><td>' + esc(HITO[x.hito] || x.hito) + '</td><td>' + (x.sin_monto ? '<span class="qbf-sub">Sin adelanto</span>' : esc(x.numero)) + '</td><td>' + (x.sin_monto ? '—' : esc(x.moneda) + ' ' + dinero(x.monto)) + '</td><td>' + esc(x.fecha) + '</td><td>' +
+          (x.cobrada ? (x.sin_monto ? '—' : '<span class="qbf-chip" style="color:var(--f-ok);border-color:var(--f-ok)">Cobrada ' + esc(x.cobrada_en || '') + '</span>') : (p.puedo_facturar ? '<button type="button" class="qbf-b" data-cobro="' + esc(x.id) + '">Registrar cobro</button>' : '<span class="qbf-chip al">Por cobrar</span>')) + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="qbf-sub">Sin facturas registradas.</p>') +
+      (p.puedo_facturar ? '<div class="qbf-form"><label>Hito<select data-c="fa_hito"><option value="adelanto">Adelanto</option><option value="saldo">Saldo</option><option value="adenda">Adenda</option></select></label><label>N.° de factura<input data-c="fa_num" placeholder="F001-000123"></label>' +
+        '<label>Monto<input data-c="fa_monto" type="number" min="0" step="0.01"></label><label>Moneda<select data-c="fa_mon"><option>USD</option><option>PEN</option></select></label><label>Fecha<input data-c="fa_fecha" type="date"></label>' +
+        '<label style="display:flex;gap:6px;align-items:center;font-weight:500"><input type="checkbox" data-c="fa_sin"> El contrato no tiene adelanto</label><button type="button" class="qbf-b pri" data-guardar="factura">Registrar</button></div>' : '') +
+      '<div data-msg="facturas"></div></section>';
+  }
+
   function riesgos(p) {
     var nivel = function (r) { var n = r.probabilidad * r.impacto; return '<span class="qbf-niv ' + (n >= 15 ? 'r' : n >= 8 ? 'm' : 'b') + '">' + n + '</span>'; };
     return '<section class="qbf-caja"><div><h4>Registro de riesgos (ISO 31000)</h4><p class="qbf-sub">Nivel = probabilidad × impacto (1 a 5). Un riesgo de nivel 15 o más, abierto y sin tratamiento, bloquea las auditorías finales.</p></div>' +
@@ -220,7 +294,7 @@
       '<div><div class="qbf-fila"><span class="qbf-cod">' + esc(p.code) + '</span>' + (p.ruta ? '<span class="qbf-chip">' + esc(RUTA[p.ruta]) + '</span>' : '') + (p.modalidad ? '<span class="qbf-chip">' + esc(MODAL[p.modalidad]) + '</span>' : '') +
         (p.status === 'paused' ? '<span class="qbf-chip al">Pausado</span>' : '') + '</div><h3>' + esc(p.name) + '</h3><p class="qbf-sub">' + esc(p.client || '') + '</p></div>' +
       (p.etapa ? '<div class="qbf-et">' + seq.map(function (k, j) { return '<span class="' + (j < i ? 'h' : j === i ? 'a' : '') + '">' + (j < i ? '✓ ' : '') + esc(NOMBRE[k]) + '</span>'; }).join('') + '</div>' + puerta(p) : incorporar(p)) +
-      '<div class="qbf-dos">' + costos(p) + actas(p) + '</div>' + traspaso(p) + riesgos(p) +
+      comision(p) + reunion(p) + '<div class="qbf-dos">' + costos(p) + actas(p) + '</div>' + cambios(p) + facturas(p) + traspaso(p) + riesgos(p) +
       '<section class="qbf-caja"><h4>Historial</h4><ul class="qbf-hist">' + (p.historial.length ? p.historial.map(function (h) {
         return '<li><b>' + esc(h.accion) + '</b> · ' + esc(h.usuario_nombre || '') + (h.area ? ' (' + esc(h.area) + ')' : '') + ' · ' + esc(fecha(h.fecha)) +
           (h.a_etapa ? ' · → ' + esc(NOMBRE[h.a_etapa] || h.a_etapa) : '') + (h.comentario ? '<div class="qbf-sub">' + esc(h.comentario) + '</div>' : '') + '</li>'; }).join('') : '<li class="qbf-sub">Sin movimientos.</li>') + '</ul></section>' +
@@ -257,6 +331,43 @@
           accion('incorporar', 'POST', '/incorporar', { ruta: v(el, '[data-c="i_ruta"]'), modalidad: v(el, '[data-c="i_mod"]') || undefined, etapa: v(el, '[data-c="i_etapa"]'), contrato_codigo: v(el, '[data-c="i_ctr"]') }, 'Proyecto incorporado al flujo.', b);
         }
       });
+    });
+    el.querySelectorAll('[data-mas]').forEach(function (b) {
+      b.addEventListener('click', function () { var cont = el.querySelector('[data-pers="' + b.dataset.mas + '"]'); cont.insertAdjacentHTML('beforeend', filaPersona({ area: 'OCM' }, b.dataset.res === '1')); });
+    });
+    el.querySelectorAll('[data-guardar]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var g = b.dataset.guardar;
+        if (g === 'comision') accion('comision', 'POST', '/comision', { integrantes: leerPersonas(el, 'comision') }, 'Comisión guardada.', b);
+        if (g === 'reunion') accion('reunion', 'POST', '/reunion', { asistentes: leerPersonas(el, 'reunion'), acuerdos: v(el, '[data-c="re_acuerdos"]'), fecha: v(el, '[data-c="re_fecha"]') }, 'Reunión guardada.', b);
+        if (g === 'cambio') accion('cambios', 'POST', '/cambios', { descripcion: v(el, '[data-c="cs_desc"]'), motivo: v(el, '[data-c="cs_motivo"]'), dias: v(el, '[data-c="cs_dias"]') }, 'Cambio solicitado: OPP lo valoriza.', b);
+        if (g === 'factura') { var sin = el.querySelector('[data-c="fa_sin"]'); accion('facturas', 'POST', '/facturas', { hito: v(el, '[data-c="fa_hito"]'), numero: v(el, '[data-c="fa_num"]'), monto: v(el, '[data-c="fa_monto"]'), moneda: v(el, '[data-c="fa_mon"]'), fecha: v(el, '[data-c="fa_fecha"]'), sin_monto: !!(sin && sin.checked) }, 'Factura registrada.', b); }
+      });
+    });
+    el.querySelectorAll('[data-cambio-acc]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var caja = b.closest('[data-cambio]'), a = b.dataset.cambioAcc, q = function (sel) { var x = caja.querySelector(sel); return x ? x.value : ''; };
+        var cuerpo = a === 'valorizar' ? { costo: q('[data-c="cv_costo"]'), precio_cliente: q('[data-c="cv_precio"]') } : a === 'adenda' ? { codigo: q('[data-c="cv_adenda"]') } : { comentario: q('[data-c="cv_com"]') };
+        accion('cambios', 'POST', '/cambios/' + encodeURIComponent(caja.dataset.cambio) + '/' + a, cuerpo, 'Cambio de alcance actualizado.', b);
+      });
+    });
+    el.querySelectorAll('[data-cobro]').forEach(function (b) {
+      b.addEventListener('click', function () { accion('facturas', 'POST', '/facturas/' + encodeURIComponent(b.dataset.cobro) + '/cobro', {}, 'Cobro registrado.', b); });
+    });
+    var sa = el.querySelector('[data-subir-acta]');
+    if (sa) sa.addEventListener('click', function () {
+      var inp = el.querySelector('[data-c="acta_archivo"]'), fl = inp && inp.files && inp.files[0];
+      if (!fl) return msg('puerta', 'Elige el archivo del acta firmada.', false);
+      var fd = new FormData(); fd.append('archivo', fl); sa.disabled = true;
+      var t = op.token ? op.token() : null;
+      fetch(API + '/api/proyecto-flujo/' + encodeURIComponent(p.id) + '/acta-conformidad', { method: 'POST', headers: t ? { Authorization: 'Bearer ' + t } : {}, body: fd })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok || j.ok === false) throw new Error(j.error || 'No se pudo subir el archivo'); return j.data; }); })
+        .then(function (np) { pintar(el, op, np); msg('puerta', 'Acta subida.', true); })
+        .catch(function (e) { msg('puerta', e.message, false); sa.disabled = false; });
+    });
+    var va = el.querySelector('[data-ver-acta]');
+    if (va) va.addEventListener('click', function () {
+      pedir(op, 'GET', '/' + encodeURIComponent(p.id) + '/acta-conformidad').then(function (j) { window.open(j.url || j, '_blank', 'noopener'); }).catch(function (e) { msg('puerta', e.message, false); });
     });
     el.querySelectorAll('[data-traspaso]').forEach(function (b) {
       b.addEventListener('click', function () {

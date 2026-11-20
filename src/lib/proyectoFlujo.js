@@ -73,6 +73,14 @@ const ETAPAS_TRASPASO = ['precio', 'liberacion', 'entrega'];
 const ENTREGAN_TRASPASO = [['OTI', 5]];
 const RECIBEN_TRASPASO = [['OCOS', 4], ['GG', 2]];
 const traspasoRecibido = p => !!(p.traspaso && p.traspaso.recibido_en);
+/* Comisión de prueba: un representante de OCOS, ODN, OPP, ODACL y DST (y del área usuaria si es de
+   uso interno). Cada jefe designa a su representante en cada proyecto. OCM y ORH, si el producto los toca. */
+const COMISION_OBLIGATORIA = ['OCOS', 'ODN', 'OPP', 'ODACL', 'DST'];
+const REUNION_OBLIGATORIA = ['GG', 'ODACL', 'DST', 'OTI'];
+const faltanEn = (lista, obligatorias) => obligatorias.filter(a => !(lista || []).some(x => x.area === a && String(x.nombre || '').trim()));
+const cambiosPendientes = p => (p.cambios || []).filter(c => ['solicitado', 'valorizado'].includes(c.estado));
+const adendasPendientes = p => (p.cambios || []).filter(c => c.estado === 'aprobado' && c.requiere_adenda && !c.adenda_aprobada);
+const hito = (p, h) => (p.facturas || []).find(f => f.hito === h);
 
 class Rechazo extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const cumple = (quien, lista) => !!quien && (quien.esADG || lista.some(([a, n]) => quien.sigla === a && quien.nivel && quien.nivel <= n));
@@ -93,6 +101,11 @@ function asegurarFlujo() {
     ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS acta_conformidad TEXT;
     ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS riesgos JSONB NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS traspaso JSONB;
+    ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS comision JSONB;
+    ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS reunion JSONB;
+    ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS acta_conformidad_archivo JSONB;
+    ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS cambios JSONB NOT NULL DEFAULT '[]'::jsonb;
+    ALTER TABLE ti.projects ADD COLUMN IF NOT EXISTS facturas JSONB NOT NULL DEFAULT '[]'::jsonb;
     CREATE TABLE IF NOT EXISTS ti.proyecto_flujo_hist (
       id BIGSERIAL PRIMARY KEY, project_id TEXT NOT NULL, etapa TEXT, a_etapa TEXT, accion TEXT NOT NULL,
       usuario TEXT, usuario_nombre TEXT, area TEXT, comentario TEXT, fecha TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -164,22 +177,34 @@ function requisitos(p, ctx, datos = {}) {
     case 'apertura':
       R('Plazo de entrega definido', !!(datos.end_date || p.end_date));
       if (p.flujo_ruta === 'B') R('Contrato aprobado', ctx.contrato && ctx.contrato.aprobado);
+      if (p.flujo_ruta === 'B') R('Adelanto facturado por OPP (o marcado «sin adelanto»)', !!hito(p, 'adelanto'));
       break;
     case 'desarrollo':
       R('OTI tomó el proyecto', !!p.claimed_by);
       sinExceso();
       break;
-    case 'comision':
+    case 'comision': {
+      const integ = (p.comision && p.comision.integrantes) || [];
+      const falt = faltanEn(integ, COMISION_OBLIGATORIA);
+      R('Comisión con representantes de OCOS, ODN, OPP, ODACL y DST' + (falt.length ? ` (falta: ${falt.join(', ')})` : ''), !falt.length);
+      if (p.flujo_modalidad === 'interno') R('Representante del área usuaria en la comisión', integ.some(x => x.area === 'USUARIA' && String(x.nombre || '').trim()));
       R('Informe de la comisión de prueba (OTI-INF) aprobado', ctx.actas.comision && ctx.actas.comision.aprobada);
       break;
-    case 'especialistas':
-      R('Resumen de la reunión de especialistas (en el comentario)', !!texto(datos.comentario));
+    }
       break;
+    case 'especialistas': {
+      const r = p.reunion || {};
+      const falt = faltanEn(r.asistentes, REUNION_OBLIGATORIA);
+      R('Reunión registrada con GG, ODACL, DST y OTI' + (falt.length ? ` (falta: ${falt.join(', ')})` : ''), !falt.length);
+      R('Acuerdos de la reunión (qué verificará cada auditoría)', !!texto(r.acuerdos));
+      break;
+    }
     case 'auditorias':
       R('Acta de seguridad aprobada (DST)', ctx.actas.seguridad && ctx.actas.seguridad.aprobada);
       R('Acta de calidad de software aprobada (GG)', ctx.actas.calidad && ctx.actas.calidad.aprobada);
       R('Acta de reglas de negocio aprobada (ODACL)', ctx.actas.reglas && ctx.actas.reglas.aprobada);
       R('Sin riesgos altos abiertos sin tratamiento', !riesgos.some(x => x.estado === 'abierto' && (x.probabilidad * x.impacto) >= 15 && !texto(x.tratamiento)));
+      R('Sin cambios de alcance pendientes de decisión', !cambiosPendientes(p).length);
       sinExceso();
       break;
     case 'precio': {
@@ -196,6 +221,9 @@ function requisitos(p, ctx, datos = {}) {
     case 'entrega':
       R('Traspaso de OTI a OCOS recibido: manual, accesos y guía de soporte', traspasoRecibido(p));
       R('Acta de conformidad registrada (ODACL-FMT-03)', !!texto(datos.acta_conformidad || p.acta_conformidad));
+      R('Archivo del acta de conformidad firmada', !!(p.acta_conformidad_archivo && p.acta_conformidad_archivo.url));
+      R('Sin cambios de alcance pendientes de decisión', !cambiosPendientes(p).length);
+      if (p.flujo_ruta === 'B') R('Adendas de los cambios aprobados con precio, firmadas', !adendasPendientes(p).length);
       break;
     default: break;
   }
@@ -241,6 +269,16 @@ async function vista(p, quien, conDetalle = true) {
     puedo_riesgos: cumple(quien, EDITAN_RIESGOS),
     mi_area: quien.sigla || null,
     traspaso: p.traspaso || null,
+    comision: p.comision || null, reunion: p.reunion || null, cambios: p.cambios || [], facturas: p.facturas || [],
+    acta_archivo: p.acta_conformidad_archivo ? { nombre: p.acta_conformidad_archivo.nombre, subido_por: p.acta_conformidad_archivo.subido_por, fecha: p.acta_conformidad_archivo.fecha } : null,
+    puedo_comision: p.flujo_etapa === 'comision' && cumple(quien, [['OTI', 5]]),
+    puedo_reunion: p.flujo_etapa === 'especialistas' && cumple(quien, [['GG', 2]]),
+    puedo_acta: p.flujo_etapa === 'entrega' && cumple(quien, [['OCOS', 4], ['GG', 2]]),
+    puedo_cambio_solicitar: ['apertura', 'desarrollo', 'comision', 'especialistas', 'auditorias'].includes(p.flujo_etapa) && cumple(quien, [['ODN', 7], ['OTI', 5], ['GG', 2]]),
+    puedo_cambio_valorizar: cumple(quien, [['OPP', 6]]),
+    puedo_cambio_decidir: cumple(quien, [['GG', 2]]),
+    puedo_adenda: cumple(quien, [['ODN', 7], ['GG', 2]]),
+    puedo_facturar: p.flujo_ruta === 'B' && cumple(quien, [['OPP', 7]]),
     puedo_entregar_traspaso: ETAPAS_TRASPASO.includes(p.flujo_etapa) && !traspasoRecibido(p) && cumple(quien, ENTREGAN_TRASPASO),
     puedo_recibir_traspaso: !!(p.traspaso && p.traspaso.entregado_en && !p.traspaso.recibido_en) && cumple(quien, RECIBEN_TRASPASO),
     puedo_costo: cumple(quien, [['OPP', 6], ['GG', 2]]),
@@ -436,6 +474,8 @@ async function avisar(tipo, id, quien, extra = {}) {
   if (tipo === 'avanzar' && PUERTA[p.flujo_etapa]) {
     N.aAreas(PUERTA[p.flujo_etapa], { ...base, tipo: 'PUERTA', titulo: `${p.name}: pasó a «${ETAPAS[p.flujo_etapa].nombre}»`, texto: ETAPAS[p.flujo_etapa].quien + '. Está en «Flujo de proyectos».' }, quien.usuario);
   }
+  if (tipo === 'avanzar' && p.flujo_ruta === 'B' && p.flujo_etapa === 'apertura') N.aAreas([['OPP', 7]], { ...base, tipo: 'FACTURA', titulo: `${p.name}: factura el adelanto`, texto: 'Contrato aprobado. Registra el adelanto (o «sin adelanto») para que GG pueda abrir el proyecto.' });
+  if (tipo === 'avanzar' && p.flujo_ruta === 'B' && p.flujo_etapa === 'postventa') N.aAreas([['OPP', 7]], { ...base, tipo: 'FACTURA', titulo: `${p.name}: factura el saldo`, texto: 'El cliente firmó la conformidad. Registra la factura del saldo.' });
   if (tipo === 'avanzar' && p.flujo_etapa === 'postventa') N.aAreas([['OCOS', 4], ['GG', 2]], { ...base, tipo: 'PUERTA', titulo: `${p.name}: en postventa`, texto: 'OCOS da soporte desde ahora.' }, quien.usuario);
   if (tipo === 'devolver') N.aAreas([['OTI', 5]], { ...base, tipo: 'DEVUELVE', titulo: `${p.name}: devuelto a OTI`, texto: `${quien.nombre} (${quien.sigla || ''}): ${String(extra.comentario || '').slice(0, 300)}` }, quien.usuario);
   if (tipo === 'costos' && alertaCosto(p, await config()).activa) N.aAreas([['GG', 2], ['ADG', 3]], { ...base, tipo: 'COSTO', titulo: `${p.name}: exceso de costo`, texto: 'El costo real supera el presupuesto máximo más el margen. El proyecto no avanza hasta que GG o ADG decidan.' });
@@ -445,6 +485,136 @@ async function avisar(tipo, id, quien, extra = {}) {
     else N.aAreas([['OTI', 5]], { ...base, tipo: 'TRASPASO', titulo: `${p.name}: traspaso ${t.recibido_en ? 'recibido por OCOS' : 'observado por OCOS'}`, texto: t.observacion || 'OCOS ya puede dar soporte.' }, quien.usuario);
   }
   if (tipo === 'riesgo' && extra.alto) N.aAreas([['GG', 2]], { ...base, tipo: 'RIESGO', titulo: `${p.name}: riesgo alto registrado`, texto: String(extra.texto || '').slice(0, 300) }, quien.usuario);
+}
+
+const AREAS_FLUJO = ['ADG', 'GG', 'OTI', 'OPP', 'ODACL', 'DST', 'OCOS', 'ODN', 'OCM', 'ORH', 'USUARIA'];
+const limpiarPersonas = lista => (Array.isArray(lista) ? lista : []).slice(0, 20).map(x => ({
+  area: AREAS_FLUJO.includes(String(x.area || '').toUpperCase()) ? String(x.area).toUpperCase() : null,
+  nombre: texto(x.nombre, 120), cargo: texto(x.cargo, 120),
+  resultado: ['conforme', 'observaciones'].includes(x.resultado) ? x.resultado : undefined, comentario: texto(x.comentario, 500) || undefined,
+})).filter(x => x.area && x.nombre);
+
+/* Comisión de prueba (integrantes) y reunión de especialistas (asistentes y acuerdos) */
+async function registro(id, quien, que, b = {}) {
+  await asegurarFlujo();
+  return enTx(async cli => {
+    const p = await cargar(id, cli, true);
+    if (que === 'comision') {
+      if (p.flujo_etapa !== 'comision') throw new Rechazo(409, 'La comisión se registra en la etapa «Comisión de prueba»');
+      if (!cumple(quien, [['OTI', 5]])) throw new Rechazo(403, 'La comisión la registra el Scrum Master (OTI)');
+      const integrantes = limpiarPersonas(b.integrantes);
+      if (!integrantes.length) throw new Rechazo(400, 'Agrega al menos un integrante con su área y nombre');
+      await cli.query('UPDATE ti.projects SET comision = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify({ integrantes, registrado_por: quien.nombre, fecha: new Date().toISOString() })]);
+      await anotar(cli, p, quien, 'COMISIÓN', { comentario: integrantes.map(x => `${x.area}: ${x.nombre}${x.resultado ? ' (' + x.resultado + ')' : ''}`).join(' · ') });
+    } else {
+      if (p.flujo_etapa !== 'especialistas') throw new Rechazo(409, 'La reunión se registra en la etapa «Reunión de especialistas»');
+      if (!cumple(quien, [['GG', 2]])) throw new Rechazo(403, 'La reunión la registra el Gerente de Proyectos (GG)');
+      const asistentes = limpiarPersonas(b.asistentes);
+      const acuerdos = texto(b.acuerdos, 3000);
+      if (!asistentes.length || !acuerdos) throw new Rechazo(400, 'Registra los asistentes y los acuerdos');
+      const fecha = /^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha || '')) ? b.fecha : new Date().toISOString().slice(0, 10);
+      await cli.query('UPDATE ti.projects SET reunion = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify({ asistentes, acuerdos, fecha, registrado_por: quien.nombre })]);
+      await anotar(cli, p, quien, 'REUNIÓN', { comentario: `${fecha} · ${asistentes.map(x => x.area).join(', ')} · ${acuerdos.slice(0, 300)}` });
+    }
+  });
+}
+
+/* Acta de conformidad firmada (archivo privado en Cloudinary; se abre con enlace firmado) */
+async function guardarActa(id, quien, archivo) {
+  await asegurarFlujo();
+  return enTx(async cli => {
+    const p = await cargar(id, cli, true);
+    if (p.flujo_etapa !== 'entrega') throw new Rechazo(409, 'El acta de conformidad se sube en la etapa «Entrega»');
+    if (!cumple(quien, [['OCOS', 4], ['GG', 2]])) throw new Rechazo(403, 'El acta la sube OCOS (Especialista en Implementación o superior) o GG');
+    await cli.query('UPDATE ti.projects SET acta_conformidad_archivo = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify({ ...archivo, subido_por: quien.nombre, fecha: new Date().toISOString() })]);
+    await anotar(cli, p, quien, 'ACTA DE CONFORMIDAD', { comentario: `Archivo: ${archivo.nombre}` });
+  });
+}
+
+/* Cambios de alcance (ODACL-FMT-02): ODN u OTI lo solicitan, OPP lo valoriza y GG decide.
+   Aprobado: suma el costo al presupuesto y los días al plazo. En la Ruta B, si cambia el precio
+   al cliente, exige una adenda (contrato nuevo de ODN aprobado). */
+async function cambio(id, quien, accion, b = {}, cid = null) {
+  await asegurarFlujo();
+  let aviso = null;
+  await enTx(async cli => {
+    const p = await cargar(id, cli, true);
+    const lista = Array.isArray(p.cambios) ? p.cambios : [];
+    const c = cid ? lista.find(x => x.id === cid) : null;
+    if (cid && !c) throw new Rechazo(404, 'Cambio de alcance no encontrado');
+    const ahora = new Date().toISOString();
+    if (accion === 'solicitar') {
+      if (!['apertura', 'desarrollo', 'comision', 'especialistas', 'auditorias'].includes(p.flujo_etapa)) throw new Rechazo(409, 'Los cambios de alcance se piden entre la apertura y las auditorías');
+      if (!cumple(quien, [['ODN', 7], ['OTI', 5], ['GG', 2]])) throw new Rechazo(403, 'Un cambio de alcance lo solicitan ODN u OTI (N5+)');
+      const n = { id: crypto.randomUUID().slice(0, 8), descripcion: texto(b.descripcion, 2000), motivo: texto(b.motivo, 1000), dias: Math.max(0, parseInt(b.dias, 10) || 0),
+        estado: 'solicitado', solicitado_por: quien.nombre, area: quien.sigla, fecha: ahora };
+      if (!n.descripcion) throw new Rechazo(400, 'Describe el cambio de alcance');
+      lista.push(n); aviso = { areas: [['OPP', 6]], titulo: `${p.name}: cambio de alcance por valorizar`, texto: n.descripcion.slice(0, 200) };
+      await anotar(cli, p, quien, 'CAMBIO SOLICITADO', { comentario: n.descripcion.slice(0, 300) });
+    } else if (accion === 'valorizar') {
+      if (!cumple(quien, [['OPP', 6]])) throw new Rechazo(403, 'El cambio lo valoriza OPP (N6+)');
+      if (c.estado !== 'solicitado') throw new Rechazo(409, 'Este cambio ya fue valorizado');
+      const costo = num(b.costo), precio = num(b.precio_cliente) || 0;
+      if (!(costo >= 0)) throw new Rechazo(400, 'Indica el costo del cambio');
+      Object.assign(c, { costo, precio_cliente: precio, estado: 'valorizado', valorizado_por: quien.nombre, valorizado_en: ahora });
+      aviso = { areas: [['GG', 2]], titulo: `${p.name}: cambio de alcance por aprobar`, texto: `Costo ${costo}${precio ? ' · precio al cliente ' + precio : ''}: ${c.descripcion.slice(0, 150)}` };
+      await anotar(cli, p, quien, 'CAMBIO VALORIZADO', { comentario: `Costo ${costo} · precio al cliente ${precio}` });
+    } else if (accion === 'aprobar' || accion === 'rechazar') {
+      if (!cumple(quien, [['GG', 2]])) throw new Rechazo(403, 'El cambio lo aprueba GG');
+      if (c.estado !== 'valorizado') throw new Rechazo(409, 'El cambio debe estar valorizado por OPP antes de decidir');
+      if (accion === 'rechazar' && !texto(b.comentario)) throw new Rechazo(400, 'Escribe el motivo del rechazo');
+      Object.assign(c, { estado: accion === 'aprobar' ? 'aprobado' : 'rechazado', decidido_por: quien.nombre, decidido_en: ahora, comentario: texto(b.comentario, 1000) || undefined,
+        requiere_adenda: accion === 'aprobar' && p.flujo_ruta === 'B' && c.precio_cliente > 0 });
+      if (accion === 'aprobar') {
+        await cli.query('UPDATE ti.projects SET presupuesto_max = COALESCE(presupuesto_max, 0) + $2, end_date = CASE WHEN end_date ~ \'^\\d{4}-\\d{2}-\\d{2}\' THEN to_char(substr(end_date, 1, 10)::date + $3::int, \'YYYY-MM-DD\') ELSE end_date END WHERE id = $1', [p.id, c.costo || 0, c.dias || 0]);
+      }
+      aviso = { areas: c.requiere_adenda ? [['ODN', 3], ['OTI', 5]] : [['OTI', 5]], titulo: `${p.name}: cambio de alcance ${c.estado}`, texto: c.requiere_adenda ? 'Requiere adenda: ODN genera un contrato nuevo con el precio del cambio.' : c.descripcion.slice(0, 200) };
+      await anotar(cli, p, quien, accion === 'aprobar' ? 'CAMBIO APROBADO' : 'CAMBIO RECHAZADO', { comentario: c.descripcion.slice(0, 200) + (b.comentario ? ' · ' + b.comentario : '') });
+    } else if (accion === 'adenda') {
+      if (!cumple(quien, [['ODN', 7], ['GG', 2]])) throw new Rechazo(403, 'La adenda la registra ODN');
+      if (!c.requiere_adenda) throw new Rechazo(409, 'Este cambio no requiere adenda');
+      const codigo = texto(b.codigo, 40).toUpperCase();
+      const ctr = await contratoDe(codigo);
+      if (!ctr || !ctr.estado) throw new Rechazo(404, `No existe el contrato ${codigo}`);
+      Object.assign(c, { adenda: codigo, adenda_aprobada: ctr.aprobado });
+      if (!ctr.aprobado) throw new Rechazo(409, `La adenda ${codigo} todavía no está aprobada (${String(ctr.estado).toLowerCase()})`);
+      await anotar(cli, p, quien, 'ADENDA', { comentario: `${codigo} para: ${c.descripcion.slice(0, 150)}` });
+    } else throw new Rechazo(400, 'Acción no válida');
+    await cli.query('UPDATE ti.projects SET cambios = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify(lista)]);
+    if (aviso) aviso.ref = p.code;
+  });
+  if (aviso) N.aAreas(aviso.areas, { titulo: aviso.titulo, texto: aviso.texto, modulo: 'FLUJO', tipo: 'CAMBIO', referencia: aviso.ref }, quien.usuario);
+}
+
+/* Facturación por etapa (Ruta B): adelanto antes de abrir, saldo después de la entrega y una por adenda.
+   La registra OPP (Analista de Facturación, N7+); el cobro también. */
+async function factura(id, quien, accion, b = {}, fid = null) {
+  await asegurarFlujo();
+  return enTx(async cli => {
+    const p = await cargar(id, cli, true);
+    if (p.flujo_ruta !== 'B') throw new Rechazo(409, 'La facturación por etapa es de los proyectos para clientes (Ruta B)');
+    if (!cumple(quien, [['OPP', 7]])) throw new Rechazo(403, 'La facturación la registra OPP (Analista de Facturación o superior)');
+    const lista = Array.isArray(p.facturas) ? p.facturas : [];
+    if (accion === 'registrar') {
+      const h = ['adelanto', 'saldo', 'adenda'].includes(b.hito) ? b.hito : null;
+      if (!h) throw new Rechazo(400, 'Elige el hito: adelanto, saldo o adenda');
+      if (h !== 'adenda' && lista.some(f => f.hito === h)) throw new Rechazo(409, `El ${h} ya está registrado`);
+      if (h === 'saldo' && !['postventa', 'entrega'].includes(p.flujo_etapa)) throw new Rechazo(409, 'El saldo se factura con la entrega');
+      const sinMonto = !!b.sin_monto && h === 'adelanto';
+      const f = { id: crypto.randomUUID().slice(0, 8), hito: h, numero: sinMonto ? null : texto(b.numero, 40), monto: sinMonto ? 0 : num(b.monto),
+        moneda: ['USD', 'PEN'].includes(b.moneda) ? b.moneda : 'USD', fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha || '')) ? b.fecha : new Date().toISOString().slice(0, 10),
+        sin_monto: sinMonto, registrado_por: quien.nombre, cobrada: sinMonto ? true : false };
+      if (!sinMonto && (!f.numero || !(f.monto > 0))) throw new Rechazo(400, 'Indica el número de factura y el monto');
+      lista.push(f);
+      await anotar(cli, p, quien, 'FACTURA', { comentario: sinMonto ? 'Contrato sin adelanto' : `${h} · ${f.numero} · ${f.moneda} ${f.monto}` });
+    } else if (accion === 'cobro') {
+      const f = lista.find(x => x.id === fid); if (!f) throw new Rechazo(404, 'Factura no encontrada');
+      if (f.cobrada) throw new Rechazo(409, 'Esa factura ya figura como cobrada');
+      Object.assign(f, { cobrada: true, cobrada_en: /^\d{4}-\d{2}-\d{2}$/.test(String(b.fecha || '')) ? b.fecha : new Date().toISOString().slice(0, 10), cobro_por: quien.nombre });
+      await anotar(cli, p, quien, 'COBRO', { comentario: `${f.hito} · ${f.numero}` });
+    } else throw new Rechazo(400, 'Acción no válida');
+    await cli.query('UPDATE ti.projects SET facturas = $2::jsonb, updated_at = now() WHERE id = $1', [p.id, JSON.stringify(lista)]);
+  });
 }
 
 async function guardarConfig(quien, b = {}) {
@@ -460,4 +630,4 @@ async function guardarConfig(quien, b = {}) {
 const ANTES_DE_ABRIR = ['evaluacion', 'venta', 'apertura'];
 const ANTES_DE_AUDITAR = ['evaluacion', 'venta', 'apertura', 'desarrollo', 'comision', 'especialistas', 'auditorias'];
 
-module.exports = { avisar, titularPuerta, PUERTA_TITULAR, traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };
+module.exports = { registro, guardarActa, cambio, factura, avisar, titularPuerta, PUERTA_TITULAR, traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };
