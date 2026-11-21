@@ -189,6 +189,7 @@ function ensureSchema() {
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS image_url TEXT;
       ALTER TABLE ti.project_technologies ADD COLUMN IF NOT EXISTS catalog_id TEXT REFERENCES ti.technology_catalog(id);
       ALTER TABLE ti.requirements ADD COLUMN IF NOT EXISTS order_index INTEGER DEFAULT 0;
+      ALTER TABLE ti.requirements ADD COLUMN IF NOT EXISTS implementation_status TEXT;
     `).then(() => pool.query(`
       -- Numeración RF1/RNF1... por proyecto: a los requisitos que ya
       -- existían antes de esta columna (order_index=0, todos empatados)
@@ -1268,7 +1269,10 @@ router.post('/requirements/:id/move', async (req, res) => {
 
 router.put('/requirements/:id', async (req, res) => {
   try {
-    const { description, type, progress } = req.body;
+    const { description, type, progress, implementation_status } = req.body;
+    if (implementation_status !== undefined && !['operativo_maqueta', 'operativo_local', 'simulado', 'pendiente'].includes(implementation_status)) {
+      return res.status(400).json({ error: 'Estado de implementaci\u00f3n inv\u00e1lido' });
+    }
     const { rows: oldRows } = await pool.query('SELECT * FROM ti.requirements WHERE id=$1', [req.params.id]);
     if (!oldRows.length) return res.status(404).json({ error: 'Requerimiento no encontrado' });
     const old = oldRows[0];
@@ -1276,14 +1280,15 @@ router.put('/requirements/:id', async (req, res) => {
     if (description !== undefined || type !== undefined) {
       if (!(await requireArea(req, res, 'ADG'))) return;
     }
-    if (progress !== undefined && !(await isProjectResponsible(req, old.project_id))) {
-      return res.status(403).json({ error: 'Solo el responsable del proyecto puede actualizar el avance' });
+    if ((progress !== undefined || implementation_status !== undefined) && !(await isProjectResponsible(req, old.project_id))) {
+      return res.status(403).json({ error: 'No tienes permiso para actualizar el avance o el estado del requisito' });
     }
 
     const sets = []; const params = [];
     const add = (col, val) => { if (val !== undefined) { params.push(val); sets.push(`${col}=$${params.length}`); } };
     add('description', description);
     add('type', type);
+    add('implementation_status', implementation_status);
     const clampedProgress = progress !== undefined ? Math.max(0, Math.min(100, parseInt(progress) || 0)) : undefined;
     if (clampedProgress !== undefined) add('progress', clampedProgress);
     if (sets.length) {
@@ -1304,7 +1309,7 @@ router.put('/requirements/:id', async (req, res) => {
     if (clampedProgress !== undefined && clampedProgress !== old.progress) {
       await recalcProjectProgress(old.project_id);
     }
-    res.json({ message: 'Actualizado' });
+    res.json({ message: 'Actualizado', implementation_status });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
