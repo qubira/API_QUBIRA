@@ -2218,10 +2218,95 @@ function ensureInformes() {
       CREATE INDEX IF NOT EXISTS informes_estado_project_idx ON ti.informes_estado(project_id);
       CREATE INDEX IF NOT EXISTS informes_estado_estado_idx ON ti.informes_estado(estado);
       CREATE INDEX IF NOT EXISTS informes_estado_anio_idx ON ti.informes_estado(anio, numero);
+      ALTER TABLE ti.informes_estado ADD COLUMN IF NOT EXISTS siguiente_figura INTEGER NOT NULL DEFAULT 1;
+      CREATE TABLE IF NOT EXISTS ti.informe_figuras (
+        informe_id TEXT NOT NULL REFERENCES ti.informes_estado(id) ON DELETE CASCADE,
+        numero INTEGER NOT NULL,
+        leyenda TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        contenido BYTEA NOT NULL,
+        PRIMARY KEY (informe_id, numero)
+      );
     `).catch(e => { _informesListo = null; throw e; });
   }
   return _informesListo;
 }
+
+const subirFigura = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } }).single('imagen');
+
+function mimeFigura(buffer) {
+  if (buffer.subarray(0, 8).toString('hex') === '89504e470d0a1a0a') return 'image/png';
+  if (buffer.subarray(0, 3).toString('hex') === 'ffd8ff') return 'image/jpeg';
+  if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+router.get('/informes-estado/:id/figuras', async (req, res) => {
+  try {
+    await ensureInformes();
+    const { rows } = await pool.query(
+      'SELECT numero, leyenda FROM ti.informe_figuras WHERE informe_id=$1 ORDER BY numero', [req.params.id]
+    );
+    res.json(rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/informes-estado/:id/figuras', (req, res) => {
+  subirFigura(req, res, async error => {
+    if (error) return res.status(400).json({ error: 'Selecciona una imagen de hasta 5 MB.' });
+    const buffer = req.file?.buffer;
+    const mime = buffer && mimeFigura(buffer);
+    const leyenda = typeof req.body?.leyenda === 'string' ? req.body.leyenda.trim().slice(0, 300) : '';
+    if (!mime || !leyenda) return res.status(400).json({ error: 'Se requiere una imagen PNG, JPEG o WebP y su leyenda.' });
+    try {
+      await ensureInformes();
+      const { rows } = await pool.query(`
+        WITH figura AS (
+          UPDATE ti.informes_estado SET siguiente_figura=siguiente_figura+1 WHERE id=$1
+          RETURNING id, siguiente_figura-1 AS numero
+        )
+        INSERT INTO ti.informe_figuras (informe_id, numero, leyenda, mime, contenido)
+        SELECT id, numero, $2, $3, $4 FROM figura RETURNING numero, leyenda
+      `, [req.params.id, leyenda, mime, buffer]);
+      if (!rows.length) return res.status(404).json({ error: 'Informe no encontrado' });
+      res.status(201).json(rows[0]);
+    } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+});
+
+router.get('/informes-estado/:id/figuras/:numero', async (req, res) => {
+  try {
+    await ensureInformes();
+    const { rows } = await pool.query(
+      'SELECT mime, contenido FROM ti.informe_figuras WHERE informe_id=$1 AND numero::text=$2',
+      [req.params.id, req.params.numero]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Figura no encontrada' });
+    res.set('X-Content-Type-Options', 'nosniff').set('Cache-Control', 'private, no-store').type(rows[0].mime).send(rows[0].contenido);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/informes-estado/:id/figuras/:numero', async (req, res) => {
+  const leyenda = typeof req.body?.leyenda === 'string' ? req.body.leyenda.trim().slice(0, 300) : '';
+  if (!leyenda) return res.status(400).json({ error: 'Escribe una leyenda para la figura.' });
+  try {
+    await ensureInformes();
+    const { rows } = await pool.query(
+      'UPDATE ti.informe_figuras SET leyenda=$3 WHERE informe_id=$1 AND numero::text=$2 RETURNING numero, leyenda',
+      [req.params.id, req.params.numero, leyenda]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Figura no encontrada' });
+    res.json(rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.delete('/informes-estado/:id/figuras/:numero', async (req, res) => {
+  try {
+    await ensureInformes();
+    await pool.query('DELETE FROM ti.informe_figuras WHERE informe_id=$1 AND numero::text=$2', [req.params.id, req.params.numero]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 /* Generar código atómico OTI-INF-{YYYY}-{NNN} (correlativo anual) */
 async function generarCodigoInforme() {
