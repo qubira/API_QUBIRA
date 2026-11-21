@@ -42,6 +42,7 @@ router.get('/', manejar(async (req, res, quien) => {
 router.get('/:id', manejar(async (req, res, quien) => detalle(res, req.params.id, quien)));
 router.post('/:id/avanzar', manejar(async (req, res, quien) => { await F.avanzar(req.params.id, quien, req.body || {}); F.avisar('avanzar', req.params.id, quien).catch(() => {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/devolver', manejar(async (req, res, quien) => { await F.devolver(req.params.id, quien, (req.body || {}).comentario); F.avisar('devolver', req.params.id, quien, req.body || {}).catch(() => {}); await detalle(res, req.params.id, quien); }));
+router.post('/:id/retroceder', manejar(async (req, res, quien) => { await F.retroceder(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/incorporar', manejar(async (req, res, quien) => { await F.incorporar(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));
 router.put('/:id/costos', manejar(async (req, res, quien) => { await F.costos(req.params.id, quien, req.body || {}); F.avisar('costos', req.params.id, quien).catch(() => {}); await detalle(res, req.params.id, quien); }));
 router.post('/:id/exceso', manejar(async (req, res, quien) => { await F.exceso(req.params.id, quien, req.body || {}); await detalle(res, req.params.id, quien); }));

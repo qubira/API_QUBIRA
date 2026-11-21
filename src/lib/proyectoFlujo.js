@@ -268,6 +268,7 @@ async function vista(p, quien, conDetalle = true) {
     titular,
     requisitos: etapa ? requisitos(p, ctx) : [],
     puedo_devolver: DEVOLVIBLES.includes(etapa) && cumple(quien, DEVUELVEN),
+    etapas_retroceso: destinosRetroceso(p, quien).map(clave => ({ clave, nombre: ETAPAS[clave].nombre })),
     puedo_riesgos: cumple(quien, EDITAN_RIESGOS),
     mi_area: quien.sigla || null,
     traspaso: p.traspaso || null,
@@ -363,6 +364,31 @@ async function devolver(id, quien, comentario) {
     // La observación entra al backlog como una falla para el siguiente sprint
     await S.crearHistoria(id, quien, { titulo: `Corregir: ${texto(comentario, 150)}`, criterios: texto(comentario, 2000), tipo: 'falla', origen: `devuelto por ${quien.sigla || 'auditoría'}` }).catch(e => console.warn('[FLUJO] falla al backlog:', e.message));
     return r;
+  });
+}
+
+function destinosRetroceso(p, quien) {
+  if (!cumple(quien, [['GG', 2]])) return [];
+  const ruta = secuencia(p.flujo_ruta, p.flujo_modalidad);
+  const indice = ruta.indexOf(p.flujo_etapa);
+  return indice > 0 ? ruta.slice(0, indice) : [];
+}
+
+async function retroceder(id, quien, { etapa, destino, comentario }) {
+  if (!cumple(quien, [['GG', 2]])) throw new Rechazo(403, 'Solo ADG o GG pueden retroceder una etapa');
+  if (!texto(comentario)) throw new Rechazo(400, 'Escribe el motivo del retroceso');
+  await asegurarFlujo();
+  return enTx(async cli => {
+    const p = await cargar(id, cli, true);
+    if (etapa !== p.flujo_etapa) throw new Rechazo(409, 'La etapa actual cambió. Actualiza la página.');
+    if (!destinosRetroceso(p, quien).includes(destino)) throw new Rechazo(400, 'Elige una etapa anterior de la ruta del proyecto');
+    const ruta = secuencia(p.flujo_ruta, p.flujo_modalidad);
+    const liberacion = ruta.indexOf('liberacion');
+    const revocaLiberacion = liberacion >= 0 && ruta.indexOf(etapa) > liberacion && ruta.indexOf(destino) <= liberacion;
+    await cli.query(`UPDATE ti.projects SET flujo_etapa=$2,
+      show_to_comercial=CASE WHEN $3 THEN false ELSE show_to_comercial END,
+      updated_at=now() WHERE id=$1`, [id, destino, revocaLiberacion]);
+    await anotar(cli, p, quien, 'RETROCEDE', { a_etapa: destino, comentario });
   });
 }
 
@@ -636,4 +662,4 @@ async function guardarConfig(quien, b = {}) {
 const ANTES_DE_ABRIR = ['evaluacion', 'venta', 'apertura'];
 const ANTES_DE_AUDITAR = ['evaluacion', 'venta', 'apertura', 'desarrollo', 'comision', 'especialistas', 'auditorias'];
 
-module.exports = { registro, guardarActa, cambio, factura, avisar, titularPuerta, PUERTA_TITULAR, traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };
+module.exports = { registro, guardarActa, cambio, factura, avisar, titularPuerta, PUERTA_TITULAR, traspaso, ETAPAS, MODALIDADES, secuencia, asegurarFlujo, config, guardarConfig, vista, cargar, puedeVer, avanzar, devolver, retroceder, incorporar, costos, exceso, riesgo, Rechazo, C, ANTES_DE_ABRIR, ANTES_DE_AUDITAR };

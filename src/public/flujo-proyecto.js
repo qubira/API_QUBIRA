@@ -158,6 +158,12 @@
         (p.puedo_devolver ? '<button type="button" class="qbf-b mal" data-accion="devolver">Devolver a OTI</button>' : '') + '</div>' +
         (p.puedo_aprobar && faltan ? '<p class="qbf-sub">Al aprobar se vuelven a revisar los requisitos; los marcados con ✗ deben cumplirse.</p>' : '')
         : (sig ? '<p class="qbf-sub">No te toca aprobar esta puerta.</p>' : '')) +
+      (p.etapas_retroceso && p.etapas_retroceso.length ?
+        '<details><summary>Retroceder a una etapa anterior</summary><div class="qbf-form">' +
+        '<label>Etapa de destino<select data-c="retroceso_destino"><option value="">Seleccionar</option>' +
+        p.etapas_retroceso.map(function (etapa) { return '<option value="' + esc(etapa.clave) + '">' + esc(etapa.nombre) + '</option>'; }).join('') +
+        '</select></label><label>Motivo del retroceso<textarea data-c="retroceso_motivo" maxlength="2000"></textarea></label>' +
+        '<div><button type="button" class="qbf-b mal" data-accion="retroceder">Retroceder etapa</button></div></div></details>' : '') +
       '<div data-msg="puerta"></div></section>';
   }
 
@@ -331,6 +337,11 @@
           var c = { etapa: p.etapa, comentario: v(el, '[data-c="comentario"]') };
           ['modalidad', 'presupuesto_max', 'contrato_codigo', 'end_date', 'acta_conformidad'].forEach(function (k) { var x = el.querySelector('[data-c="' + k + '"]'); if (x && x.value) c[k] = x.value; });
           accion('puerta', 'POST', '/avanzar', c, 'Puerta aprobada.', b);
+        } else if (a === 'retroceder') {
+          var destino = v(el, '[data-c="retroceso_destino"]');
+          var motivo = v(el, '[data-c="retroceso_motivo"]');
+          if (!destino || !motivo.trim()) return msg('puerta', 'Selecciona una etapa anterior y escribe el motivo.', false);
+          accion('puerta', 'POST', '/retroceder', { etapa: p.etapa, destino: destino, comentario: motivo }, 'Proyecto devuelto a ' + NOMBRE[destino] + '.', b);
         } else if (a === 'devolver') {
           var com = v(el, '[data-c="comentario"]');
           if (!com.trim()) return msg('puerta', 'Escribe en el comentario qué debe corregir OTI.', false);
