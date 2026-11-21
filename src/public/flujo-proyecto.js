@@ -160,7 +160,7 @@
         : (sig ? '<p class="qbf-sub">No te toca aprobar esta puerta.</p>' : '')) +
       (p.etapas_retroceso && p.etapas_retroceso.length ?
         '<details><summary>Retroceder a una etapa anterior</summary><div class="qbf-form">' +
-        '<label>Etapa de destino<select data-c="retroceso_destino"><option value="">Seleccionar</option>' +
+        '<label>Destino<select data-c="retroceso_destino"><option value="">Seleccionar</option>' +
         p.etapas_retroceso.map(function (etapa) { return '<option value="' + esc(etapa.clave) + '">' + esc(etapa.nombre) + '</option>'; }).join('') +
         '</select></label><label>Motivo del retroceso<textarea data-c="retroceso_motivo" maxlength="2000"></textarea></label>' +
         '<div><button type="button" class="qbf-b mal" data-accion="retroceder">Retroceder etapa</button></div></div></details>' : '') +
@@ -298,7 +298,7 @@
   }
 
   function incorporar(p) {
-    return '<section class="qbf-caja"><div><h4>Proyecto anterior al flujo</h4><p class="qbf-sub">Se creó antes de las etapas y puertas. ADG o GG lo incorporan indicando su ruta y la etapa en la que está hoy.</p></div>' +
+    return '<section class="qbf-caja"><div><h4>Proyecto anterior al flujo</h4><p class="qbf-sub">El proyecto está fuera del flujo. ADG o GG pueden incorporarlo eligiendo la ruta y la etapa de inicio.</p></div>' +
       (p.puedo_incorporar ? '<div class="qbf-form"><label>Ruta<select data-c="i_ruta"><option value="A">Ruta A · producto propio</option><option value="B">Ruta B · para un cliente</option></select></label>' +
         '<label>Modalidad<select data-c="i_mod"><option value="">Por definir</option>' + ['venta', 'alquiler', 'ambos', 'interno'].map(function (m) { return '<option value="' + m + '">' + MODAL[m] + '</option>'; }).join('') + '</select></label>' +
         '<label>Etapa actual<select data-c="i_etapa"></select></label><label>Contrato (Ruta B)<input data-c="i_ctr" placeholder="ODN-CTR-AAAA-NNN"></label>' +
@@ -341,7 +341,10 @@
           var destino = v(el, '[data-c="retroceso_destino"]');
           var motivo = v(el, '[data-c="retroceso_motivo"]');
           if (!destino || !motivo.trim()) return msg('puerta', 'Selecciona una etapa anterior y escribe el motivo.', false);
-          accion('puerta', 'POST', '/retroceder', { etapa: p.etapa, destino: destino, comentario: motivo }, 'Proyecto devuelto a ' + NOMBRE[destino] + '.', b);
+          var fueraDelFlujo = destino === 'anterior_al_flujo';
+          if (fueraDelFlujo && !window.confirm('¿Volver a Anterior al flujo? Podrás elegir la ruta y la etapa al incorporarlo nuevamente.')) return;
+          accion('puerta', 'POST', '/retroceder', { etapa: p.etapa, destino: destino, comentario: motivo },
+            fueraDelFlujo ? 'El proyecto volvió a Anterior al flujo.' : 'Proyecto devuelto a ' + NOMBRE[destino] + '.', b);
         } else if (a === 'devolver') {
           var com = v(el, '[data-c="comentario"]');
           if (!com.trim()) return msg('puerta', 'Escribe en el comentario qué debe corregir OTI.', false);
