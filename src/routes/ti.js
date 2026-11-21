@@ -2227,6 +2227,7 @@ function ensureInformes() {
         contenido BYTEA NOT NULL,
         PRIMARY KEY (informe_id, numero)
       );
+      ALTER TABLE ti.informe_figuras ADD COLUMN IF NOT EXISTS seccion TEXT NOT NULL DEFAULT '';
     `).catch(e => { _informesListo = null; throw e; });
   }
   return _informesListo;
@@ -2245,7 +2246,7 @@ router.get('/informes-estado/:id/figuras', async (req, res) => {
   try {
     await ensureInformes();
     const { rows } = await pool.query(
-      'SELECT numero, leyenda FROM ti.informe_figuras WHERE informe_id=$1 ORDER BY numero', [req.params.id]
+      'SELECT numero, leyenda, seccion FROM ti.informe_figuras WHERE informe_id=$1 ORDER BY numero', [req.params.id]
     );
     res.json(rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2257,6 +2258,7 @@ router.post('/informes-estado/:id/figuras', (req, res) => {
     const buffer = req.file?.buffer;
     const mime = buffer && mimeFigura(buffer);
     const leyenda = typeof req.body?.leyenda === 'string' ? req.body.leyenda.trim().slice(0, 300) : '';
+    const seccion = typeof req.body?.seccion === 'string' ? req.body.seccion.trim().slice(0, 120) : '';
     if (!mime || !leyenda) return res.status(400).json({ error: 'Se requiere una imagen PNG, JPEG o WebP y su leyenda.' });
     try {
       await ensureInformes();
@@ -2265,9 +2267,9 @@ router.post('/informes-estado/:id/figuras', (req, res) => {
           UPDATE ti.informes_estado SET siguiente_figura=siguiente_figura+1 WHERE id=$1
           RETURNING id, siguiente_figura-1 AS numero
         )
-        INSERT INTO ti.informe_figuras (informe_id, numero, leyenda, mime, contenido)
-        SELECT id, numero, $2, $3, $4 FROM figura RETURNING numero, leyenda
-      `, [req.params.id, leyenda, mime, buffer]);
+        INSERT INTO ti.informe_figuras (informe_id, numero, leyenda, mime, contenido, seccion)
+        SELECT id, numero, $2, $3, $4, $5 FROM figura RETURNING numero, leyenda, seccion
+      `, [req.params.id, leyenda, mime, buffer, seccion]);
       if (!rows.length) return res.status(404).json({ error: 'Informe no encontrado' });
       res.status(201).json(rows[0]);
     } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2288,12 +2290,13 @@ router.get('/informes-estado/:id/figuras/:numero', async (req, res) => {
 
 router.patch('/informes-estado/:id/figuras/:numero', async (req, res) => {
   const leyenda = typeof req.body?.leyenda === 'string' ? req.body.leyenda.trim().slice(0, 300) : '';
+  const seccion = typeof req.body?.seccion === 'string' ? req.body.seccion.trim().slice(0, 120) : null;
   if (!leyenda) return res.status(400).json({ error: 'Escribe una leyenda para la figura.' });
   try {
     await ensureInformes();
     const { rows } = await pool.query(
-      'UPDATE ti.informe_figuras SET leyenda=$3 WHERE informe_id=$1 AND numero::text=$2 RETURNING numero, leyenda',
-      [req.params.id, req.params.numero, leyenda]
+      'UPDATE ti.informe_figuras SET leyenda=$3, seccion=COALESCE($4,seccion) WHERE informe_id=$1 AND numero::text=$2 RETURNING numero, leyenda, seccion',
+      [req.params.id, req.params.numero, leyenda, seccion]
     );
     if (!rows.length) return res.status(404).json({ error: 'Figura no encontrada' });
     res.json(rows[0]);
