@@ -390,6 +390,7 @@ const COMMERCIAL_OFFER_LABEL = { venta: 'Venta', alquiler: 'Alquiler', venta_alq
 
 router.get('/projects', async (req, res) => {
   try {
+    await ensureInformes();
     const { status, search, family } = req.query;
     const params = [];
     let where = 'WHERE 1=1';
@@ -404,6 +405,7 @@ router.get('/projects', async (req, res) => {
       SELECT p.*, u.nombre AS responsible_name, cu.nombre AS claimed_by_name, opp_u.nombre AS opp_user_name,
         (SELECT COUNT(*) FROM ti.contracts  c WHERE c.project_id = p.id)::int AS contracts_count,
         (SELECT COUNT(*) FROM ti.documents  d WHERE d.project_id = p.id)::int AS documents_count,
+        (SELECT COUNT(*) FROM ti.informes_estado i WHERE i.project_id = p.id)::int AS informes_estado_count,
         (SELECT COUNT(*) FROM ti.whatsapp_messages w WHERE w.project_id = p.id)::int AS messages_count
       FROM ti.projects p
       LEFT JOIN public.usuarios u  ON u.id = p.responsible_id
