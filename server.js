@@ -33,7 +33,6 @@ const casosDerivadosRouter = require('./src/routes/casosDerivados');
 const notificacionesRouter = require('./src/routes/notificaciones');
 const scrumRouter = require('./src/routes/scrum');
 const sgiRouter = require('./src/routes/sgi');
-const onRouter = require('./src/routes/on');
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -130,7 +129,6 @@ app.use('/api/soporte',    soporteRouter);
 app.use('/api/rrhh',       rrhhRouter);
 app.use('/api/usuarios',   usuariosRouter);
 app.use('/api/ti',         tiRouter);
-app.use('/api/on',         onRouter);
 app.use('/api/calendar',   calendarRouter);
 app.use('/api/audit',      auditRouter);
 app.use('/api/security',   securityRouter);
