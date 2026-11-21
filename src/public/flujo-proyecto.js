@@ -37,6 +37,9 @@
     ".qbf-lay{display:grid;gap:18px;align-items:start}.qbf-main,.qbf-side{display:grid;gap:18px;min-width:0}.qbf-side{grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));align-items:start}",
     "@container (min-width:1000px){.qbf-lay{grid-template-columns:minmax(0,1fr) 340px}.qbf-side{grid-template-columns:1fr}}",
     ".qbf-cab{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:flex-end;justify-content:space-between}",
+    ".qbf .qbf-retroceso-boton{display:inline-flex;align-items:center;gap:6px;color:var(--f-acento);background:var(--f-acento-s);border-color:var(--f-acento);font-weight:700}.qbf .qbf-retroceso-boton:hover,.qbf .qbf-retroceso-boton[aria-expanded=true]{background:var(--f-acento);color:#fff}",
+    ".qbf-retroceso[hidden]{display:none}.qbf-retroceso{border-left:4px solid var(--f-acento)}.qbf-retroceso-destinos{border:0;padding:0;margin:0;display:flex;flex-wrap:wrap;gap:8px}.qbf-retroceso-destinos legend{margin-bottom:7px;color:var(--f-tenue);font-size:12px;font-weight:700}.qbf-retroceso-destinos label{display:flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid var(--f-borde);border-radius:8px;cursor:pointer}.qbf-retroceso-destinos label:has(:checked){border-color:var(--f-acento);color:var(--f-acento);background:var(--f-acento-s)}.qbf .qbf-retroceso-destinos input{margin:0;width:14px;height:14px;min-height:0;accent-color:var(--f-acento)}",
+    ".qbf-retroceso-msg:empty{display:none}",
     ".qbf-chip{display:inline-block;font-size:11.5px;font-weight:600;line-height:22px;padding:0 10px;border-radius:999px;background:var(--f-suave);white-space:nowrap}",
     ".qbf-chip.ac{background:var(--f-acento);color:#fff}.qbf-chip.al{color:var(--f-mal);background:var(--f-mal-s)}.qbf-chip.tt{color:var(--f-acento);background:var(--f-acento-s)}",
     ".qbf-cod{font:600 12.5px ui-monospace,Consolas,monospace;color:var(--f-acento)}",
@@ -158,13 +161,21 @@
         (p.puedo_devolver ? '<button type="button" class="qbf-b mal" data-accion="devolver">Devolver a OTI</button>' : '') + '</div>' +
         (p.puedo_aprobar && faltan ? '<p class="qbf-sub">Al aprobar se vuelven a revisar los requisitos; los marcados con ✗ deben cumplirse.</p>' : '')
         : (sig ? '<p class="qbf-sub">No te toca aprobar esta puerta.</p>' : '')) +
-      (p.etapas_retroceso && p.etapas_retroceso.length ?
-        '<details><summary>Retroceder a una etapa anterior</summary><div class="qbf-form">' +
-        '<label>Destino<select data-c="retroceso_destino"><option value="">Seleccionar</option>' +
-        p.etapas_retroceso.map(function (etapa) { return '<option value="' + esc(etapa.clave) + '">' + esc(etapa.nombre) + '</option>'; }).join('') +
-        '</select></label><label>Motivo del retroceso<textarea data-c="retroceso_motivo" maxlength="2000"></textarea></label>' +
-        '<div><button type="button" class="qbf-b mal" data-accion="retroceder">Retroceder etapa</button></div></div></details>' : '') +
       '<div data-msg="puerta"></div></section>';
+  }
+
+  function panelRetroceso(p) {
+    if (!p.etapas_retroceso || !p.etapas_retroceso.length) return '';
+    var radio = 'retroceso-' + p.id;
+    return '<section class="qbf-caja qbf-retroceso" id="qbf-' + esc(radio) + '" data-panel-retroceso hidden>' +
+      '<div><h4>Retroceder en el flujo</h4><p class="qbf-sub">Etapa actual: <b>' + esc(NOMBRE[p.etapa]) + '</b></p></div>' +
+      '<fieldset class="qbf-retroceso-destinos"><legend>Elige el destino</legend>' +
+      p.etapas_retroceso.map(function (etapa) {
+        return '<label><input type="radio" name="' + esc(radio) + '" data-retroceso-destino value="' + esc(etapa.clave) + '">' + esc(etapa.nombre) + '</label>';
+      }).join('') + '</fieldset>' +
+      '<label>Motivo del retroceso<textarea data-c="retroceso_motivo" maxlength="2000"></textarea></label>' +
+      '<div class="qbf-fila"><button type="button" class="qbf-b mal" data-accion="retroceder">Confirmar retroceso</button>' +
+      '<button type="button" class="qbf-b" data-cerrar-retroceso>Cancelar</button></div></section>';
   }
 
   function costos(p) {
@@ -311,8 +322,11 @@
     el.innerHTML = '<div class="qbf">' +
       (op.volver ? '<div><button type="button" class="qbf-b" data-volver="1">← Volver a la lista</button></div>' : '') +
       '<div class="qbf-cab"><div style="display:grid;gap:4px"><div class="qbf-fila"><span class="qbf-cod">' + esc(p.code) + '</span>' + (p.ruta ? '<span class="qbf-chip">' + esc(RUTA[p.ruta]) + '</span>' : '') + (p.modalidad ? '<span class="qbf-chip">' + esc(MODAL[p.modalidad]) + '</span>' : '') +
-        (p.status === 'paused' ? '<span class="qbf-chip al">Pausado</span>' : '') + '</div><h3>' + esc(p.name) + '</h3><p class="qbf-sub">' + esc(p.client || '') + '</p></div>' + (p.etapa ? '<span class="qbf-chip tt">Etapa ' + (i + 1) + ' de ' + seq.length + ' · ' + esc(NOMBRE[p.etapa]) + '</span>' : '<span class="qbf-chip">Anterior al flujo</span>') + '</div>' +
+        (p.status === 'paused' ? '<span class="qbf-chip al">Pausado</span>' : '') + '</div><h3>' + esc(p.name) + '</h3><p class="qbf-sub">' + esc(p.client || '') + '</p></div><div class="qbf-fila">' +
+      (p.etapa ? '<span class="qbf-chip tt">Etapa ' + (i + 1) + ' de ' + seq.length + ' · ' + esc(NOMBRE[p.etapa]) + '</span>' : '<span class="qbf-chip">Anterior al flujo</span>') +
+      (p.etapas_retroceso && p.etapas_retroceso.length ? '<button type="button" class="qbf-b qbf-retroceso-boton" data-abrir-retroceso aria-expanded="false" aria-controls="qbf-retroceso-' + esc(p.id) + '"><span aria-hidden="true">↶</span> Retroceder</button>' : '') + '</div></div>' +
       (p.etapa ? '<ol class="qbf-et">' + seq.map(function (k, j) { return '<li class="' + (j < i ? 'h' : j === i ? 'a' : '') + '"' + (j === i ? ' aria-current="step"' : '') + '><i>' + (j < i ? '✓' : j + 1) + '</i>' + esc(NOMBRE[k]) + '</li>'; }).join('') + '</ol>' : '') +
+      panelRetroceso(p) + '<div class="qbf-retroceso-msg" data-msg="retroceso" role="status"></div>' +
       '<div class="qbf-lay"><div class="qbf-main">' + (p.etapa ? puerta(p) : incorporar(p)) +
       comision(p) + reunion(p) + cambios(p) + facturas(p) + traspaso(p) + riesgos(p) + '</div><div class="qbf-side">' + costos(p) + actas(p) +
       '<section class="qbf-caja"><h4>Historial</h4><ul class="qbf-hist">' + (p.historial.length ? p.historial.map(function (h) {
@@ -330,6 +344,19 @@
         .catch(function (e) { msg(k, e.message, false); if (btn) btn.disabled = false; });
     };
     var vol = el.querySelector('[data-volver]'); if (vol) vol.addEventListener('click', op.volver);
+    var abrirRetroceso = el.querySelector('[data-abrir-retroceso]');
+    var panel = el.querySelector('[data-panel-retroceso]');
+    if (abrirRetroceso && panel) {
+      var mostrarRetroceso = function (visible) {
+        panel.hidden = !visible;
+        abrirRetroceso.setAttribute('aria-expanded', String(visible));
+        el.querySelector('[data-msg="retroceso"]').textContent = '';
+        if (visible) panel.querySelector('[data-retroceso-destino]').focus();
+        else abrirRetroceso.focus();
+      };
+      abrirRetroceso.addEventListener('click', function () { mostrarRetroceso(panel.hidden); });
+      panel.querySelector('[data-cerrar-retroceso]').addEventListener('click', function () { mostrarRetroceso(false); });
+    }
     el.querySelectorAll('[data-accion]').forEach(function (b) {
       b.addEventListener('click', function () {
         var a = b.dataset.accion;
@@ -338,12 +365,12 @@
           ['modalidad', 'presupuesto_max', 'contrato_codigo', 'end_date', 'acta_conformidad'].forEach(function (k) { var x = el.querySelector('[data-c="' + k + '"]'); if (x && x.value) c[k] = x.value; });
           accion('puerta', 'POST', '/avanzar', c, 'Puerta aprobada.', b);
         } else if (a === 'retroceder') {
-          var destino = v(el, '[data-c="retroceso_destino"]');
+          var destino = v(el, '[data-retroceso-destino]:checked');
           var motivo = v(el, '[data-c="retroceso_motivo"]');
-          if (!destino || !motivo.trim()) return msg('puerta', 'Selecciona una etapa anterior y escribe el motivo.', false);
+          if (!destino || !motivo.trim()) return msg('retroceso', 'Selecciona un destino y escribe el motivo.', false);
           var fueraDelFlujo = destino === 'anterior_al_flujo';
           if (fueraDelFlujo && !window.confirm('¿Volver a Anterior al flujo? Podrás elegir la ruta y la etapa al incorporarlo nuevamente.')) return;
-          accion('puerta', 'POST', '/retroceder', { etapa: p.etapa, destino: destino, comentario: motivo },
+          accion('retroceso', 'POST', '/retroceder', { etapa: p.etapa, destino: destino, comentario: motivo },
             fueraDelFlujo ? 'El proyecto volvió a Anterior al flujo.' : 'Proyecto devuelto a ' + NOMBRE[destino] + '.', b);
         } else if (a === 'devolver') {
           var com = v(el, '[data-c="comentario"]');
